@@ -1,4 +1,6 @@
-# Repository Extensions
+# Shitty Extensions
+
+for [shittycodingagent.ai](https://shittycodingagent.ai/).
 
 This repo currently contains the following extension(s):
 
