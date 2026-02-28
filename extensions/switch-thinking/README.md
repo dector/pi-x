@@ -4,7 +4,7 @@ Quickly switch thinking modes and cycle favorite modes.
 
 ## Features
 
-- `Ctrl+Shift+T` opens a thinking-mode picker
+- `Ctrl+Alt+T` opens a thinking-mode picker
   - `Enter`: apply highlighted mode and close
   - `Space`: toggle favorite on highlighted mode and keep picker open
   - `↑/↓` or `j/k`: navigate
@@ -28,7 +28,7 @@ Example:
 
 ```json
 {
-  "toggleThinking": ["ctrl+alt+t"]
+  "toggleThinking": ["ctrl+shift+t"]
 }
 ```
 

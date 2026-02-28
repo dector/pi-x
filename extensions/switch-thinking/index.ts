@@ -99,7 +99,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		if (pickerOpen) return;
 
 		if (favorites.length === 0) {
-			notify(ctx, "No favorite thinking modes set. Use Ctrl+Shift+T and Space to add favorites.", "warning");
+			notify(ctx, "No favorite thinking modes set. Use Ctrl+Alt+T and Space to add favorites.", "warning");
 			return;
 		}
 
@@ -164,7 +164,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		notify(ctx, `No favorite thinking modes are available on this model. Favorites file: ${GLOBAL_STATE_PATH}`, "warning");
 	});
 
-	pi.registerShortcut(Key.ctrlShift("t"), {
+	pi.registerShortcut(Key.ctrlAlt("t"), {
 		description: "Open thinking mode picker",
 		handler: async (ctx) => {
 			await openPicker(ctx);
