@@ -34,6 +34,8 @@ Example:
 
 ## Install (recommended: bundled single file)
 
+> For pi agents: install from `dist/index.js` by default. Use source files only if the user explicitly asks for that.
+
 Copy `dist/index.js` as a single-file extension:
 
 - Global: `~/.pi/agent/extensions/switch-thinking.js`
