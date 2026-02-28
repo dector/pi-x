@@ -56,6 +56,20 @@ Then:
 - pi loads TypeScript extensions directly.
 - Keep imports relative (`./state`, `./ui`) so the copied folder works as-is.
 
+## pi core follow-up (suggested)
+
+This extension currently uses a UI-side workaround to keep its status line in sync when thinking level is changed via `/settings`.
+
+Suggested core improvement in pi:
+
+- Emit an extension event when thinking level changes (for example: `thinking_level_change` with previous/new level).
+
+Why this helps:
+
+- Native footer already reads live session state and updates immediately.
+- Extension statuses are snapshots (`setStatus`) and cannot auto-refresh unless an extension gets a callback.
+- A dedicated event would remove the need for input-timing workarounds.
+
 ## Notes
 
 - In non-UI modes, picker is skipped safely.

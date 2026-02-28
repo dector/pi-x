@@ -42,6 +42,8 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 export default function switchThinkingExtension(pi: ExtensionAPI) {
 	let favorites: ThinkingMode[] = [];
 	let pickerOpen = false;
+	let detachTerminalInput: (() => void) | undefined;
+	let deferredRefreshScheduled = false;
 
 	const persistFavorites = (ctx: ExtensionContext): boolean => {
 		const result = saveGlobalState({ version: 1, favorites });
@@ -52,16 +54,55 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		return true;
 	};
 
+	let lastStatusMode: ThinkingMode | undefined;
+	let lastStatusSignature: string | undefined;
+
 	const updateStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		if (favorites.length === 0) {
-			ctx.ui.setStatus("switch-thinking", undefined);
+			lastStatusMode = undefined;
+			if (lastStatusSignature !== undefined) {
+				ctx.ui.setStatus("switch-thinking", undefined);
+				lastStatusSignature = undefined;
+			}
 			return;
 		}
-		ctx.ui.setStatus(
-			"switch-thinking",
-			ctx.ui.theme.fg("accent", `🧠 fav:${favorites.join(",")}`),
+
+		const current = pi.getThinkingLevel();
+		lastStatusMode = current;
+
+		// Render favorites, but if current mode is not a favorite,
+		// show it ephemerally in canonical position without persisting it.
+		const displayModes = uniqueModes([...favorites, current]);
+		const signature = `${displayModes.join(",")}|${current}`;
+		if (signature === lastStatusSignature) return;
+		lastStatusSignature = signature;
+
+		const leftBar = ctx.ui.theme.fg("muted", "|");
+		const rightBar = ctx.ui.theme.fg("muted", "|");
+		const modes = displayModes.map((mode) =>
+			mode === current ? ctx.ui.theme.fg("accent", mode) : ctx.ui.theme.fg("muted", mode),
 		);
+
+		ctx.ui.setStatus("switch-thinking", `${leftBar} ${modes.join(" ")} ${rightBar}`);
+	};
+
+	const refreshStatusIfModeChanged = (ctx: ExtensionContext) => {
+		if (!ctx.hasUI) return;
+		if (favorites.length === 0) return;
+		const current = pi.getThinkingLevel();
+		if (current === lastStatusMode) return;
+		updateStatus(ctx);
+	};
+
+	const scheduleDeferredStatusRefresh = (ctx: ExtensionContext) => {
+		if (!ctx.hasUI) return;
+		if (deferredRefreshScheduled) return;
+		deferredRefreshScheduled = true;
+		setTimeout(() => {
+			deferredRefreshScheduled = false;
+			refreshStatusIfModeChanged(ctx);
+		}, 0);
 	};
 
 	const toggleFavorite = (mode: ThinkingMode, ctx: ExtensionContext) => {
@@ -79,6 +120,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		const before = pi.getThinkingLevel();
 		pi.setThinkingLevel(mode);
 		const applied = pi.getThinkingLevel();
+		updateStatus(ctx);
 
 		if (applied !== mode) {
 			notify(ctx, `Requested thinking mode '${mode}' was clamped to '${applied}'.`, "warning");
@@ -154,6 +196,15 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		if (loaded.error) {
 			notify(ctx, `${loaded.error}. Using empty favorites for this session.`, "warning");
 		}
+
+		if (ctx.hasUI && !detachTerminalInput) {
+			detachTerminalInput = ctx.ui.onTerminalInput(() => {
+				refreshStatusIfModeChanged(ctx);
+				scheduleDeferredStatusRefresh(ctx);
+				return undefined;
+			});
+		}
+
 		updateStatus(ctx);
 	});
 
@@ -162,6 +213,31 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		if (favorites.length === 0) return;
 		if (getAvailableFavorites(ctx).length > 0) return;
 		notify(ctx, `No favorite thinking modes are available on this model. Favorites file: ${GLOBAL_STATE_PATH}`, "warning");
+	});
+
+	const bindStatusRefresh = (eventName: "turn_start" | "turn_end" | "agent_start" | "agent_end" | "message_start" | "message_update" | "message_end" | "session_switch" | "session_fork" | "session_tree" | "input" | "user_bash") => {
+		pi.on(eventName, async (_event, ctx) => {
+			refreshStatusIfModeChanged(ctx);
+		});
+	};
+
+	bindStatusRefresh("turn_start");
+	bindStatusRefresh("turn_end");
+	bindStatusRefresh("agent_start");
+	bindStatusRefresh("agent_end");
+	bindStatusRefresh("message_start");
+	bindStatusRefresh("message_update");
+	bindStatusRefresh("message_end");
+	bindStatusRefresh("session_switch");
+	bindStatusRefresh("session_fork");
+	bindStatusRefresh("session_tree");
+	bindStatusRefresh("input");
+	bindStatusRefresh("user_bash");
+
+	pi.on("session_shutdown", async () => {
+		detachTerminalInput?.();
+		detachTerminalInput = undefined;
+		deferredRefreshScheduled = false;
 	});
 
 	pi.registerShortcut(Key.ctrlAlt("t"), {
