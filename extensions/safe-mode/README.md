@@ -14,7 +14,7 @@ Intercepts tool calls and applies configurable approval policies.
   - Also auto-allows `edit`/`write` when the target path is inside the project root (`ctx.cwd`).
   - Other operations ask for confirmation.
 - `yolo`
-  - Allows everything (default pi behavior).
+  - Allows everything.
 
 ## Commands
 
@@ -33,7 +33,7 @@ Intercepts tool calls and applies configurable approval policies.
 ## CLI flag
 
 - `--safe-mode <paranoid|reader|smart|yolo>`
-- Default: `yolo`
+- Default: `smart`
 
 ## Persistence
 

@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 export const SAFE_MODES = ["paranoid", "reader", "smart", "yolo"] as const;
 export type SafeMode = (typeof SAFE_MODES)[number];
 
-export const DEFAULT_SAFE_MODE: SafeMode = "yolo";
+export const DEFAULT_SAFE_MODE: SafeMode = "smart";
 
 const READ_ONLY_TOOLS = new Set(["read", "ls", "find", "grep"]);
 

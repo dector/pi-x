@@ -25,16 +25,17 @@ function formatModeList(): string {
 }
 
 function styleMode(ctx: ExtensionContext, mode: SafeMode): string {
+	const label = `[${mode.toUpperCase()}]`;
 	switch (mode) {
-		case "paranoid":
-			return ctx.ui.theme.fg("error", `🛡 ${mode}`);
-		case "reader":
-			return ctx.ui.theme.fg("accent", `🛡 ${mode}`);
-		case "smart":
-			return ctx.ui.theme.fg("success", `🛡 ${mode}`);
 		case "yolo":
+			return ctx.ui.theme.fg("error", label);
+		case "smart":
+			return ctx.ui.theme.fg("text", label);
+		case "reader":
+			return ctx.ui.theme.fg("success", label);
+		case "paranoid":
 		default:
-			return ctx.ui.theme.fg("muted", `🛡 ${mode}`);
+			return ctx.ui.theme.fg("muted", label);
 	}
 }
 
