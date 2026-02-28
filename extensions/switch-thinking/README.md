@@ -32,14 +32,17 @@ Example:
 }
 ```
 
-## Install (recommended: bundled single file)
+## Install (standard pi extension layout)
 
-> For pi agents: install from `dist/index.js` by default. Use source files only if the user explicitly asks for that.
+Install as a source extension directory (recommended for pi extensions):
 
-Copy `dist/index.js` as a single-file extension:
+- Global: copy this folder to `~/.pi/agent/extensions/switch-thinking/`
+- Project-local: copy this folder to `.pi/extensions/switch-thinking/`
 
-- Global: `~/.pi/agent/extensions/switch-thinking.js`
-- Project-local: `.pi/extensions/switch-thinking.js`
+Required files in that folder:
+- `index.ts`
+- `state.ts`
+- `ui.ts`
 
 Then:
 
@@ -47,27 +50,11 @@ Then:
 2. (Required for cycling on `Ctrl+T`) remap `toggleThinking` as shown above
 3. Run `/hotkeys` to verify bindings
 
-## Build from sources
+## Development notes
 
-One-liner (run from repository root):
-
-```bash
-bun build ./extensions/switch-thinking/index.ts --outfile ./extensions/switch-thinking/dist/index.js --target=node --format=esm --packages=bundle --external @mariozechner/pi-coding-agent --external @mariozechner/pi-tui
-```
-
-Notes:
-- `dist/index.js` is committed to git.
-- Local extension files (`state.ts`, `ui.ts`) are bundled into `dist/index.js`.
-- `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` stay external because pi provides them at runtime.
-
-## Contributing / release checklist
-
-Before opening a release PR:
-
-- [ ] Run the bundling one-liner above
-- [ ] Verify `extensions/switch-thinking/dist/index.js` is updated in git diff
-- [ ] Smoke-test by loading the bundled file (`switch-thinking.js`) and running `/reload`
-- [ ] Confirm picker (`Ctrl+Alt+T`) and cycle (`Ctrl+T`) still work
+- No bundle step is required for normal pi usage.
+- pi loads TypeScript extensions directly.
+- Keep imports relative (`./state`, `./ui`) so the copied folder works as-is.
 
 ## Notes
 
