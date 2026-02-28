@@ -27,7 +27,7 @@ Intercepts tool calls and applies configurable approval policies.
 
 ## Shortcut
 
-- `Ctrl+M`
+- `Alt+M`
   - Cycle safe modes.
 
 ## CLI flag
