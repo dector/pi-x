@@ -11,14 +11,6 @@ import {
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
 
-type UsageTotals = {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	cost: number;
-};
-
 function isSetPayload(value: unknown): value is StatusBarSetPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarSetPayload>;
@@ -55,14 +47,6 @@ function sanitizeStatusText(text: string): string {
 function hasVisibleText(value?: string): value is string {
 	if (typeof value !== "string") return false;
 	return value.trim().length > 0;
-}
-
-function formatTokens(count: number): string {
-	if (count < 1000) return count.toString();
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-	return `${Math.round(count / 1000000)}M`;
 }
 
 function composeAtPositions(
@@ -190,33 +174,6 @@ function renderThreeSectionLine(width: number, left?: string, center?: string, r
 	return truncateToWidth(normalizedLeft ?? "", width, "");
 }
 
-function collectUsageTotals(ctx: ExtensionContext): UsageTotals {
-	let input = 0;
-	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
-	let cost = 0;
-
-	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
-		if (entry.type !== "message") continue;
-		const message = entry.message as Record<string, unknown> | undefined;
-		if (!message || message.role !== "assistant") continue;
-		const usage = message.usage as Record<string, unknown> | undefined;
-		if (!usage) continue;
-		input += typeof usage.input === "number" ? usage.input : 0;
-		output += typeof usage.output === "number" ? usage.output : 0;
-		cacheRead += typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
-		cacheWrite += typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0;
-
-		const costObj = usage.cost as Record<string, unknown> | undefined;
-		if (costObj && typeof costObj.total === "number") {
-			cost += costObj.total;
-		}
-	}
-
-	return { input, output, cacheRead, cacheWrite, cost };
-}
-
 export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
 	let lastContext: ExtensionContext | undefined;
@@ -255,11 +212,6 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				},
 				render(width: number): string[] {
 					const activeCtx = lastContext ?? ctx;
-					const model = activeCtx.model;
-					const modelName = model?.id ?? "no-model";
-					const thinking = pi.getThinkingLevel();
-					const thinkingLabel = model?.reasoning ? (thinking === "off" ? "thinking off" : thinking) : undefined;
-					const modelSummary = thinkingLabel ? `${modelName} • ${thinkingLabel}` : modelName;
 
 					let pwd = process.cwd();
 					const home = process.env.HOME || process.env.USERPROFILE;
@@ -272,41 +224,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					if (sessionName) pwd = `${pwd} • ${sessionName}`;
 					const line1 = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 
-					const usage = collectUsageTotals(activeCtx);
-					const contextUsage = activeCtx.getContextUsage();
-					const contextWindow = contextUsage?.contextWindow ?? model?.contextWindow ?? 0;
-					const contextPercentValue =
-						typeof contextUsage?.percent === "number" && Number.isFinite(contextUsage.percent)
-							? contextUsage.percent
-							: undefined;
-					const contextPercentDisplay =
-						typeof contextPercentValue === "number"
-							? `${contextPercentValue.toFixed(1)}%/${formatTokens(contextWindow)}`
-							: `?/${formatTokens(contextWindow)}`;
-					const contextDisplay =
-						typeof contextPercentValue === "number" && contextPercentValue > 90
-							? theme.fg("error", contextPercentDisplay)
-							: typeof contextPercentValue === "number" && contextPercentValue > 70
-								? theme.fg("warning", contextPercentDisplay)
-								: theme.fg("dim", contextPercentDisplay);
-
-					const statsParts: string[] = [];
-					if (usage.input) statsParts.push(theme.fg("dim", `↑${formatTokens(usage.input)}`));
-					if (usage.output) statsParts.push(theme.fg("dim", `↓${formatTokens(usage.output)}`));
-					if (usage.cacheRead) statsParts.push(theme.fg("dim", `R${formatTokens(usage.cacheRead)}`));
-					if (usage.cacheWrite) statsParts.push(theme.fg("dim", `W${formatTokens(usage.cacheWrite)}`));
-					if (usage.cost) statsParts.push(theme.fg("dim", `$${usage.cost.toFixed(3)}`));
-					statsParts.push(contextDisplay);
-					const statsLeft = statsParts.join(" ");
-					const statsRight = theme.fg("dim", modelSummary);
-					const line2 = renderThreeSectionLine(width, statsLeft, undefined, statsRight);
-
 					const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
 					const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
 					const right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right);
-					const line3 = renderThreeSectionLine(width, left, center, right);
+					const line2 = renderThreeSectionLine(width, left, center, right);
 
-					return [line1, line2, line3];
+					return [line1, line2];
 				},
 			};
 		});

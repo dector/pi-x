@@ -19,11 +19,10 @@ Centralized status-bar renderer for producer extensions.
 
 `status-bar` now renders through a **custom footer** via `ctx.ui.setFooter(...)`.
 
-The footer renders three lines:
+The footer renders two lines:
 
-1. cwd + git branch + optional session name
-2. usage/model summary
-3. status-bar line with true left/center/right alignment
+1. cwd + git branch + optional session name (equivalent to pi default first line)
+2. status-bar line with true left/center/right alignment
 
 Status-bar producer content is still stored as `id -> content`, resolved by `DEFAULT_STATUS_BAR_LAYOUT`, and joined per section with `STATUS_BAR_JOIN_SEPARATOR`.
 

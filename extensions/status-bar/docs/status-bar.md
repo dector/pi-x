@@ -37,9 +37,8 @@ Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), no
 
 Footer lines:
 
-1. cwd + git branch + optional session name
-2. usage/model summary
-3. status-bar line (left/center/right)
+1. cwd + git branch + optional session name (pi default first line)
+2. status-bar line (left/center/right)
 
 ## Status-line rendering rules
 
