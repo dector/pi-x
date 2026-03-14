@@ -7,7 +7,9 @@ Intercepts tool calls and applies configurable approval policies.
 - `paranoid`
   - Every tool call asks for confirmation.
 - `reader`
-  - Auto-allows read-only operations (`read`, `ls`, `find`, `grep`, plus allowlisted read-only `bash` commands).
+  - Auto-allows read-only operations (`read`, `ls`, `grep`, plus allowlisted read-only `bash` commands).
+  - Auto-allows read-only `bash` pipelines when **every stage** is allowlisted and read-only (for example: `ls -la | grep policy`, `git log --oneline | head -n 20`).
+  - `find` requires confirmation (including in pipelines).
   - Everything else asks for confirmation.
 - `smart`
   - Includes all `reader` behavior.
@@ -66,4 +68,7 @@ Then run `/reload`.
 
 ## Notes
 
-Read-only bash matching is intentionally strict. Ambiguous command chains or redirections require confirmation.
+Read-only bash matching is intentionally strict.
+
+- Allowed automatically: single read-only commands and read-only pipelines (`|`) where each stage is read-only.
+- Requires confirmation: control-flow chaining (`&&`, `||`, `;`, newline, `&`), redirections (`>`, `>>`, `<`, `<<`), substitutions (`` `...` ``, `$()`), unknown commands, or mixed pipelines (e.g. `ls | rm -rf tmp`).
