@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  pi-bwrap [--debug] [pi-args...]
+  pi-bwrap [--debug] -- <command> [args...]
+
+Runs `pi` inside a bubblewrap sandbox rooted at the current git repo/worktree.
+
+Options:
+  --debug   Run the sandboxed command under strace and write the trace to
+            <repo>/.pi-bwrap-strace.log
+  --help    Show this help
+EOF
+}
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ensure_dir_chain() {
+  local path="$1"
+  local current=""
+  local segment=""
+
+  [[ "$path" == /* ]] || fail "expected absolute path, got: $path"
+
+  while [[ "$path" != "/" && -n "$path" ]]; do
+    segment="${path%%/*}"
+    if [[ -z "$segment" ]]; then
+      path="${path#/}"
+      continue
+    fi
+
+    current="${current}/${segment}"
+    BWRAP_ARGS+=("--dir" "$current")
+    if [[ "$path" == */* ]]; then
+      path="${path#*/}"
+    else
+      path="/"
+    fi
+  done
+}
+
+bind_if_exists() {
+  local mode="$1"
+  local source="$2"
+  local dest="$3"
+
+  if [[ -e "$source" ]]; then
+    ensure_dir_chain "$(dirname "$dest")"
+    BWRAP_ARGS+=("$mode" "$source" "$dest")
+  fi
+}
+
+setenv_if_present() {
+  local name="$1"
+  if [[ -v "$name" && -n "${!name}" ]]; then
+    BWRAP_ARGS+=("--setenv" "$name" "${!name}")
+  fi
+}
+
+if ! have_command bwrap; then
+  fail "bubblewrap is not installed; install `bwrap` first"
+fi
+
+debug=0
+while (($# > 0)); do
+  case "$1" in
+    --debug)
+      debug=1
+      shift
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$repo_root" ]] || fail "run this script from inside a git repo or worktree"
+
+worktree_path="$(pwd -P)"
+case "$worktree_path" in
+  "$repo_root" | "$repo_root"/*)
+    ;;
+  *)
+    fail "current directory must be inside the git repo/worktree: $repo_root"
+    ;;
+esac
+
+if (($# > 0)); then
+  sandbox_cmd=("$@")
+else
+  sandbox_cmd=("pi")
+fi
+
+if ! have_command "${sandbox_cmd[0]}"; then
+  fail "command not found: ${sandbox_cmd[0]}"
+fi
+
+if ((debug)); then
+  if ! have_command strace; then
+    fail "--debug requires `strace` to be installed"
+  fi
+  debug_log="${repo_root}/.pi-bwrap-strace.log"
+fi
+
+host_home="${HOME:-}"
+[[ -n "$host_home" ]] || fail "HOME is not set"
+
+fake_home_host="$(mktemp -d -p /tmp pi-bwrap-home.XXXXXX)"
+cleanup() {
+  rm -rf "$fake_home_host"
+}
+trap cleanup EXIT INT TERM
+
+sandbox_home="/home/pi-sandbox"
+default_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+shell_path="${SHELL:-/bin/bash}"
+user_name="$(id -un)"
+
+declare -a BWRAP_ARGS
+BWRAP_ARGS=(
+  "--die-with-parent"
+  "--new-session"
+  "--unshare-all"
+  "--share-net"
+  "--proc" "/proc"
+  "--dev" "/dev"
+  "--tmpfs" "/tmp"
+  "--tmpfs" "/var/tmp"
+  "--clearenv"
+)
+
+for sys_dir in /usr /bin /lib /lib64; do
+  if [[ -e "$sys_dir" ]]; then
+    BWRAP_ARGS+=("--ro-bind" "$sys_dir" "$sys_dir")
+  fi
+done
+
+ensure_dir_chain "/etc"
+for etc_path in \
+  /etc/localtime \
+  /etc/resolv.conf \
+  /etc/hosts \
+  /etc/nsswitch.conf \
+  /etc/passwd \
+  /etc/group \
+  /etc/ssl \
+  /etc/pki \
+  /etc/ca-certificates
+do
+  bind_if_exists "--ro-bind" "$etc_path" "$etc_path"
+done
+
+bind_if_exists "--ro-bind" "/usr/share/zoneinfo" "/usr/share/zoneinfo"
+
+ensure_dir_chain "$repo_root"
+BWRAP_ARGS+=("--bind" "$repo_root" "$repo_root")
+
+ensure_dir_chain "$(dirname "$sandbox_home")"
+BWRAP_ARGS+=("--bind" "$fake_home_host" "$sandbox_home")
+
+bind_if_exists "--ro-bind" "${host_home}/.pi" "${sandbox_home}/.pi"
+bind_if_exists "--bind" "${host_home}/.pi/agent" "${sandbox_home}/.pi/agent"
+bind_if_exists "--ro-bind" "${host_home}/.bashrc" "${sandbox_home}/.bashrc"
+bind_if_exists "--ro-bind" "${host_home}/.gitconfig" "${sandbox_home}/.gitconfig"
+bind_if_exists "--ro-bind" "${host_home}/.local/share/mise" "${host_home}/.local/share/mise"
+
+if [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]]; then
+  bind_if_exists "--ro-bind" "${SSH_AUTH_SOCK}" "${SSH_AUTH_SOCK}"
+fi
+
+BWRAP_ARGS+=("--chdir" "$worktree_path")
+BWRAP_ARGS+=("--setenv" "HOME" "$sandbox_home")
+BWRAP_ARGS+=("--setenv" "PATH" "${PATH:-$default_path}")
+BWRAP_ARGS+=("--setenv" "USER" "$user_name")
+BWRAP_ARGS+=("--setenv" "LOGNAME" "$user_name")
+BWRAP_ARGS+=("--setenv" "SHELL" "$shell_path")
+setenv_if_present "TERM"
+setenv_if_present "LANG"
+setenv_if_present "TZ"
+
+while IFS='=' read -r env_name _; do
+  if [[ "$env_name" == LC_* ]]; then
+    setenv_if_present "$env_name"
+  fi
+done < <(env)
+
+if [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]]; then
+  BWRAP_ARGS+=("--setenv" "SSH_AUTH_SOCK" "${SSH_AUTH_SOCK}")
+fi
+
+if ((debug)); then
+  printf 'debug: writing strace log to %s\n' "$debug_log" >&2
+  exec bwrap "${BWRAP_ARGS[@]}" -- strace -ff -o "$debug_log" -- "${sandbox_cmd[@]}"
+fi
+
+exec bwrap "${BWRAP_ARGS[@]}" -- "${sandbox_cmd[@]}"
