@@ -4,8 +4,8 @@ const STATUS_BAR_ID = "context-watcher";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
 
-function formatLabel(percent: number): string {
-	return `CTX:${percent.toFixed(1)}%`;
+function formatLabel(modelName: string, percent: number): string {
+	return `${modelName}: ${percent.toFixed(1)}%`;
 }
 
 function styleLabel(ctx: ExtensionContext, percent: number, label: string): string {
@@ -34,9 +34,10 @@ export default function contextWatcherExtension(pi: ExtensionAPI): void {
 
 		const safePercent = Math.max(0, percent);
 		const rounded = Number(safePercent.toFixed(1));
-		const label = formatLabel(rounded);
+		const modelName = ctx.model?.id ?? "no-model";
+		const label = formatLabel(modelName, rounded);
 		const bucket = rounded <= 20 ? "muted" : rounded <= 30 ? "text" : rounded <= 50 ? "warning" : "error";
-		const signature = `${rounded}|${bucket}|${ctx.hasUI ? "ui" : "noui"}`;
+		const signature = `${modelName}|${rounded}|${bucket}|${ctx.hasUI ? "ui" : "noui"}`;
 		if (signature === lastSignature) return;
 		lastSignature = signature;
 

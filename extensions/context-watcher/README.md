@@ -2,7 +2,7 @@
 
 Shows current context-window usage in the shared status bar as:
 
-- `CTX:10.0%`
+- `gpt-5.3: 10.0%`
 
 ## Behavior
 
