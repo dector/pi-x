@@ -1,5 +1,20 @@
 # Status Bar Plan (Simple)
 
+## Default implementation instructions (for any agent)
+
+Apply these by default unless explicitly overridden in-task:
+
+- After each milestone/code change, install this extension on the current machine for manual testing:
+  - `~/.pi/agent/extensions/status-bar/`
+- Keep manual testing straightforward:
+  - run `/reload`
+  - verify status-bar output in a live session
+- While centralized producer migration is incomplete, keep layout visibly rendered so structure is easy to inspect:
+  - always render three sections (`left`, `center`, `right`) as bracketed blocks
+  - render empty sections as `[]`
+  - use section delimiter ` · ` (dot in the center)
+- Keep producer-item join rule inside sections as the frozen contract value: ` | `
+
 ## Target design
 
 One `status-bar` extension renders 3 sections:
@@ -38,7 +53,7 @@ Define and document:
 
 ---
 
-### M2 — Prepare status-bar extension skeleton (planning only)
+### M2 — Prepare status-bar extension skeleton (implemented)
 
 Plan internal responsibilities:
 

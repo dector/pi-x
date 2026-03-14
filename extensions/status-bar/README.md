@@ -16,16 +16,22 @@ This extension currently freezes the contract only:
   - `status-bar:clear` with `{ id }`
 - Join rule (for later rendering milestone): ` | `
 
-## Notes
+## Current behavior (M2 skeleton)
 
-- This milestone does **not** implement centralized aggregation/rendering yet.
-- For test visibility, it sets a temporary placeholder status: `[status-bar: no producer output yet]`.
-- Full rendering and migration are planned in later milestones (`extensions/status-bar/docs/status-bar.plan.md`).
+- Keeps in-memory producer content map: `id -> content`.
+- Renders all three sections visibly as brackets: `[left] · [center] · [right]`.
+- Section delimiter for visibility: ` · `.
+- Inside each section, items are still joined by the frozen M1 join rule: ` | `.
+- Empty sections render as `[]`.
 
-## Dev helper command
+## Dev helper commands
 
 - `/status-bar-contract`
-  - Shows current M1 contract (events, join rule, default layout).
+  - Shows current contract (events, join rule, default layout).
+- `/status-bar-set <id> <content>`
+  - Sets test content for an ID and re-renders.
+- `/status-bar-clear <id>`
+  - Clears test content for an ID and re-renders.
 
 ## Install
 
