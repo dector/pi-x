@@ -30,6 +30,13 @@ Intercepts tool calls and applies configurable approval policies.
 - `Alt+M`
   - Cycle safe modes.
 
+## Approval dialog
+
+When approval is required:
+- `y` confirms (allow tool call)
+- `n` or `N` rejects (block tool call)
+- Existing selection navigation (arrows / j / k) remains unchanged
+
 ## CLI flag
 
 - `--safe-mode <paranoid|reader|smart|yolo>`

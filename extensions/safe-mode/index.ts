@@ -86,6 +86,34 @@ function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Re
 	};
 }
 
+async function confirmApproval(ctx: ExtensionContext, title: string, message: string): Promise<boolean> {
+	const controller = new AbortController();
+	let keyDecision: boolean | undefined;
+
+	const unsubscribe = ctx.ui.onTerminalInput((data) => {
+		if (data === "y") {
+			keyDecision = true;
+			controller.abort();
+			return { consume: true };
+		}
+
+		if (data === "n" || data === "N") {
+			keyDecision = false;
+			controller.abort();
+			return { consume: true };
+		}
+
+		return undefined;
+	});
+
+	try {
+		const confirmed = await ctx.ui.confirm(title, message, { signal: controller.signal });
+		return keyDecision ?? confirmed;
+	} finally {
+		unsubscribe();
+	}
+}
+
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 
@@ -217,7 +245,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
-		const ok = await ctx.ui.confirm(prompt.title, prompt.message);
+		const ok = await confirmApproval(ctx, prompt.title, prompt.message);
 		if (!ok) {
 			return {
 				block: true,
