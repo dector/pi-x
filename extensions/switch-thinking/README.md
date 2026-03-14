@@ -58,7 +58,7 @@ Then:
 
 ## pi core follow-up (suggested)
 
-This extension currently uses a UI-side workaround to keep its status line in sync when thinking level is changed via `/settings`.
+This extension still uses a UI-side refresh workaround to keep its emitted status content in sync when thinking level is changed via `/settings`.
 
 Suggested core improvement in pi:
 
@@ -67,7 +67,7 @@ Suggested core improvement in pi:
 Why this helps:
 
 - Native footer already reads live session state and updates immediately.
-- Extension statuses are snapshots (`setStatus`) and cannot auto-refresh unless an extension gets a callback.
+- Extensions emitting status content still need a callback to react to out-of-band thinking-level changes.
 - A dedicated event would remove the need for input-timing workarounds.
 
 ## Notes

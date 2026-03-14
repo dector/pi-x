@@ -1,10 +1,8 @@
 # status-bar (pi extension)
 
-Simple centralized status-bar contract.
+Centralized status-bar renderer for producer extensions.
 
-## M1 scope (implemented)
-
-This extension currently freezes the contract only:
+## Contract
 
 - Sections: `left`, `center`, `right`
 - Default order:
@@ -14,18 +12,17 @@ This extension currently freezes the contract only:
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`
-- Item join rule inside a section: ` · `
+- Item delimiter inside a section: ` · `
+- Section delimiter: two spaces (`  `)
 
-## Current behavior (M4 implementation)
+## Current behavior
 
 - Keeps in-memory producer content map: `id -> content`.
 - Listens on shared extension event bus for:
   - `status-bar:set`
   - `status-bar:clear`
-- Renders only non-empty sections.
-- Sections are separated by two spaces: `  `.
-- Inside each section, items are joined by ` · `.
-- Empty sections are omitted (not rendered).
+- Renders only non-empty sections in layout order.
+- Empty sections are omitted.
 
 ## Dev helper commands
 
