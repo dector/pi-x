@@ -4,8 +4,35 @@ const STATUS_BAR_ID = "context-watcher";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
 
-function formatLabel(modelName: string, percent: number): string {
-	return `${modelName}: ${percent.toFixed(1)}%`;
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
+}
+
+function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number } {
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+
+	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as Record<string, unknown> | undefined;
+		if (!message || message.role !== "assistant") continue;
+		const usage = message.usage as Record<string, unknown> | undefined;
+		if (!usage) continue;
+		input += typeof usage.input === "number" ? usage.input : 0;
+		output += typeof usage.output === "number" ? usage.output : 0;
+		cacheRead += typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
+	}
+
+	return { input, output, cacheRead };
+}
+
+function formatLabel(input: number, output: number, cacheRead: number, modelName: string, percent: number): string {
+	return `↑${formatTokens(input)}/↓${formatTokens(output)}/${formatTokens(cacheRead)} · ${modelName}: ${percent.toFixed(1)}%`;
 }
 
 function styleLabel(ctx: ExtensionContext, percent: number, label: string): string {
@@ -35,9 +62,10 @@ export default function contextWatcherExtension(pi: ExtensionAPI): void {
 		const safePercent = Math.max(0, percent);
 		const rounded = Number(safePercent.toFixed(1));
 		const modelName = ctx.model?.id ?? "no-model";
-		const label = formatLabel(modelName, rounded);
+		const usage = collectUsage(ctx);
+		const label = formatLabel(usage.input, usage.output, usage.cacheRead, modelName, rounded);
 		const bucket = rounded <= 20 ? "muted" : rounded <= 30 ? "text" : rounded <= 50 ? "warning" : "error";
-		const signature = `${modelName}|${rounded}|${bucket}|${ctx.hasUI ? "ui" : "noui"}`;
+		const signature = `${usage.input}|${usage.output}|${usage.cacheRead}|${modelName}|${rounded}|${bucket}|${ctx.hasUI ? "ui" : "noui"}`;
 		if (signature === lastSignature) return;
 		lastSignature = signature;
 
