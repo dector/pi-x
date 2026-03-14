@@ -121,7 +121,7 @@ Plan internal responsibilities:
 
 ---
 
-### M6 — Migrate `switch-thinking`
+### M6 — Migrate `switch-thinking` (implemented)
 
 - Stop direct status rendering from `switch-thinking` extension
 - Emit `status-bar:set` / `status-bar:clear`

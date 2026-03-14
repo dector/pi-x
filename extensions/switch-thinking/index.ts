@@ -39,6 +39,10 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 	if (type !== "info") console.warn(`[switch-thinking] ${message}`);
 }
 
+const STATUS_BAR_ID = "switch-thinking";
+const STATUS_BAR_SET_EVENT = "status-bar:set";
+const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
+
 export default function switchThinkingExtension(pi: ExtensionAPI) {
 	let favorites: ThinkingMode[] = [];
 	let pickerOpen = false;
@@ -58,11 +62,10 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 	let lastStatusSignature: string | undefined;
 
 	const updateStatus = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
 		if (favorites.length === 0) {
 			lastStatusMode = undefined;
 			if (lastStatusSignature !== undefined) {
-				ctx.ui.setStatus("switch-thinking", undefined);
+				pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
 				lastStatusSignature = undefined;
 			}
 			return;
@@ -78,17 +81,20 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		if (signature === lastStatusSignature) return;
 		lastStatusSignature = signature;
 
-		const leftBar = ctx.ui.theme.fg("muted", "|");
-		const rightBar = ctx.ui.theme.fg("muted", "|");
-		const modes = displayModes.map((mode) =>
-			mode === current ? ctx.ui.theme.fg("accent", mode) : ctx.ui.theme.fg("muted", mode),
-		);
+		const leftBar = ctx.hasUI ? ctx.ui.theme.fg("muted", "|") : "|";
+		const rightBar = ctx.hasUI ? ctx.ui.theme.fg("muted", "|") : "|";
+		const modes = displayModes.map((mode) => {
+			if (!ctx.hasUI) return mode;
+			return mode === current ? ctx.ui.theme.fg("accent", mode) : ctx.ui.theme.fg("muted", mode);
+		});
 
-		ctx.ui.setStatus("switch-thinking", `${leftBar} ${modes.join(" ")} ${rightBar}`);
+		pi.events.emit(STATUS_BAR_SET_EVENT, {
+			id: STATUS_BAR_ID,
+			content: `${leftBar} ${modes.join(" ")} ${rightBar}`,
+		});
 	};
 
 	const refreshStatusIfModeChanged = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
 		if (favorites.length === 0) return;
 		const current = pi.getThinkingLevel();
 		if (current === lastStatusMode) return;

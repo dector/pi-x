@@ -72,6 +72,7 @@ Why this helps:
 
 ## Notes
 
+- Status rendering is emitted via status-bar events (`status-bar:set` / `status-bar:clear` with `id: "switch-thinking"`) rather than direct `ui.setStatus`.
 - In non-UI modes, picker is skipped safely.
 - If favorites are empty or unavailable on current model, the extension shows a warning and does nothing.
 - Corrupt favorites JSON falls back to empty favorites.
