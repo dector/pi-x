@@ -49,6 +49,43 @@ function getPersistedModeFromBranch(ctx: ExtensionContext): SafeMode | undefined
 	return persisted;
 }
 
+function getToolRequestText(toolName: string, input: Record<string, unknown>): string {
+	if (toolName === "bash") {
+		const command = typeof input.command === "string" ? input.command.trim() : "";
+		return command.length > 0 ? command : "(empty command)";
+	}
+
+	const summary = describeToolCall(toolName, input);
+	const prefix = `${toolName}: `;
+	if (summary.startsWith(prefix)) {
+		return summary.slice(prefix.length);
+	}
+
+	if (summary !== toolName) {
+		return summary;
+	}
+
+	return Object.keys(input).length > 0 ? JSON.stringify(input, null, 2) : "(no arguments)";
+}
+
+function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): {
+	title: string;
+	message: string;
+} {
+	const theme = ctx.ui.theme;
+	const promptLine = theme.fg("muted", "Approve? y/n");
+	const toolLine = theme.fg("text", `[${toolName}]:`);
+	const request = getToolRequestText(toolName, input)
+		.split("\n")
+		.map((line) => theme.bg("toolPendingBg", theme.fg("warning", theme.bold(line))))
+		.join("\n");
+
+	return {
+		title: promptLine,
+		message: `\n${toolLine}\n${request}`,
+	};
+}
+
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 
@@ -178,11 +215,9 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			};
 		}
 
-		const reason = decision.reason ? `Reason: ${decision.reason}\n\n` : "";
-		const ok = await ctx.ui.confirm(
-			`Safe mode (${mode}) approval`,
-			`${reason}Tool call:\n${describeToolCall(event.toolName, (event.input ?? {}) as Record<string, unknown>)}\n\nAllow this call?`,
-		);
+		const input = (event.input ?? {}) as Record<string, unknown>;
+		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
+		const ok = await ctx.ui.confirm(prompt.title, prompt.message);
 		if (!ok) {
 			return {
 				block: true,
