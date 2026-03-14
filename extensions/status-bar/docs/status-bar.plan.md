@@ -67,18 +67,35 @@ Plan internal responsibilities:
 
 ---
 
-### M3 — Migration mapping for existing extensions
+### M3 — Migration mapping for existing extensions (implemented)
 
-Map current extensions:
+#### `safe-mode` -> `id: "safe-mode"`
 
-- `safe-mode` -> `id: "safe-mode"`
-- `switch-thinking` -> `id: "switch-thinking"`
+- `content` format:
+  - the same styled mode label currently used in `safe-mode` status, e.g. `[SMART]` with existing theme coloring.
+- Emit `status-bar:set` when:
+  - mode is resolved on `session_start`
+  - mode is re-resolved on `session_tree`
+  - mode is re-resolved on `session_fork`
+  - mode changes via `/safe-mode <mode>` or `/safe-mode cycle`
+  - mode changes via shortcut `Alt+M`
+- Emit `status-bar:clear` when:
+  - not expected in normal flow (safe mode should always display a mode once initialized)
+  - optional defensive clear on shutdown is allowed but not required.
 
-For each:
+#### `switch-thinking` -> `id: "switch-thinking"`
 
-- What string it sends as `content`
-- When it sends updates
-- When it sends clear
+- `content` format:
+  - exactly the currently rendered favorites string (including existing theme styling and delimiters), e.g. `| high medium |` with active mode highlighted.
+- Emit `status-bar:set` when:
+  - session initializes and favorites are non-empty
+  - favorites list changes (toggle favorite)
+  - active thinking mode changes (`Ctrl+T`, picker selection, model clamp changes)
+  - model changes and display string changes
+  - any existing refresh path currently calling `updateStatus` produces a non-empty string.
+- Emit `status-bar:clear` when:
+  - favorites become empty
+  - computed display becomes empty/unavailable and extension currently clears its own status.
 
 **Done when:** both mappings are documented and reviewed.
 
