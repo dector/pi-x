@@ -1,18 +1,16 @@
-# Status Bar (Simple Architecture)
+# Status Bar (Final Spec)
 
-## Goal
+Centralized status rendering for extensions.
 
-Create one `status-bar` extension that is the only renderer.
+## Layout
 
-It has a fixed layout with 3 sections:
+Three ordered sections:
 
 - `left`
 - `center`
 - `right`
 
-Each section is an ordered list of extension IDs.
-
-Example initial layout:
+Default layout:
 
 ```ts
 {
@@ -22,79 +20,39 @@ Example initial layout:
 }
 ```
 
----
+## Events
 
-## How it works
-
-### 1) Producer extensions send display content
-
-Each producer extension sends what it wants to display, including formatting.
-
-Suggested event:
+Producers publish content to the shared event bus:
 
 - `status-bar:set`
-
-Payload:
-
-```ts
-{
-  id: string;      // extension id, e.g. "safe-mode" or "switch-thinking"
-  content: string; // already formatted string
-}
-```
-
-To clear output:
-
+  - payload: `{ id: string, content: string }`
 - `status-bar:clear`
+  - payload: `{ id: string }`
 
-Payload:
+Where `id` is the producer ID (for example `safe-mode`, `switch-thinking`).
 
-```ts
-{
-  id: string;
-}
-```
+## Rendering rules
 
-### 2) Status-bar extension renders only
+Status-bar stores latest content per producer (`id -> content`) and renders by section order.
 
-`status-bar` stores latest content by `id`, then renders sections by configured order.
+Rules:
 
-Rendering rules:
+- Include only non-empty producer content.
+- Join items **inside a section** with ` · `.
+- Omit empty sections.
+- Join rendered sections with two spaces (`  `).
+- Do not wrap content with synthetic decorators (no `[]`, no added `|...|`).
 
-- Read IDs from section arrays (`left`, `center`, `right`)
-- For each section, include only IDs with non-empty content
-- Join items inside a section with ` · `
-- Omit empty sections entirely
-- Join rendered sections with two spaces (`  `)
-
-That is all. No priorities, no TTL, no extra policies.
-
----
-
-## Responsibilities
+## Responsibility split
 
 ### Producer extensions
 
-- Own their text and formatting
-- Send updates when their state changes
-- Clear when they no longer want to show anything
+- Own their text/formatting.
+- Emit `status-bar:set` when content changes.
+- Emit `status-bar:clear` when content should disappear.
 
 ### Status-bar extension
 
-- Own only layout and joining
-- Never reinterpret producer formatting
-- Never add business logic
-
----
-
-## Recommendation
-
-Start with:
-
-```ts
-left: ["safe-mode", "switch-thinking"]
-center: []
-right: []
-```
-
-Then migrate extensions one by one to emit `status-bar:set` / `status-bar:clear`.
+- Own layout and joining only.
+- Never reinterpret producer formatting.
+- Never add business logic (priority/TTL/sorting policies).
