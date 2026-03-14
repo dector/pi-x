@@ -40,9 +40,10 @@ function parseClearArgs(args: string): StatusBarClearPayload | undefined {
 
 export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
+	let lastContext: ExtensionContext | undefined;
 
-	const renderStatus = (ctx: ExtensionContext): void => {
-		if (!ctx.hasUI) return;
+	const renderStatus = (): void => {
+		if (!lastContext?.hasUI) return;
 
 		const renderSection = (ids: string[]): string => {
 			const items = ids
@@ -54,29 +55,46 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
 		const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
 		const right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right);
-		ctx.ui.setStatus("status-bar", `${left}${SECTION_DELIMITER}${center}${SECTION_DELIMITER}${right}`);
+		lastContext.ui.setStatus("status-bar", `${left}${SECTION_DELIMITER}${center}${SECTION_DELIMITER}${right}`);
+	};
+
+	const bindContextAndRender = (ctx: ExtensionContext): void => {
+		lastContext = ctx;
+		renderStatus();
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		renderStatus(ctx);
+		bindContextAndRender(ctx);
 	});
 
-	pi.on(STATUS_BAR_EVENTS.set, async (event, ctx) => {
-		if (!isSetPayload(event)) return;
-		contentById.set(event.id, event.content);
-		renderStatus(ctx);
+	pi.on("session_switch", async (_event, ctx) => {
+		bindContextAndRender(ctx);
 	});
 
-	pi.on(STATUS_BAR_EVENTS.clear, async (event, ctx) => {
-		if (!isClearPayload(event)) return;
-		contentById.delete(event.id);
-		renderStatus(ctx);
+	pi.on("session_tree", async (_event, ctx) => {
+		bindContextAndRender(ctx);
+	});
+
+	pi.on("session_fork", async (_event, ctx) => {
+		bindContextAndRender(ctx);
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.set, (payload) => {
+		if (!isSetPayload(payload)) return;
+		contentById.set(payload.id, payload.content);
+		renderStatus();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.clear, (payload) => {
+		if (!isClearPayload(payload)) return;
+		contentById.delete(payload.id);
+		renderStatus();
 	});
 
 	pi.registerCommand("status-bar-contract", {
-		description: "Show status-bar M1 contract (events + join + default layout)",
+		description: "Show status-bar contract (events + join + default layout)",
 		handler: async (_args, ctx) => {
-			renderStatus(ctx);
+			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
 			ctx.ui.notify(
 				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear} | join=\"${STATUS_BAR_JOIN_SEPARATOR}\" | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[] right=[]`,
@@ -93,8 +111,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				if (ctx.hasUI) ctx.ui.notify("Usage: /status-bar-set <id> <content>", "warning");
 				return;
 			}
-			contentById.set(parsed.id, parsed.content);
-			renderStatus(ctx);
+			bindContextAndRender(ctx);
+			pi.events.emit(STATUS_BAR_EVENTS.set, parsed);
 		},
 	});
 
@@ -106,8 +124,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				if (ctx.hasUI) ctx.ui.notify("Usage: /status-bar-clear <id>", "warning");
 				return;
 			}
-			contentById.delete(parsed.id);
-			renderStatus(ctx);
+			bindContextAndRender(ctx);
+			pi.events.emit(STATUS_BAR_EVENTS.clear, parsed);
 		},
 	});
 }

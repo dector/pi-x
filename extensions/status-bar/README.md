@@ -16,12 +16,15 @@ This extension currently freezes the contract only:
   - `status-bar:clear` with `{ id }`
 - Join rule (for later rendering milestone): ` | `
 
-## Current behavior (M2 skeleton)
+## Current behavior (M4 implementation)
 
 - Keeps in-memory producer content map: `id -> content`.
+- Listens on shared extension event bus for:
+  - `status-bar:set`
+  - `status-bar:clear`
 - Renders all three sections visibly as brackets: `[left] · [center] · [right]`.
 - Section delimiter for visibility: ` · `.
-- Inside each section, items are still joined by the frozen M1 join rule: ` | `.
+- Inside each section, items are joined by the frozen contract join rule: ` | `.
 - Empty sections render as `[]`.
 
 ## Dev helper commands

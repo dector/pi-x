@@ -14,6 +14,9 @@ interface SafeModeState {
 	mode: SafeMode;
 }
 
+const STATUS_BAR_ID = "safe-mode";
+const STATUS_BAR_SET_EVENT = "status-bar:set";
+
 type MaybeCustomEntry = {
 	type?: string;
 	customType?: string;
@@ -122,8 +125,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		if (!ctx.hasUI) return;
-		ctx.ui.setStatus("safe-mode", styleMode(ctx, mode));
+		const content = ctx.hasUI ? styleMode(ctx, mode) : `[${mode.toUpperCase()}]`;
+		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
 	}
 
 	function setMode(nextMode: SafeMode, ctx: ExtensionContext, options?: { persist?: boolean; notify?: boolean }): void {

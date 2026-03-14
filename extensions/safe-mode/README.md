@@ -68,6 +68,8 @@ Then run `/reload`.
 
 ## Notes
 
+Status rendering is emitted via status-bar events (`status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
+
 Read-only bash matching is intentionally strict.
 
 - Allowed automatically: single read-only commands and read-only pipelines (`|`) where each stage is read-only.

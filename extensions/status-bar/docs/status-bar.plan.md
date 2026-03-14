@@ -101,9 +101,7 @@ Plan internal responsibilities:
 
 ---
 
-### M4 — Implement status-bar extension
-
-(Implementation milestone, later)
+### M4 — Implement status-bar extension (implemented)
 
 - Add status-bar extension
 - Add event listeners (`set`, `clear`)
@@ -114,7 +112,7 @@ Plan internal responsibilities:
 
 ---
 
-### M5 — Migrate `safe-mode`
+### M5 — Migrate `safe-mode` (implemented)
 
 - Stop direct status rendering from `safe-mode`
 - Emit `status-bar:set` / `status-bar:clear`
