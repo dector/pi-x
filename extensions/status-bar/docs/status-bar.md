@@ -16,11 +16,11 @@ Default layout:
 {
   left: ["safe-mode", "switch-thinking"],
   center: [],
-  right: [],
+  right: ["context-watcher"],
 }
 ```
 
-## Events
+## Events (producer API)
 
 Producers publish content to the shared event bus:
 
@@ -29,19 +29,46 @@ Producers publish content to the shared event bus:
 - `status-bar:clear`
   - payload: `{ id: string }`
 
-Where `id` is the producer ID (for example `safe-mode`, `switch-thinking`).
+`id` is the producer ID (for example `safe-mode`, `switch-thinking`).
 
-## Rendering rules
+## Rendering path
 
-Status-bar stores latest content per producer (`id -> content`) and renders by section order.
+Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), not `ctx.ui.setStatus(...)`.
+
+Footer lines:
+
+1. cwd + git branch + optional session name
+2. usage/model summary
+3. status-bar line (left/center/right)
+
+## Status-line rendering rules
+
+Status-bar stores latest content per producer (`id -> content`) and resolves section values by `DEFAULT_STATUS_BAR_LAYOUT`.
 
 Rules:
 
 - Include only non-empty producer content.
 - Join items **inside a section** with ` · `.
 - Omit empty sections.
-- Join rendered sections with two spaces (`  `).
+- Keep section separator contract (`"  "`) as minimum inter-section gap/fallback join.
 - Do not wrap content with synthetic decorators (no `[]`, no added `|...|`).
+
+## Alignment + truncation behavior
+
+The status line uses ANSI-aware width handling:
+
+- `visibleWidth(...)`
+- `truncateToWidth(...)`
+
+Placement priority:
+
+1. exact placement with no overlap:
+   - left at column 0
+   - center centered
+   - right right-aligned to terminal edge
+2. if overlap, render left + right (drop center)
+3. if still too narrow, truncate left/right as needed
+4. last fallback: left-only
 
 ## Responsibility split
 
@@ -53,6 +80,6 @@ Rules:
 
 ### Status-bar extension
 
-- Own layout and joining only.
-- Never reinterpret producer formatting.
+- Own layout, joining, alignment, and truncation.
+- Never reinterpret producer business meaning.
 - Never add business logic (priority/TTL/sorting policies).
