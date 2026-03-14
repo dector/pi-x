@@ -7,6 +7,7 @@ This repo currently contains the following extension(s):
 - [`switch-thinking`](extensions/switch-thinking/README.md) — Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. It persists favorites across sessions and respects model capability limits.
 - [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`.
 - [`status-bar`](extensions/status-bar/README.md) — Defines a simple centralized status-bar contract (left/center/right layout + `status-bar:set` / `status-bar:clear` events).
+- [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`CTX:10.0%`) with threshold-based colors.
 
 ## Install policy for pi agents
 
