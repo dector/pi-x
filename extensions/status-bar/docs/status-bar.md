@@ -63,8 +63,9 @@ Rendering rules:
 
 - Read IDs from section arrays (`left`, `center`, `right`)
 - For each section, include only IDs with non-empty content
-- Join items inside a section with ` | `
-- Render three sections in layout order
+- Join items inside a section with ` · `
+- Omit empty sections entirely
+- Join rendered sections with two spaces (`  `)
 
 That is all. No priorities, no TTL, no extra policies.
 

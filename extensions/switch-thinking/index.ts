@@ -81,8 +81,6 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		if (signature === lastStatusSignature) return;
 		lastStatusSignature = signature;
 
-		const leftBar = ctx.hasUI ? ctx.ui.theme.fg("muted", "|") : "|";
-		const rightBar = ctx.hasUI ? ctx.ui.theme.fg("muted", "|") : "|";
 		const modes = displayModes.map((mode) => {
 			if (!ctx.hasUI) return mode;
 			return mode === current ? ctx.ui.theme.fg("accent", mode) : ctx.ui.theme.fg("muted", mode);
@@ -90,7 +88,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 
 		pi.events.emit(STATUS_BAR_SET_EVENT, {
 			id: STATUS_BAR_ID,
-			content: `${leftBar} ${modes.join(" ")} ${rightBar}`,
+			content: modes.join(" "),
 		});
 	};
 

@@ -20,8 +20,8 @@ export interface StatusBarClearPayload {
 	id: string;
 }
 
-// M1 join rule (frozen contract)
-export const STATUS_BAR_JOIN_SEPARATOR = " | " as const;
+// Join rule between items inside the same section
+export const STATUS_BAR_JOIN_SEPARATOR = " · " as const;
 
 // M1 default layout (frozen contract)
 export const DEFAULT_STATUS_BAR_LAYOUT: StatusBarLayout = {

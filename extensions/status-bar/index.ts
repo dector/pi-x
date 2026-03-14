@@ -7,7 +7,7 @@ import {
 	type StatusBarSetPayload,
 } from "./contract";
 
-const SECTION_DELIMITER = " · ";
+const SECTION_DELIMITER = "  ";
 
 function isSetPayload(value: unknown): value is StatusBarSetPayload {
 	if (!value || typeof value !== "object") return false;
@@ -45,17 +45,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	const renderStatus = (): void => {
 		if (!lastContext?.hasUI) return;
 
-		const renderSection = (ids: string[]): string => {
+		const renderSection = (ids: string[]): string | undefined => {
 			const items = ids
 				.map((id) => contentById.get(id))
 				.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-			return `[${items.join(STATUS_BAR_JOIN_SEPARATOR)}]`;
+			if (items.length === 0) return undefined;
+			return items.join(STATUS_BAR_JOIN_SEPARATOR);
 		};
 
-		const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
-		const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
-		const right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right);
-		lastContext.ui.setStatus("status-bar", `${left}${SECTION_DELIMITER}${center}${SECTION_DELIMITER}${right}`);
+		const sections = [
+			renderSection(DEFAULT_STATUS_BAR_LAYOUT.left),
+			renderSection(DEFAULT_STATUS_BAR_LAYOUT.center),
+			renderSection(DEFAULT_STATUS_BAR_LAYOUT.right),
+		].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+		lastContext.ui.setStatus("status-bar", sections.length > 0 ? sections.join(SECTION_DELIMITER) : undefined);
 	};
 
 	const bindContextAndRender = (ctx: ExtensionContext): void => {
@@ -92,12 +96,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("status-bar-contract", {
-		description: "Show status-bar contract (events + join + default layout)",
+		description: "Show status-bar contract (events + item join + section separator + layout)",
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
 			ctx.ui.notify(
-				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear} | join=\"${STATUS_BAR_JOIN_SEPARATOR}\" | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[] right=[]`,
+				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear} | item-join=\"${STATUS_BAR_JOIN_SEPARATOR}\" | section-separator=\"${SECTION_DELIMITER}\" | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[] right=[]`,
 				"info",
 			);
 		},

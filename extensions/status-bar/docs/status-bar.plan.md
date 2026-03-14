@@ -9,11 +9,10 @@ Apply these by default unless explicitly overridden in-task:
 - Keep manual testing straightforward:
   - run `/reload`
   - verify status-bar output in a live session
-- While centralized producer migration is incomplete, keep layout visibly rendered so structure is easy to inspect:
-  - always render three sections (`left`, `center`, `right`) as bracketed blocks
-  - render empty sections as `[]`
-  - use section delimiter ` · ` (dot in the center)
-- Keep producer-item join rule inside sections as the frozen contract value: ` | `
+- Render only sections that currently have content.
+- Use two spaces as section delimiter: `  `.
+- Use dot as producer-item delimiter inside each section: ` · `.
+- Do not add extra visual wrappers around producer content (no `[]`, no synthetic `|...|`).
 
 ## Target design
 
@@ -33,7 +32,7 @@ right: []
 
 Producer extensions send their own already-formatted content.
 
-Status-bar only places outputs in the configured order and joins with ` | `.
+Status-bar only places outputs in the configured order and joins items with ` · `.
 
 ---
 
@@ -47,7 +46,7 @@ Define and document:
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`
-- Join rule: ` | ` between outputs
+- Join rule: ` · ` between outputs in the same section
 
 **Done when:** idea doc is approved with this exact scope.
 
@@ -86,7 +85,7 @@ Plan internal responsibilities:
 #### `switch-thinking` -> `id: "switch-thinking"`
 
 - `content` format:
-  - exactly the currently rendered favorites string (including existing theme styling and delimiters), e.g. `| high medium |` with active mode highlighted.
+  - exactly the currently rendered favorites string (including existing theme styling), e.g. `high medium` with active mode highlighted.
 - Emit `status-bar:set` when:
   - session initializes and favorites are non-empty
   - favorites list changes (toggle favorite)
@@ -106,7 +105,7 @@ Plan internal responsibilities:
 - Add status-bar extension
 - Add event listeners (`set`, `clear`)
 - Add rendering for left/center/right
-- Add ` | ` joining
+- Add ` · ` joining
 
 **Done when:** status-bar can show data from test events.
 

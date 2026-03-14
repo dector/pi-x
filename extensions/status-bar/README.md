@@ -14,7 +14,7 @@ This extension currently freezes the contract only:
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`
-- Join rule (for later rendering milestone): ` | `
+- Item join rule inside a section: ` · `
 
 ## Current behavior (M4 implementation)
 
@@ -22,10 +22,10 @@ This extension currently freezes the contract only:
 - Listens on shared extension event bus for:
   - `status-bar:set`
   - `status-bar:clear`
-- Renders all three sections visibly as brackets: `[left] · [center] · [right]`.
-- Section delimiter for visibility: ` · `.
-- Inside each section, items are joined by the frozen contract join rule: ` | `.
-- Empty sections render as `[]`.
+- Renders only non-empty sections.
+- Sections are separated by two spaces: `  `.
+- Inside each section, items are joined by ` · `.
+- Empty sections are omitted (not rendered).
 
 ## Dev helper commands
 
