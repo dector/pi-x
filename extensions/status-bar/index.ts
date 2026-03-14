@@ -5,11 +5,19 @@ import {
 	STATUS_BAR_EVENTS,
 	STATUS_BAR_JOIN_SEPARATOR,
 	type StatusBarClearPayload,
+	type StatusBarFirstLineClearPayload,
+	type StatusBarFirstLineSetPayload,
 	type StatusBarSetPayload,
 } from "./contract";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
+
+interface FirstLineEntry {
+	content: string;
+	priority: number;
+	order: number;
+}
 
 function isSetPayload(value: unknown): value is StatusBarSetPayload {
 	if (!value || typeof value !== "object") return false;
@@ -20,6 +28,21 @@ function isSetPayload(value: unknown): value is StatusBarSetPayload {
 function isClearPayload(value: unknown): value is StatusBarClearPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarClearPayload>;
+	return typeof maybe.id === "string";
+}
+
+function isFirstLineSetPayload(value: unknown): value is StatusBarFirstLineSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarFirstLineSetPayload>;
+	if (typeof maybe.id !== "string") return false;
+	if (typeof maybe.content !== "string") return false;
+	if (maybe.priority !== undefined && typeof maybe.priority !== "number") return false;
+	return true;
+}
+
+function isFirstLineClearPayload(value: unknown): value is StatusBarFirstLineClearPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarFirstLineClearPayload>;
 	return typeof maybe.id === "string";
 }
 
@@ -176,6 +199,8 @@ function renderThreeSectionLine(width: number, left?: string, center?: string, r
 
 export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
+	const firstLineById = new Map<string, FirstLineEntry>();
+	let firstLineOrderCounter = 0;
 	let lastContext: ExtensionContext | undefined;
 	let footerOwnerContext: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
@@ -187,6 +212,29 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			.map((value) => sanitizeStatusText(value));
 		if (items.length === 0) return undefined;
 		return items.join(STATUS_BAR_JOIN_SEPARATOR);
+	};
+
+	const resolveFirstLine = (): string | undefined => {
+		if (firstLineById.size === 0) return undefined;
+
+		let selected: FirstLineEntry | undefined;
+		for (const entry of firstLineById.values()) {
+			if (!hasVisibleText(entry.content)) continue;
+			if (!selected) {
+				selected = entry;
+				continue;
+			}
+			if (entry.priority > selected.priority) {
+				selected = entry;
+				continue;
+			}
+			if (entry.priority === selected.priority && entry.order < selected.order) {
+				selected = entry;
+			}
+		}
+
+		if (!selected) return undefined;
+		return sanitizeStatusText(selected.content);
 	};
 
 	const requestRender = (): void => {
@@ -213,16 +261,22 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				render(width: number): string[] {
 					const activeCtx = lastContext ?? ctx;
 
-					let pwd = process.cwd();
-					const home = process.env.HOME || process.env.USERPROFILE;
-					if (home && pwd.startsWith(home)) {
-						pwd = `~${pwd.slice(home.length)}`;
+					const producedFirstLine = resolveFirstLine();
+					let line1: string;
+					if (producedFirstLine) {
+						line1 = truncateToWidth(producedFirstLine, width, "");
+					} else {
+						let pwd = activeCtx.cwd || process.cwd();
+						const home = process.env.HOME || process.env.USERPROFILE;
+						if (home && pwd.startsWith(home)) {
+							pwd = `~${pwd.slice(home.length)}`;
+						}
+						const branch = footerData.getGitBranch();
+						if (branch) pwd = `${pwd} (${branch})`;
+						const sessionName = activeCtx.sessionManager.getSessionName();
+						if (sessionName) pwd = `${pwd} • ${sessionName}`;
+						line1 = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 					}
-					const branch = footerData.getGitBranch();
-					if (branch) pwd = `${pwd} (${branch})`;
-					const sessionName = activeCtx.sessionManager.getSessionName();
-					if (sessionName) pwd = `${pwd} • ${sessionName}`;
-					const line1 = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 
 					const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
 					const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
@@ -316,13 +370,31 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
+	pi.events.on(STATUS_BAR_EVENTS.firstLineSet, (payload) => {
+		if (!isFirstLineSetPayload(payload)) return;
+		const existing = firstLineById.get(payload.id);
+		const order = existing?.order ?? firstLineOrderCounter++;
+		firstLineById.set(payload.id, {
+			content: payload.content,
+			priority: Number.isFinite(payload.priority) ? payload.priority ?? 0 : 0,
+			order,
+		});
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.firstLineClear, (payload) => {
+		if (!isFirstLineClearPayload(payload)) return;
+		firstLineById.delete(payload.id);
+		requestRender();
+	});
+
 	pi.registerCommand("status-bar-contract", {
 		description: "Show status-bar contract (events + item join + section separator + layout)",
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
 			ctx.ui.notify(
-				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear} | item-join=\"${STATUS_BAR_JOIN_SEPARATOR}\" | section-separator=\"${SECTION_DELIMITER}\" | renderer=setFooter(custom) | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[${DEFAULT_STATUS_BAR_LAYOUT.center.join(", ")}] right=[${DEFAULT_STATUS_BAR_LAYOUT.right.join(", ")}]`,
+				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear}, ${STATUS_BAR_EVENTS.firstLineSet}, ${STATUS_BAR_EVENTS.firstLineClear} | item-join="${STATUS_BAR_JOIN_SEPARATOR}" | section-separator="${SECTION_DELIMITER}" | renderer=setFooter(custom) | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[${DEFAULT_STATUS_BAR_LAYOUT.center.join(", ")}] right=[${DEFAULT_STATUS_BAR_LAYOUT.right.join(", ")}]`,
 				"info",
 			);
 		},

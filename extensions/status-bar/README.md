@@ -2,7 +2,9 @@
 
 Centralized status-bar renderer for producer extensions.
 
-## Contract (unchanged)
+## Contract
+
+### Second line sections (unchanged)
 
 - Sections: `left`, `center`, `right`
 - Default order:
@@ -15,16 +17,24 @@ Centralized status-bar renderer for producer extensions.
 - Item delimiter inside a section: ` · `
 - Section delimiter: two spaces (`  `)
 
+### First line provider (new)
+
+- Events:
+  - `status-bar:first-line:set` with `{ id, content, priority? }`
+  - `status-bar:first-line:clear` with `{ id }`
+- Resolution:
+  - highest `priority` wins (default `0`)
+  - tie-breaker: stable first-registration order
+  - if no provider exists, fallback to built-in cwd/branch/session line
+
 ## Implementation
 
-`status-bar` now renders through a **custom footer** via `ctx.ui.setFooter(...)`.
+`status-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
 
 The footer renders two lines:
 
-1. cwd + git branch + optional session name (equivalent to pi default first line)
+1. First line from first-line provider events (or fallback to cwd + git branch + optional session name)
 2. status-bar line with true left/center/right alignment
-
-Status-bar producer content is still stored as `id -> content`, resolved by `DEFAULT_STATUS_BAR_LAYOUT`, and joined per section with `STATUS_BAR_JOIN_SEPARATOR`.
 
 ## Alignment and width behavior
 
@@ -40,22 +50,24 @@ Status-bar producer content is still stored as `id -> content`, resolved by `DEF
 
 ## Producer compatibility
 
-No producer changes required.
-
-Existing producers continue to work unchanged:
+Existing second-line producers continue to work unchanged:
 
 - `safe-mode`
 - `switch-thinking`
 - `context-watcher`
+
+First-line producers (example):
+
+- `repo-stats`
 
 ## Dev helper commands
 
 - `/status-bar-contract`
   - Shows current contract and renderer details.
 - `/status-bar-set <id> <content>`
-  - Sets test content for an ID and re-renders.
+  - Sets test content for a second-line ID and re-renders.
 - `/status-bar-clear <id>`
-  - Clears test content for an ID and re-renders.
+  - Clears test content for a second-line ID and re-renders.
 
 ## Install
 

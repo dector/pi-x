@@ -1,6 +1,8 @@
 export const STATUS_BAR_EVENTS = {
 	set: "status-bar:set",
 	clear: "status-bar:clear",
+	firstLineSet: "status-bar:first-line:set",
+	firstLineClear: "status-bar:first-line:clear",
 } as const;
 
 export type StatusBarSection = "left" | "center" | "right";
@@ -17,6 +19,16 @@ export interface StatusBarSetPayload {
 }
 
 export interface StatusBarClearPayload {
+	id: string;
+}
+
+export interface StatusBarFirstLineSetPayload {
+	id: string;
+	content: string;
+	priority?: number;
+}
+
+export interface StatusBarFirstLineClearPayload {
 	id: string;
 }
 

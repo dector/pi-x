@@ -8,6 +8,7 @@ This repo currently contains the following extension(s):
 - [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`.
 - [`status-bar`](extensions/status-bar/README.md) — Defines a simple centralized status-bar contract (left/center/right layout + `status-bar:set` / `status-bar:clear` events).
 - [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`CTX:10.0%`) with threshold-based colors.
+- [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar.
 
 ## Install policy for pi agents
 
