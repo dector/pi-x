@@ -12,6 +12,7 @@ import {
 
 interface SafeModeState {
 	mode: SafeMode;
+	outerAccess: boolean;
 }
 
 type ApprovalDecision = "approve-once" | "approve-all-session" | "deny" | "steer";
@@ -19,19 +20,30 @@ type ApprovalDecision = "approve-once" | "approve-all-session" | "deny" | "steer
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const ESC = "\u001b";
+const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 
 type MaybeCustomEntry = {
 	type?: string;
 	customType?: string;
-	data?: { mode?: unknown };
+	data?: { mode?: unknown; outerAccess?: unknown };
 };
 
 function formatModeList(): string {
 	return SAFE_MODES.join(" | ");
 }
 
-function styleMode(ctx: ExtensionContext, mode: SafeMode): string {
-	const label = `[${mode.toUpperCase()}]`;
+function parseBooleanLike(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "true" || normalized === "on" || normalized === "1") return true;
+	if (normalized === "false" || normalized === "off" || normalized === "0") return false;
+	return undefined;
+}
+
+function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
+	const suffix = mode !== "paranoid" && outerAccess ? "!" : "";
+	const label = `[${mode.toUpperCase()}${suffix}]`;
 	switch (mode) {
 		case "yolo":
 			return ctx.ui.theme.fg("error", label);
@@ -45,14 +57,17 @@ function styleMode(ctx: ExtensionContext, mode: SafeMode): string {
 	}
 }
 
-function getPersistedModeFromBranch(ctx: ExtensionContext): SafeMode | undefined {
-	let persisted: SafeMode | undefined;
+function getPersistedStateFromBranch(ctx: ExtensionContext): Partial<SafeModeState> {
+	let mode: SafeMode | undefined;
+	let outerAccess: boolean | undefined;
 	for (const entry of ctx.sessionManager.getBranch() as MaybeCustomEntry[]) {
 		if (entry.type !== "custom" || entry.customType !== "safe-mode") continue;
-		const parsed = parseSafeMode(entry.data?.mode);
-		if (parsed) persisted = parsed;
+		const parsedMode = parseSafeMode(entry.data?.mode);
+		if (parsedMode) mode = parsedMode;
+		const parsedOuter = parseBooleanLike(entry.data?.outerAccess);
+		if (parsedOuter !== undefined) outerAccess = parsedOuter;
 	}
-	return persisted;
+	return { mode, outerAccess };
 }
 
 function getToolRequestText(toolName: string, input: Record<string, unknown>): string {
@@ -357,18 +372,24 @@ async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession
 
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
+	let outerAccess = false;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 
 	function resetSessionApprovals(): void {
 		autoApprovedBashCommandsForSession.clear();
 	}
 
-	function persistMode(): void {
-		pi.appendEntry<SafeModeState>("safe-mode", { mode });
+	function persistState(): void {
+		pi.appendEntry<SafeModeState>("safe-mode", { mode, outerAccess });
+	}
+
+	function statusLabel(): string {
+		const suffix = mode !== "paranoid" && outerAccess ? "!" : "";
+		return `[${mode.toUpperCase()}${suffix}]`;
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		const content = ctx.hasUI ? styleMode(ctx, mode) : `[${mode.toUpperCase()}]`;
+		const content = ctx.hasUI ? styleMode(ctx, mode, outerAccess) : statusLabel();
 		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
 	}
 
@@ -381,33 +402,67 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		updateStatus(ctx);
 
 		if (persist && changed) {
-			persistMode();
+			persistState();
 		}
 
 		if (notify && ctx.hasUI) {
-			ctx.ui.notify(`Safe mode: ${mode}`, "info");
+			ctx.ui.notify(`Safe mode: ${statusLabel()}`, "info");
 		}
 	}
 
-	function resolveMode(ctx: ExtensionContext): SafeMode {
-		const persisted = getPersistedModeFromBranch(ctx) ?? DEFAULT_SAFE_MODE;
-		const flagRaw = pi.getFlag("safe-mode");
-		const flagMode = parseSafeMode(flagRaw);
+	function setOuterAccess(nextOuterAccess: boolean, ctx: ExtensionContext, options?: { persist?: boolean; notify?: boolean }): void {
+		const persist = options?.persist ?? true;
+		const notify = options?.notify ?? true;
+		const changed = nextOuterAccess !== outerAccess;
 
-		if (typeof flagRaw === "string" && flagRaw.trim().length > 0 && !flagMode && ctx.hasUI) {
+		outerAccess = nextOuterAccess;
+		updateStatus(ctx);
+
+		if (persist && changed) {
+			persistState();
+		}
+
+		if (notify && ctx.hasUI) {
+			ctx.ui.notify(`Safe mode outer access: ${outerAccess ? "on" : "off"}`, "info");
+		}
+	}
+
+	function applyResolvedState(ctx: ExtensionContext): void {
+		const persisted = getPersistedStateFromBranch(ctx);
+
+		const modeFlagRaw = pi.getFlag("safe-mode");
+		const modeFlag = parseSafeMode(modeFlagRaw);
+		if (typeof modeFlagRaw === "string" && modeFlagRaw.trim().length > 0 && !modeFlag && ctx.hasUI) {
 			ctx.ui.notify(
-				`Ignoring invalid --safe-mode value '${flagRaw}'. Expected one of: ${formatModeList()}`,
+				`Ignoring invalid --safe-mode value '${modeFlagRaw}'. Expected one of: ${formatModeList()}`,
 				"warning",
 			);
 		}
 
-		return flagMode ?? persisted;
+		const outerFlagRaw = pi.getFlag(OUTER_ACCESS_FLAG);
+		const outerFlag = parseBooleanLike(outerFlagRaw);
+		if (outerFlagRaw !== undefined && outerFlag === undefined && ctx.hasUI) {
+			ctx.ui.notify(
+				`Ignoring invalid --${OUTER_ACCESS_FLAG} value '${String(outerFlagRaw)}'. Expected true/false.`,
+				"warning",
+			);
+		}
+
+		mode = modeFlag ?? persisted.mode ?? DEFAULT_SAFE_MODE;
+		outerAccess = outerFlag ?? persisted.outerAccess ?? false;
+		updateStatus(ctx);
 	}
 
 	pi.registerFlag("safe-mode", {
 		description: `Tool approval mode: ${formatModeList()}`,
 		type: "string",
 		default: DEFAULT_SAFE_MODE,
+	});
+
+	pi.registerFlag(OUTER_ACCESS_FLAG, {
+		description: "Apply mode rules to paths outside the project root",
+		type: "boolean",
+		default: false,
 	});
 
 	pi.registerCommand("safe-mode", {
@@ -417,20 +472,49 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 			if (input.length === 0) {
 				if (ctx.hasUI) {
-					ctx.ui.notify(`Current safe mode: ${mode}. Available: ${formatModeList()}`, "info");
+					ctx.ui.notify(
+						`Current safe mode: ${statusLabel()} (outer access: ${outerAccess ? "on" : "off"}). Available: ${formatModeList()}`,
+						"info",
+					);
 				}
 				return;
 			}
 
-			if (input.toLowerCase() === "cycle") {
+			const normalized = input.toLowerCase();
+			if (normalized === "cycle") {
 				setMode(cycleSafeMode(mode), ctx);
+				return;
+			}
+
+			if (normalized.startsWith("outer")) {
+				const parts = normalized.split(/\s+/);
+				const action = parts[1];
+				if (action === "toggle") {
+					setOuterAccess(!outerAccess, ctx);
+					return;
+				}
+				if (action === "on" || action === "true") {
+					setOuterAccess(true, ctx);
+					return;
+				}
+				if (action === "off" || action === "false") {
+					setOuterAccess(false, ctx);
+					return;
+				}
+
+				if (ctx.hasUI) {
+					ctx.ui.notify("Invalid outer modifier. Use: /safe-mode outer on|off|toggle", "warning");
+				}
 				return;
 			}
 
 			const parsed = parseSafeMode(input);
 			if (!parsed) {
 				if (ctx.hasUI) {
-					ctx.ui.notify(`Invalid mode '${input}'. Use one of: ${formatModeList()} or 'cycle'.`, "warning");
+					ctx.ui.notify(
+						`Invalid mode '${input}'. Use one of: ${formatModeList()}, 'cycle', or 'outer on|off|toggle'.`,
+						"warning",
+					);
 				}
 				return;
 			}
@@ -459,19 +543,26 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerShortcut(Key.ctrlShiftAlt("m"), {
+		description: "Toggle safe mode outer access",
+		handler: async (ctx) => {
+			setOuterAccess(!outerAccess, ctx);
+		},
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionApprovals();
-		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
+		applyResolvedState(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		resetSessionApprovals();
-		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
+		applyResolvedState(ctx);
 	});
 
 	pi.on("session_fork", async (_event, ctx) => {
 		resetSessionApprovals();
-		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
+		applyResolvedState(ctx);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -487,6 +578,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			toolName: event.toolName,
 			input,
 			projectRoot: ctx.cwd,
+			outerAccess,
 		});
 
 		if (decision.action === "allow") return;

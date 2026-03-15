@@ -13,19 +13,53 @@ Intercepts tool calls and applies configurable approval policies.
   - Everything else asks for confirmation.
 - `smart`
   - Includes all `reader` behavior.
-  - Also auto-allows `edit`/`write` when the target path is inside the project root (`ctx.cwd`).
+  - Auto-allows `edit`/`write` only when target path is inside project root (`ctx.cwd`).
   - Other operations ask for confirmation.
 - `yolo`
-  - Allows everything.
+  - Allows everything within project-scope rules.
+
+## Outer access modifier
+
+- `outerAccess=false` (default)
+  - Mode auto-approvals apply inside project root (`ctx.cwd`) only.
+  - If an operation clearly targets paths outside the project root, approval is required.
+- `outerAccess=true`
+  - `reader`/`yolo`: mode rules also apply to outside paths.
+  - `smart`: read rules apply outside paths, but `edit`/`write` remain inside-project only.
+
+Status bar indicator:
+- non-paranoid + `outerAccess=false`: `[SMART]`, `[READER]`, `[YOLO]`
+- non-paranoid + `outerAccess=true`: `[SMART!]`, `[READER!]`, `[YOLO!]`
+- paranoid always: `[PARANOID]`
+
+## Auto-approval matrix
+
+Legend: ✅ auto-allow, ❓ asks for approval.
+
+| Operation | PARANOID | READER | READER! | SMART | SMART! | YOLO | YOLO! |
+|---|---|---|---|---|---|---|---|
+| `read`/`ls`/`grep` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `read`/`ls`/`grep` **outside repo** | ❓ | ❓ | ✅ | ❓ | ✅ | ❓ | ✅ |
+| `edit`/`write` **inside repo** | ❓ | ❓ | ❓ | ✅ | ✅ | ✅ | ✅ |
+| `edit`/`write` **outside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ |
+| read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| read-only `bash` targeting **outside repo** | ❓ | ❓ | ✅ | ❓ | ✅ | ❓ | ✅ |
+
+Notes:
+- `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.
+- For `reader`/`smart`, non-read-only operations still ask for approval.
+- For `yolo`, `outerAccess=false` still gates outside-repo targets; `YOLO!` allows those too.
 
 ## Commands
 
 - `/safe-mode`
-  - Show current mode.
+  - Show current mode and outer access status.
 - `/safe-mode <paranoid|reader|smart|yolo>`
   - Set mode.
 - `/safe-mode cycle`
   - Cycle modes.
+- `/safe-mode outer on|off|toggle`
+  - Configure outside-project behavior.
 - `/safe-mode-list`
   - Open an interactive manager for exact `bash` command lines auto-approved for the current session.
   - Keys:
@@ -41,6 +75,8 @@ Intercepts tool calls and applies configurable approval policies.
 
 - `Ctrl+Shift+M`
   - Cycle safe modes.
+- `Ctrl+Alt+Shift+M`
+  - Toggle outer access modifier.
 
 ## Approval dialog
 
@@ -54,11 +90,13 @@ When approval is required:
 ## CLI flag
 
 - `--safe-mode <paranoid|reader|smart|yolo>`
-- Default: `smart`
+  - Default: `smart`
+- `--safe-mode-outer-access <true|false>`
+  - Default: `false`
 
 ## Persistence
 
-Mode changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
+Mode and outer access changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
 
 ## Non-interactive behavior
 
@@ -93,6 +131,7 @@ Then run `/reload`.
 ## Notes
 
 Status rendering is emitted via status-bar events (`status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
+For non-paranoid modes, `!` indicates `outerAccess=true`.
 
 Read-only bash matching is intentionally strict and AST-based (via `bash-parser`).
 

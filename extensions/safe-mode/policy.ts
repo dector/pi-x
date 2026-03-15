@@ -1,4 +1,5 @@
 import parseBash from "bash-parser";
+import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export const SAFE_MODES = ["paranoid", "reader", "smart", "yolo"] as const;
@@ -167,13 +168,10 @@ export function decideToolCall(args: {
 	toolName: string;
 	input: Record<string, unknown>;
 	projectRoot: string;
+	outerAccess: boolean;
 }): ToolDecision {
-	const { mode, toolName, input, projectRoot } = args;
+	const { mode, toolName, input, projectRoot, outerAccess } = args;
 	const summary = describeToolCall(toolName, input);
-
-	if (mode === "yolo") {
-		return { action: "allow", summary };
-	}
 
 	if (mode === "paranoid") {
 		return {
@@ -181,6 +179,18 @@ export function decideToolCall(args: {
 			reason: "Paranoid mode requires approval for every tool call.",
 			summary,
 		};
+	}
+
+	if (!outerAccess && targetsOutsideProject(toolName, input, projectRoot)) {
+		return {
+			action: "confirm",
+			reason: `Operation targets outside project root (${projectRoot}).`,
+			summary,
+		};
+	}
+
+	if (mode === "yolo") {
+		return { action: "allow", summary };
 	}
 
 	if (isReaderAllowed(toolName, input)) {
@@ -197,15 +207,15 @@ export function decideToolCall(args: {
 			};
 		}
 
-		if (isPathInsideProject(normalizedPath, projectRoot)) {
-			return { action: "allow", summary };
+		if (!isPathInsideProject(normalizedPath, projectRoot)) {
+			return {
+				action: "confirm",
+				reason: `Smart mode only auto-allows file modifications inside project root (${projectRoot}).`,
+				summary,
+			};
 		}
 
-		return {
-			action: "confirm",
-			reason: `Path is outside project root (${projectRoot}).`,
-			summary,
-		};
+		return { action: "allow", summary };
 	}
 
 	return {
@@ -215,6 +225,111 @@ export function decideToolCall(args: {
 			: "Smart mode requires approval for this operation.",
 		summary,
 	};
+}
+
+const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
+
+function targetsOutsideProject(toolName: string, input: Record<string, unknown>, projectRoot: string): boolean {
+	if (PATH_SCOPED_TOOLS.has(toolName)) {
+		const pathValue = normalizeToolPath(input.path);
+		if (!pathValue) return false;
+		return !isPathInsideProject(pathValue, projectRoot);
+	}
+
+	if (toolName !== "bash") return false;
+	const command = typeof input.command === "string" ? input.command : "";
+	return bashTargetsOutsideProject(command, projectRoot);
+}
+
+function bashTargetsOutsideProject(command: string, projectRoot: string): boolean {
+	const trimmed = command.trim();
+	if (trimmed.length === 0) return false;
+
+	let ast: any;
+	try {
+		ast = parseBash(trimmed);
+	} catch {
+		return false;
+	}
+
+	const pathCandidates: string[] = [];
+	collectPathCandidatesFromAst(ast, pathCandidates);
+
+	for (const candidate of pathCandidates) {
+		if (!isPathLikeArg(candidate)) continue;
+		if (!isPathInsideProject(candidate, projectRoot)) return true;
+	}
+
+	return false;
+}
+
+function collectPathCandidatesFromAst(node: any, paths: string[]): void {
+	if (!node || typeof node !== "object") return;
+
+	switch (node.type) {
+		case "Script":
+			for (const command of asArray(node.commands)) collectPathCandidatesFromAst(command, paths);
+			return;
+		case "LogicalExpression":
+			collectPathCandidatesFromAst(node.left, paths);
+			collectPathCandidatesFromAst(node.right, paths);
+			return;
+		case "Pipeline":
+			for (const command of asArray(node.commands)) collectPathCandidatesFromAst(command, paths);
+			return;
+		case "Command": {
+			const command = extractAstCommand(node);
+			if (command) {
+				if (command.program === "cd") {
+					if (command.args[0]) paths.push(command.args[0]);
+				} else {
+					for (const arg of command.args) paths.push(arg);
+				}
+			}
+
+			for (const redirect of collectRedirectNodes(node)) {
+				const filePath = extractWordText(redirect?.file);
+				if (filePath) paths.push(filePath);
+			}
+			return;
+		}
+		case "Subshell":
+			collectPathCandidatesFromAst(node.list, paths);
+			return;
+		case "CompoundList":
+			for (const command of asArray(node.commands)) collectPathCandidatesFromAst(command, paths);
+			return;
+		case "If":
+			collectPathCandidatesFromAst(node.clause, paths);
+			collectPathCandidatesFromAst(node.then, paths);
+			collectPathCandidatesFromAst(node.else, paths);
+			return;
+		case "For":
+		case "While":
+		case "Until":
+			collectPathCandidatesFromAst(node.clause, paths);
+			collectPathCandidatesFromAst(node.do, paths);
+			return;
+		case "Case":
+			collectPathCandidatesFromAst(node.clause, paths);
+			for (const item of asArray(node.cases)) collectPathCandidatesFromAst(item, paths);
+			return;
+		case "Function":
+			collectPathCandidatesFromAst(node.body, paths);
+			return;
+		default:
+			return;
+	}
+}
+
+function isPathLikeArg(value: string): boolean {
+	if (value.length === 0) return false;
+	if (value === "~" || value.startsWith("~/")) return true;
+	if (value.startsWith("/")) return true;
+	if (value === "." || value === "..") return true;
+	if (value.startsWith("./") || value.startsWith("../")) return true;
+	if (value.includes("/")) return true;
+	return false;
 }
 
 function isReaderAllowed(toolName: string, input: Record<string, unknown>): boolean {
@@ -645,9 +760,16 @@ function normalizeToolPath(raw: unknown): string | undefined {
 	return trimmed.replace(/^@+/, "");
 }
 
+function resolvePathInput(pathValue: string, projectRoot: string): string {
+	if (pathValue === "~") return homedir();
+	if (pathValue.startsWith("~/")) return resolve(homedir(), pathValue.slice(2));
+	const absoluteProjectRoot = resolve(projectRoot);
+	return resolve(absoluteProjectRoot, pathValue);
+}
+
 function isPathInsideProject(pathValue: string, projectRoot: string): boolean {
 	const absoluteProjectRoot = resolve(projectRoot);
-	const absolutePath = resolve(absoluteProjectRoot, pathValue);
+	const absolutePath = resolvePathInput(pathValue, absoluteProjectRoot);
 	const rel = relative(absoluteProjectRoot, absolutePath);
 	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }

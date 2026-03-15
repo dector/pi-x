@@ -20,8 +20,14 @@ function expectBashType(command: string, expected: BashExpectation): void {
 	}
 }
 
-function decide(mode: SafeMode, toolName: string, input: Record<string, unknown>, projectRoot = PROJECT_ROOT) {
-	return decideToolCall({ mode, toolName, input, projectRoot });
+function decide(
+	mode: SafeMode,
+	toolName: string,
+	input: Record<string, unknown>,
+	projectRoot = PROJECT_ROOT,
+	outerAccess = false,
+) {
+	return decideToolCall({ mode, toolName, input, projectRoot, outerAccess });
 }
 
 test("getBashCommandType: empty/invalid input", () => {
@@ -220,12 +226,15 @@ test("getBashCommandType: unknown commands", () => {
 
 test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "read", { path: "policy.ts" }).action).toBe("allow");
+	expect(decide("reader", "read", { path: "/tmp/outside.txt" }).action).toBe("confirm");
+	expect(decide("reader", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("reader", "ls", { path: "." }).action).toBe("allow");
 	expect(decide("reader", "grep", { path: "." }).action).toBe("allow");
 	expect(decide("reader", "find", { path: "." }).action).toBe("confirm");
 
 	expect(decide("reader", "bash", { command: "ls -la" }).action).toBe("allow");
-	expect(decide("reader", "bash", { command: "cd .." }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "cd .." }).action).toBe("confirm");
+	expect(decide("reader", "bash", { command: "cd .." }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "grep rm README.md" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git ls-files" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git shortlog" }).action).toBe("allow");
@@ -236,8 +245,11 @@ test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "bash", { command: "cat a > b" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "ls | grep src" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "ls && pwd" }).action).toBe("allow");
-	expect(decide("reader", "bash", { command: "cd .. && ls" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "cd .. && ls" }).action).toBe("confirm");
+	expect(decide("reader", "bash", { command: "cd .. && ls" }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git log --oneline | head -n 20" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "cat /tmp/outside.txt" }).action).toBe("confirm");
+	expect(decide("reader", "bash", { command: "cat /tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "ls | rm -rf tmp" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "python -c 'print(1)'" }).action).toBe("confirm");
 });
@@ -247,6 +259,7 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "edit", { path: "policy.ts" }).action).toBe("allow");
 	expect(decide("smart", "write", { path: "new-file.ts" }).action).toBe("allow");
 	expect(decide("smart", "write", { path: "../outside.txt" }).action).toBe("confirm");
+	expect(decide("smart", "write", { path: "../outside.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
 	expect(decide("smart", "edit", { path: "" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "find . -delete" }).action).toBe("confirm");
@@ -256,10 +269,14 @@ test("decideToolCall: smart mode integration", () => {
 
 test("decideToolCall: paranoid/yolo sanity", () => {
 	expect(decide("paranoid", "read", { path: "policy.ts" }).action).toBe("confirm");
+	expect(decide("paranoid", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
 	expect(decide("paranoid", "bash", { command: "ls" }).action).toBe("confirm");
 
 	expect(decide("yolo", "read", { path: "policy.ts" }).action).toBe("allow");
-	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }).action).toBe("allow");
+	expect(decide("yolo", "read", { path: "/tmp/outside.txt" }).action).toBe("confirm");
+	expect(decide("yolo", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("allow");
+	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }).action).toBe("confirm");
+	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }, PROJECT_ROOT, true).action).toBe("allow");
 });
 
 test("path normalization + project-root boundaries", () => {
@@ -275,7 +292,9 @@ test("path normalization + project-root boundaries", () => {
 	expect(decide("smart", "write", { path: insideRelative }).action).toBe("allow");
 	expect(decide("smart", "write", { path: insideAbsolute }).action).toBe("allow");
 	expect(decide("smart", "write", { path: outsideAbsolute }).action).toBe("confirm");
+	expect(decide("smart", "write", { path: outsideAbsolute }, PROJECT_ROOT, true).action).toBe("confirm");
 	expect(decide("smart", "edit", { path: "../escape.ts" }).action).toBe("confirm");
+	expect(decide("smart", "edit", { path: "../escape.ts" }, PROJECT_ROOT, true).action).toBe("confirm");
 });
 
 test("regressions from regex-based behavior", () => {
