@@ -14,8 +14,11 @@ interface SafeModeState {
 	mode: SafeMode;
 }
 
+type ApprovalDecision = "approve-once" | "approve-all-session" | "deny" | "steer";
+
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
+const ESC = "\u001b";
 
 type MaybeCustomEntry = {
 	type?: string;
@@ -71,12 +74,18 @@ function getToolRequestText(toolName: string, input: Record<string, unknown>): s
 	return Object.keys(input).length > 0 ? JSON.stringify(input, null, 2) : "(no arguments)";
 }
 
+function getExactBashCommand(input: Record<string, unknown>): string | undefined {
+	if (typeof input.command !== "string") return undefined;
+	if (input.command.trim().length === 0) return undefined;
+	return input.command;
+}
+
 function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): {
 	title: string;
 	message: string;
 } {
 	const theme = ctx.ui.theme;
-	const promptLine = theme.fg("muted", "Approve? y/n");
+	const title = theme.fg("muted", "Approve?");
 	const toolLine = theme.fg("text", `[${toolName}]:`);
 	const request = getToolRequestText(toolName, input)
 		.split("\n")
@@ -84,24 +93,38 @@ function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Re
 		.join("\n");
 
 	return {
-		title: promptLine,
+		title,
 		message: `\n${toolLine}\n${request}`,
 	};
 }
 
-async function confirmApproval(ctx: ExtensionContext, title: string, message: string): Promise<boolean> {
+const APPROVAL_OPTIONS = ["[Y]es", "[N]o", "[A]ll for this session", "[Esc] to steer"] as const;
+
+async function confirmApproval(ctx: ExtensionContext, title: string, message: string): Promise<ApprovalDecision> {
 	const controller = new AbortController();
-	let keyDecision: boolean | undefined;
+	let keyDecision: ApprovalDecision | undefined;
 
 	const unsubscribe = ctx.ui.onTerminalInput((data) => {
-		if (data === "y") {
-			keyDecision = true;
+		if (data === "y" || data === "Y") {
+			keyDecision = "approve-once";
 			controller.abort();
 			return { consume: true };
 		}
 
 		if (data === "n" || data === "N") {
-			keyDecision = false;
+			keyDecision = "deny";
+			controller.abort();
+			return { consume: true };
+		}
+
+		if (data === "a" || data === "A") {
+			keyDecision = "approve-all-session";
+			controller.abort();
+			return { consume: true };
+		}
+
+		if (data === ESC) {
+			keyDecision = "steer";
 			controller.abort();
 			return { consume: true };
 		}
@@ -110,8 +133,13 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 	});
 
 	try {
-		const confirmed = await ctx.ui.confirm(title, message, { signal: controller.signal });
-		return keyDecision ?? confirmed;
+		const selected = await ctx.ui.select(`${title}${message}`, [...APPROVAL_OPTIONS], { signal: controller.signal });
+		if (keyDecision) return keyDecision;
+		if (selected === "[Y]es") return "approve-once";
+		if (selected === "[A]ll for this session") return "approve-all-session";
+		if (selected === "[N]o") return "deny";
+		if (selected === "[Esc] to steer") return "steer";
+		return "steer";
 	} finally {
 		unsubscribe();
 	}
@@ -119,6 +147,11 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
+	const autoApprovedBashCommandsForSession = new Set<string>();
+
+	function resetSessionApprovals(): void {
+		autoApprovedBashCommandsForSession.clear();
+	}
 
 	function persistMode(): void {
 		pi.appendEntry<SafeModeState>("safe-mode", { mode });
@@ -196,6 +229,20 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerCommand("safe-mode-list", {
+		description: "List exact bash commands auto-approved for this session",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return;
+			if (autoApprovedBashCommandsForSession.size === 0) {
+				ctx.ui.notify("safe-mode: no session auto-approved bash commands", "info");
+				return;
+			}
+
+			const lines = [...autoApprovedBashCommandsForSession].map((command, index) => `${index + 1}. ${command}`);
+			ctx.ui.notify(`safe-mode auto-approved bash commands:\n${lines.join("\n")}`, "info");
+		},
+	});
+
 	pi.registerShortcut(Key.ctrlShift("m"), {
 		description: "Cycle safe mode",
 		handler: async (ctx) => {
@@ -204,56 +251,76 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		resetSessionApprovals();
 		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		resetSessionApprovals();
 		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
 	});
 
 	pi.on("session_fork", async (_event, ctx) => {
+		resetSessionApprovals();
 		setMode(resolveMode(ctx), ctx, { persist: false, notify: false });
 	});
 
-	pi.on("before_agent_start", async () => {
-		if (mode === "yolo") return;
-		return {
-			message: {
-				customType: "safe-mode-context",
-				content: `[SAFE MODE: ${mode}]\nApply the configured tool safety policy. Prefer operations that are auto-allowed in this mode.`,
-				display: false,
-			},
-		};
-	});
-
 	pi.on("tool_call", async (event, ctx) => {
+		const input = (event.input ?? {}) as Record<string, unknown>;
+		const exactBashCommand = event.toolName === "bash" ? getExactBashCommand(input) : undefined;
+
+		if (exactBashCommand && autoApprovedBashCommandsForSession.has(exactBashCommand)) {
+			return;
+		}
+
 		const decision = decideToolCall({
 			mode,
 			toolName: event.toolName,
-			input: (event.input ?? {}) as Record<string, unknown>,
+			input,
 			projectRoot: ctx.cwd,
 		});
 
 		if (decision.action === "allow") return;
 		if (decision.action === "block") {
-			return { block: true, reason: decision.reason ?? `Blocked by safe mode (${mode})` };
+			return { block: true, reason: decision.reason ?? "Blocked by approval policy" };
 		}
 
 		if (!ctx.hasUI) {
 			return {
 				block: true,
-				reason: `Safe mode (${mode}) requires approval, but no UI is available: ${decision.summary}`,
+				reason: `Approval required, but no UI is available: ${decision.summary}`,
 			};
 		}
 
-		const input = (event.input ?? {}) as Record<string, unknown>;
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
-		const ok = await confirmApproval(ctx, prompt.title, prompt.message);
-		if (!ok) {
-			return {
-				block: true,
-				reason: `Blocked by user (safe mode: ${mode})`,
-			};
+		const approval = await confirmApproval(ctx, prompt.title, prompt.message);
+		if (approval === "approve-all-session") {
+			if (exactBashCommand) {
+				autoApprovedBashCommandsForSession.add(exactBashCommand);
+				ctx.ui.notify("safe-mode: remembered exact bash command for this session", "info");
+			}
+			return;
 		}
+
+		if (approval === "approve-once") {
+			return;
+		}
+
+		if (approval === "steer") {
+			const steerText = await ctx.ui.input("How should I proceed instead?", "Describe the safer approach");
+			if (typeof steerText === "string" && steerText.trim().length > 0) {
+				pi.sendUserMessage(steerText, { deliverAs: "steer" });
+				ctx.ui.notify("safe-mode: steering message sent.", "info");
+				return { block: true, reason: "Stopped for user steering: using updated user instructions instead." };
+			}
+
+			ctx.ui.notify("safe-mode: blocked. Type a follow-up message to steer the agent.", "info");
+			return { block: true, reason: "Stopped for user steering." };
+		}
+
+		return {
+			block: true,
+			reason: "Blocked by user approval",
+		};
 	});
 }

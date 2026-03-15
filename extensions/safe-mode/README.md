@@ -26,6 +26,8 @@ Intercepts tool calls and applies configurable approval policies.
   - Set mode.
 - `/safe-mode cycle`
   - Cycle modes.
+- `/safe-mode-list`
+  - Print exact `bash` command lines that were auto-approved for the current session.
 
 ## Shortcut
 
@@ -35,8 +37,10 @@ Intercepts tool calls and applies configurable approval policies.
 ## Approval dialog
 
 When approval is required:
-- `y` confirms (allow tool call)
-- `n` or `N` rejects (block tool call)
+- `Y` or `y` confirms once (allow this tool call)
+- `N` or `n` rejects (block tool call)
+- `A` or `a` remembers the exact `bash` command line for this session and auto-approves exact repeats
+- `Esc` blocks the tool call, prompts for steering text, and sends it to the agent as a steer message
 - Existing selection navigation (arrows / j / k) remains unchanged
 
 ## CLI flag
@@ -51,6 +55,11 @@ Mode changes are persisted in session history via custom entries (`safe-mode`) a
 ## Non-interactive behavior
 
 If a tool call requires approval but no UI is available (`ctx.hasUI === false`), the call is blocked fail-safe with an explicit reason.
+
+## Agent visibility
+
+The extension does not inject safe-mode metadata into the agent prompt.
+Blocking/steering reasons are generic and do not mention safe mode.
 
 ## Install
 
