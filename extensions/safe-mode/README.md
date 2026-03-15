@@ -29,7 +29,7 @@ Intercepts tool calls and applies configurable approval policies.
 
 ## Shortcut
 
-- `Alt+M`
+- `Ctrl+M`
   - Cycle safe modes.
 
 ## Approval dialog
