@@ -20,6 +20,7 @@ const READ_ONLY_BASH_COMMANDS = new Set([
 	"fd",
 	"ls",
 	"pwd",
+	"cd",
 	"tree",
 	"stat",
 	"file",
@@ -32,6 +33,19 @@ const READ_ONLY_BASH_COMMANDS = new Set([
 	"hostname",
 	"env",
 	"printenv",
+	"echo",
+	"printf",
+	"which",
+	"type",
+	"realpath",
+	"readlink",
+	"basename",
+	"dirname",
+	"sort",
+	"uniq",
+	"cut",
+	"tr",
+	"nl",
 ]);
 
 const WRITE_BASH_COMMANDS = new Set([
@@ -47,7 +61,20 @@ const WRITE_BASH_COMMANDS = new Set([
 	"su",
 ]);
 
-const READ_ONLY_GIT_SUBCOMMANDS = new Set(["status", "log", "diff", "show", "rev-parse"]);
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+	"status",
+	"log",
+	"diff",
+	"show",
+	"rev-parse",
+	"ls-files",
+	"ls-tree",
+	"cat-file",
+	"grep",
+	"blame",
+	"rev-list",
+	"shortlog",
+]);
 const WRITE_GIT_SUBCOMMANDS = new Set([
 	"add",
 	"commit",
@@ -66,6 +93,7 @@ const PACKAGE_MANAGER_WRITE_SUBCOMMANDS: Record<string, Set<string>> = {
 	yarn: new Set(["add", "remove", "install", "upgrade"]),
 	pnpm: new Set(["add", "remove", "install", "update"]),
 	pip: new Set(["install", "uninstall"]),
+	bun: new Set(["add", "install", "remove", "update"]),
 };
 
 export type ToolCallLike = {
@@ -471,6 +499,13 @@ function classifyCommand(program: string, args: string[], hasDynamicArgs: boolea
 		return { hasReads: true, hasWrites: false };
 	}
 
+	if (program === "command") {
+		if (isReadOnlyCommandBuiltinArgs(args)) {
+			return { hasReads: true, hasWrites: false };
+		}
+		return { hasReads: false, hasWrites: false };
+	}
+
 	if (READ_ONLY_BASH_COMMANDS.has(program)) {
 		return { hasReads: true, hasWrites: false };
 	}
@@ -509,6 +544,34 @@ function hasFindWriteLikeArgs(args: string[]): boolean {
 			lower === "-fprintf"
 		);
 	});
+}
+
+function isReadOnlyCommandBuiltinArgs(args: string[]): boolean {
+	if (args.length < 2) return false;
+
+	let seenLookupFlag = false;
+	for (const arg of args) {
+		if (!arg.startsWith("-")) {
+			return seenLookupFlag;
+		}
+
+		if (arg === "--") {
+			return false;
+		}
+
+		if (arg === "-v" || arg === "-V") {
+			seenLookupFlag = true;
+			continue;
+		}
+
+		if (arg === "-p") {
+			continue;
+		}
+
+		return false;
+	}
+
+	return false;
 }
 
 function classifyGitCommand(args: string[]): { hasReads: boolean; hasWrites: boolean } {

@@ -36,6 +36,7 @@ test("getBashCommandType: plain read-only commands", () => {
 	const commands = [
 		"ls -la",
 		"pwd",
+		"cd ..",
 		"cat README.md",
 		"head -n 20 README.md",
 		"tail -n 5 README.md",
@@ -53,6 +54,20 @@ test("getBashCommandType: plain read-only commands", () => {
 		"hostname",
 		"env",
 		"printenv PATH",
+		"echo hello",
+		"printf '%s\n' hello",
+		"which ls",
+		"type ls",
+		"command -v ls",
+		"realpath .",
+		"readlink -f .",
+		"basename /tmp/foo.txt",
+		"dirname /tmp/foo.txt",
+		"sort README.md",
+		"uniq README.md",
+		"cut -d: -f1 /etc/passwd",
+		"tr a-z A-Z",
+		"nl README.md",
 		"find . -name \"*.ts\"",
 	];
 
@@ -87,6 +102,13 @@ test("getBashCommandType: git classification", () => {
 		"git diff -- src/policy.ts",
 		"git show HEAD~1",
 		"git rev-parse HEAD",
+		"git ls-files",
+		"git ls-tree HEAD",
+		"git cat-file -p HEAD^{tree}",
+		"git grep safe-mode",
+		"git blame policy.ts",
+		"git rev-list --max-count=5 HEAD",
+		"git shortlog",
 		"git branch",
 		"git branch --list",
 	];
@@ -112,7 +134,7 @@ test("getBashCommandType: git classification", () => {
 });
 
 test("getBashCommandType: package manager classification", () => {
-	const commands = [
+	const writeCommands = [
 		"npm install",
 		"npm ci",
 		"npm uninstall foo",
@@ -122,11 +144,14 @@ test("getBashCommandType: package manager classification", () => {
 		"pnpm remove foo",
 		"pip install requests",
 		"pip uninstall requests",
+		"bun install",
 	];
 
-	for (const command of commands) {
+	for (const command of writeCommands) {
 		expectBashType(command, { hasReads: false, hasWrites: true, isPlainCommand: true });
 	}
+
+	expectBashType("bun test", { hasReads: false, hasWrites: false, isPlainCommand: true });
 });
 
 test("getBashCommandType: non-plain shell syntax detection", () => {
@@ -189,6 +214,7 @@ test("getBashCommandType: unknown commands", () => {
 	expectBashType("python -c \"print(1)\"", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("node -e \"console.log(1)\"", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("custom-tool arg1 arg2", { hasReads: false, hasWrites: false, isPlainCommand: true });
+	expectBashType("command rm -rf tmp", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("custom-tool | grep x", { isPlainCommand: false });
 });
 
@@ -199,12 +225,18 @@ test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "find", { path: "." }).action).toBe("confirm");
 
 	expect(decide("reader", "bash", { command: "ls -la" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "cd .." }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "grep rm README.md" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "git ls-files" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "git shortlog" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "command -v ls" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "bun test" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "find . -exec rm {} \\;" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "cat a > b" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "ls | grep src" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "ls && pwd" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "cd .. && ls" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git log --oneline | head -n 20" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "ls | rm -rf tmp" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "python -c 'print(1)'" }).action).toBe("confirm");
