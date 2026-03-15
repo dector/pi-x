@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
 import {
 	DEFAULT_SAFE_MODE,
 	SAFE_MODES,
@@ -145,6 +145,216 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 	}
 }
 
+async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession: Set<string>): Promise<void> {
+	let commands = [...commandsForSession];
+	if (commands.length === 0) return;
+
+	await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+		let selectedIndex = 0;
+		const selectedCommands = new Set<string>();
+		const removedStack: string[] = [];
+		let awaitingClearConfirmation = false;
+
+		interface ListView {
+			container: Container;
+			list: SelectList;
+			items: SelectItem[];
+		}
+
+		const getSelectedCountText = (): string => `${selectedCommands.size}/${commands.length} selected`;
+
+		const buildView = (): ListView => {
+			const items: SelectItem[] = commands.map((command) => ({
+				value: command,
+				label: `${selectedCommands.has(command) ? "[x]" : "[ ]"} ${command}`,
+			}));
+
+			const clampedIndex = items.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, items.length - 1));
+			selectedIndex = clampedIndex;
+
+			const container = new Container();
+			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+			container.addChild(new Text(theme.fg("accent", theme.bold("safe-mode auto-approved bash commands"))));
+
+			const list = new SelectList(items, Math.min(Math.max(items.length, 1), 10), {
+				selectedPrefix: (text) => theme.fg("accent", text),
+				selectedText: (text) => theme.fg("accent", text),
+				description: (text) => theme.fg("muted", text),
+				scrollInfo: (text) => theme.fg("dim", text),
+				noMatch: (text) => theme.fg("warning", text),
+			});
+
+			if (items.length > 0) {
+				list.setSelectedIndex(selectedIndex);
+			}
+
+			list.onSelectionChange = (item) => {
+				const nextIndex = items.findIndex((candidate) => candidate.value === item.value);
+				selectedIndex = nextIndex >= 0 ? nextIndex : 0;
+			};
+			list.onCancel = () => done();
+
+			container.addChild(list);
+
+			if (awaitingClearConfirmation) {
+				container.addChild(new Text(theme.fg("warning", "Clear all commands? [y/n]")));
+			} else {
+				container.addChild(new Text(theme.fg("dim", "j/k move • space select • d delete • D clear all • u undo • esc close")));
+			}
+			container.addChild(new Text(theme.fg("muted", getSelectedCountText())));
+			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+			return { container, list, items };
+		};
+
+		let view = buildView();
+
+		const refresh = () => {
+			view = buildView();
+			tui.requestRender();
+		};
+
+		const moveSelection = (delta: number) => {
+			if (view.items.length === 0) return;
+			const nextIndex = Math.max(0, Math.min(view.items.length - 1, selectedIndex + delta));
+			selectedIndex = nextIndex;
+			view.list.setSelectedIndex(selectedIndex);
+			tui.requestRender();
+		};
+
+		const currentCommand = (): string | undefined => commands[selectedIndex];
+
+		const toggleSelection = () => {
+			const current = currentCommand();
+			if (!current) return;
+			if (selectedCommands.has(current)) {
+				selectedCommands.delete(current);
+			} else {
+				selectedCommands.add(current);
+			}
+			refresh();
+		};
+
+		const deleteSelectedOrCurrent = () => {
+			if (commands.length === 0) return;
+
+			if (selectedCommands.size > 0) {
+				const toRemove = commands.filter((command) => selectedCommands.has(command));
+				for (const command of toRemove) {
+					removedStack.push(command);
+				}
+				commands = commands.filter((command) => !selectedCommands.has(command));
+				selectedCommands.clear();
+			} else {
+				const current = currentCommand();
+				if (!current) return;
+				removedStack.push(current);
+				commands.splice(selectedIndex, 1);
+			}
+
+			if (commands.length === 0) {
+				selectedIndex = 0;
+			} else {
+				selectedIndex = Math.max(0, Math.min(selectedIndex, commands.length - 1));
+			}
+			refresh();
+		};
+
+		const clearAll = () => {
+			if (commands.length === 0) return;
+			for (const command of commands) {
+				removedStack.push(command);
+			}
+			commands = [];
+			selectedCommands.clear();
+			selectedIndex = 0;
+			refresh();
+		};
+
+		const undoLastRemoval = () => {
+			const restored = removedStack.pop();
+			if (!restored) return;
+			const insertIndex = commands.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, commands.length));
+			commands.splice(insertIndex, 0, restored);
+			selectedIndex = insertIndex;
+			selectedCommands.delete(restored);
+			refresh();
+		};
+
+		return {
+			render(width: number) {
+				return view.container.render(width);
+			},
+			invalidate() {
+				view.container.invalidate();
+			},
+			handleInput(data: string) {
+				if (awaitingClearConfirmation) {
+					if (data === "y" || data === "Y") {
+						awaitingClearConfirmation = false;
+						clearAll();
+						return;
+					}
+					if (data === "n" || data === "N" || data === ESC) {
+						awaitingClearConfirmation = false;
+						refresh();
+						return;
+					}
+					return;
+				}
+
+				if (data === ESC) {
+					done();
+					return;
+				}
+
+				if (matchesKey(data, "j") || data === "j") {
+					moveSelection(1);
+					return;
+				}
+				if (matchesKey(data, "k") || data === "k") {
+					moveSelection(-1);
+					return;
+				}
+
+				if (matchesKey(data, Key.space) || data === " ") {
+					toggleSelection();
+					return;
+				}
+
+				if (data === "d") {
+					deleteSelectedOrCurrent();
+					return;
+				}
+
+				if (data === "D") {
+					awaitingClearConfirmation = true;
+					refresh();
+					return;
+				}
+
+				if (data === "u" || data === "U") {
+					undoLastRemoval();
+					return;
+				}
+
+				view.list.handleInput(data);
+				const selectedItem = view.list.getSelectedItem();
+				if (selectedItem) {
+					const nextIndex = view.items.findIndex((item) => item.value === selectedItem.value);
+					selectedIndex = nextIndex >= 0 ? nextIndex : selectedIndex;
+				}
+				tui.requestRender();
+			},
+		};
+	});
+
+	commandsForSession.clear();
+	for (const command of commands) {
+		commandsForSession.add(command);
+	}
+}
+
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 	const autoApprovedBashCommandsForSession = new Set<string>();
@@ -230,7 +440,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("safe-mode-list", {
-		description: "List exact bash commands auto-approved for this session",
+		description: "Manage exact bash commands auto-approved for this session",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) return;
 			if (autoApprovedBashCommandsForSession.size === 0) {
@@ -238,8 +448,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const lines = [...autoApprovedBashCommandsForSession].map((command, index) => `${index + 1}. ${command}`);
-			ctx.ui.notify(`safe-mode auto-approved bash commands:\n${lines.join("\n")}`, "info");
+			await showSafeModeListManager(ctx, autoApprovedBashCommandsForSession);
 		},
 	});
 

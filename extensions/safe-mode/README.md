@@ -27,7 +27,15 @@ Intercepts tool calls and applies configurable approval policies.
 - `/safe-mode cycle`
   - Cycle modes.
 - `/safe-mode-list`
-  - Print exact `bash` command lines that were auto-approved for the current session.
+  - Open an interactive manager for exact `bash` command lines auto-approved for the current session.
+  - Keys:
+    - `j` / `k`: move cursor
+    - `space`: select/unselect command
+    - `d`: remove current command (or all selected commands)
+    - `u`: restore last removed command before current cursor position
+    - `D` (`Shift+d`): clear all commands (with `y/n` confirmation)
+    - `Esc`: close manager
+  - Footer shows selection count as `N/M selected`.
 
 ## Shortcut
 
