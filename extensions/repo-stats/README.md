@@ -12,12 +12,12 @@ For the current `ctx.cwd`:
 
 Examples:
 
-- `~/pi-x (trunk) +150/-200:+1/-2/M4`
+- `~/pi-x (trunk) [+1 -2 M4 | +150 -200]`
 - `~/pi-x (main)`
 
 ## How it works
 
-`repo-stats` emits first-line events consumed by `status-bar`:
+`repo-stats` emits first-line events consumed by `status-bar` (displayed on the right side of first row):
 
 - `status-bar:first-line:set` with `{ id, content, priority }`
 - `status-bar:first-line:clear` with `{ id }`
@@ -32,9 +32,14 @@ Priority used:
 
 ## Dirty totals
 
-- line totals: `+<added>/-<removed>`
-- file totals suffix: `:+<new>/-<removed>/M<modified>`
-- zero-value file parts are omitted (example: `:+2/M5`)
+- combined dirty block format: `[+<new> -<removed> M<modified> | +<added> -<removed>]`
+- files are shown first, line totals second
+- file counters are always shown when dirty (including `+0 -0 M0`)
+- line counters are always shown when dirty (including `+0 -0`)
+- counters are colorized in UI:
+  - `+...` = medium/darker green
+  - `-...` = brighter red
+  - `M...` = orange
 - tracked changes: `git diff --numstat HEAD`
 - untracked files: `git ls-files --others --exclude-standard -z` + line counting
 

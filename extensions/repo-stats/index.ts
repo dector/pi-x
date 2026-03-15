@@ -8,6 +8,11 @@ const STATUS_BAR_FIRST_LINE_SET_EVENT = "status-bar:first-line:set";
 const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
 const FIRST_LINE_PRIORITY = 100;
 
+const ANSI_RESET = "\u001b[0m";
+const ANSI_GREEN = "\u001b[38;5;34m";
+const ANSI_BRIGHT_RED = "\u001b[38;5;196m";
+const ANSI_ORANGE = "\u001b[38;5;208m";
+
 interface GitResult {
 	ok: boolean;
 	stdout: string;
@@ -179,29 +184,35 @@ function collectRepoStats(cwd: string): RepoStats | undefined {
 	};
 }
 
-function formatDisplayPath(cwd: string): string {
-	const home = process.env.HOME || process.env.USERPROFILE;
-	if (home && cwd.startsWith(home)) {
-		return `~${cwd.slice(home.length)}`;
-	}
-	return cwd;
+function colorAnsi(code: string, text: string): string {
+	return `${code}${text}${ANSI_RESET}`;
 }
 
-function renderFileChangeSummary(stats: RepoStats): string {
-	const parts: string[] = [];
-	if (stats.filesNew > 0) parts.push(`+${stats.filesNew}`);
-	if (stats.filesRemoved > 0) parts.push(`-${stats.filesRemoved}`);
-	if (stats.filesModified > 0) parts.push(`M${stats.filesModified}`);
-	return parts.join("/");
+function renderFileChangeSummary(stats: RepoStats, ctx: ExtensionContext): string {
+	const filesNew = Number.isFinite(stats.filesNew) ? stats.filesNew : 0;
+	const filesRemoved = Number.isFinite(stats.filesRemoved) ? stats.filesRemoved : 0;
+	const filesModified = Number.isFinite(stats.filesModified) ? stats.filesModified : 0;
+	if (!ctx.hasUI) return `+${filesNew} -${filesRemoved} M${filesModified}`;
+	const plus = colorAnsi(ANSI_GREEN, `+${filesNew}`);
+	const minus = colorAnsi(ANSI_BRIGHT_RED, `-${filesRemoved}`);
+	const modified = colorAnsi(ANSI_ORANGE, `M${filesModified}`);
+	return `${plus} ${minus} ${modified}`;
 }
 
-function renderFirstLine(cwd: string, stats: RepoStats): string {
-	const base = `${formatDisplayPath(cwd)} (${stats.branch})`;
-	if (!stats.isDirty) return base;
-	const lineSummary = `+${stats.additions}/-${stats.removals}`;
-	const fileSummary = renderFileChangeSummary(stats);
-	if (!fileSummary) return `${base} ${lineSummary}`;
-	return `${base} ${lineSummary}:${fileSummary}`;
+function renderLineChangeSummary(stats: RepoStats, ctx: ExtensionContext): string {
+	const additions = Number.isFinite(stats.additions) ? stats.additions : 0;
+	const removals = Number.isFinite(stats.removals) ? stats.removals : 0;
+	if (!ctx.hasUI) return `+${additions} -${removals}`;
+	const plus = colorAnsi(ANSI_GREEN, `+${additions}`);
+	const minus = colorAnsi(ANSI_BRIGHT_RED, `-${removals}`);
+	return `${plus} ${minus}`;
+}
+
+function renderGitStatsSummary(stats: RepoStats, ctx: ExtensionContext): string | undefined {
+	if (!stats.isDirty) return undefined;
+	const fileSummary = renderFileChangeSummary(stats, ctx);
+	const lineSummary = renderLineChangeSummary(stats, ctx);
+	return `[${fileSummary} | ${lineSummary}]`;
 }
 
 export default function repoStatsExtension(pi: ExtensionAPI): void {
@@ -222,9 +233,12 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const rawContent = renderFirstLine(ctx.cwd, stats);
-		const content = ctx.hasUI ? ctx.ui.theme.fg("muted", rawContent) : rawContent;
-		const signature = `${ctx.cwd}|${rawContent}|${ctx.hasUI ? "ui" : "noui"}`;
+		const content = renderGitStatsSummary(stats, ctx);
+		if (!content) {
+			clearStatus();
+			return;
+		}
+		const signature = `${ctx.cwd}|${content}|${ctx.hasUI ? "ui" : "noui"}`;
 		if (signature === lastSignature) return;
 		lastSignature = signature;
 
@@ -288,10 +302,8 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("repo-stats: current cwd is not a git repo", "warning");
 				return;
 			}
-			ctx.ui.notify(
-				`repo-stats: ${renderFirstLine(ctx.cwd, stats)} (repo=${stats.repoRoot}, dirty=${stats.isDirty})`,
-				"info",
-			);
+			const summary = renderGitStatsSummary(stats, ctx) ?? "(clean)";
+			ctx.ui.notify(`repo-stats: ${summary} (repo=${stats.repoRoot}, dirty=${stats.isDirty})`, "info");
 		},
 	});
 }

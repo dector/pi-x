@@ -261,22 +261,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				render(width: number): string[] {
 					const activeCtx = lastContext ?? ctx;
 
-					const producedFirstLine = resolveFirstLine();
-					let line1: string;
-					if (producedFirstLine) {
-						line1 = truncateToWidth(producedFirstLine, width, "");
-					} else {
-						let pwd = activeCtx.cwd || process.cwd();
-						const home = process.env.HOME || process.env.USERPROFILE;
-						if (home && pwd.startsWith(home)) {
-							pwd = `~${pwd.slice(home.length)}`;
-						}
-						const branch = footerData.getGitBranch();
-						if (branch) pwd = `${pwd} (${branch})`;
-						const sessionName = activeCtx.sessionManager.getSessionName();
-						if (sessionName) pwd = `${pwd} • ${sessionName}`;
-						line1 = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+					let pwd = activeCtx.cwd || process.cwd();
+					const home = process.env.HOME || process.env.USERPROFILE;
+					if (home && pwd.startsWith(home)) {
+						pwd = `~${pwd.slice(home.length)}`;
 					}
+					const branch = footerData.getGitBranch();
+					if (branch) pwd = `${pwd} (${branch})`;
+					const sessionName = activeCtx.sessionManager.getSessionName();
+					if (sessionName) pwd = `${pwd} • ${sessionName}`;
+					const defaultFirstLine = theme.fg("dim", pwd);
+
+					const producedFirstLine = resolveFirstLine();
+					const line1 = producedFirstLine
+						? renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine)
+						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 
 					const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
 					const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
