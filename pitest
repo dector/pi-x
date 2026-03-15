@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXTENSIONS_DIR="$SCRIPT_DIR/extensions"
+
+if ! command -v pi >/dev/null 2>&1; then
+	echo "Error: 'pi' command not found in PATH" >&2
+	exit 1
+fi
+
+if [[ ! -d "$EXTENSIONS_DIR" ]]; then
+	echo "Error: extensions directory not found: $EXTENSIONS_DIR" >&2
+	exit 1
+fi
+
+EXT_ARGS=()
+while IFS= read -r -d '' index_file; do
+	ext_dir="$(dirname "$index_file")"
+	EXT_ARGS+=("-e" "$ext_dir")
+done < <(find "$EXTENSIONS_DIR" -mindepth 2 -maxdepth 2 -type f -name "index.ts" -print0 | sort -z)
+
+if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
+	echo "Error: no extensions found under $EXTENSIONS_DIR" >&2
+	exit 1
+fi
+
+exec pi --no-extensions "${EXT_ARGS[@]}" "$@"
