@@ -4,11 +4,11 @@ for [shittycodingagent.ai](https://shittycodingagent.ai/).
 
 This repo currently contains the following extension(s):
 
-- [`switch-thinking`](extensions/switch-thinking/README.md) — Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. It persists favorites across sessions and respects model capability limits.
-- [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`.
-- [`status-bar`](extensions/status-bar/README.md) — Defines a simple centralized status-bar contract (left/center/right layout + `status-bar:set` / `status-bar:clear` events).
-- [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`CTX:10.0%`) with threshold-based colors.
-- [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar.
+- [`status-bar`](extensions/status-bar/README.md) — **Required shared dependency** for other status-producing extensions in this repo. Install this first.
+- [`switch-thinking`](extensions/switch-thinking/README.md) — Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. Depends on `status-bar` for status rendering.
+- [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. Depends on `status-bar` for status rendering.
+- [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`CTX:10.0%`) with threshold-based colors. Depends on `status-bar`.
+- [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. Depends on `status-bar`.
 
 ## Install policy for pi agents
 

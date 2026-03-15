@@ -2,6 +2,11 @@
 
 Centralized status-bar renderer for producer extensions.
 
+## Dependency role
+
+`status-bar` is a shared dependency for other extensions in this repository.
+Install and enable it first so producer extensions can render their status output.
+
 ## Contract
 
 ### Second line sections (unchanged)

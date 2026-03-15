@@ -2,6 +2,10 @@
 
 Quickly switch thinking modes and cycle favorite modes.
 
+## Dependency
+
+Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for status indicator rendering.
+
 ## Features
 
 - `Ctrl+Alt+T` opens a thinking-mode picker

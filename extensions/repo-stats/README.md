@@ -2,6 +2,10 @@
 
 Publishes repository summary for the **status-bar first line**.
 
+## Dependency
+
+Requires [`status-bar`](../status-bar/README.md) to be installed and enabled.
+
 ## What it shows
 
 For the current `ctx.cwd`:

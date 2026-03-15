@@ -2,6 +2,10 @@
 
 Intercepts tool calls and applies configurable approval policies.
 
+## Dependency
+
+Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for status indicator rendering.
+
 ## Modes
 
 - `paranoid`

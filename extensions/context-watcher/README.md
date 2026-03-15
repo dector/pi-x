@@ -4,6 +4,10 @@ Shows current context-window usage in the shared status bar as:
 
 - `↑21k/↓1.5k/37k · gpt-5.3: 10.0%`
 
+## Dependency
+
+Requires [`status-bar`](../status-bar/README.md) to be installed and enabled.
+
 ## Behavior
 
 - Publishes to status-bar producer ID: `context-watcher`
