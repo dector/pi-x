@@ -145,6 +145,8 @@ test("getBashCommandType: non-plain shell syntax detection", () => {
 		expectBashType(command, { isPlainCommand: false });
 	}
 
+	expectBashType("ls && rm -rf tmp", { hasReads: true, hasWrites: true });
+	expectBashType("ls || pwd", { hasReads: true, hasWrites: false });
 	expectBashType("cat a > b", { isPlainCommand: false, hasWrites: true });
 	expectBashType("cat a >> b", { isPlainCommand: false, hasWrites: true });
 	expectBashType("cat < a", { isPlainCommand: false, hasReads: true });
@@ -177,6 +179,12 @@ test("getBashCommandType: env assignment + absolute path executable", () => {
 	expectBashType("NODE_ENV=prod npm install", { hasReads: false, hasWrites: true, isPlainCommand: true });
 });
 
+test("getBashCommandType: find write-like flags", () => {
+	expectBashType("find . -name '*.ts'", { hasReads: true, hasWrites: false, isPlainCommand: true });
+	expectBashType("find . -exec rm {} \\;", { hasReads: false, hasWrites: true, isPlainCommand: true });
+	expectBashType("find . -delete", { hasReads: false, hasWrites: true, isPlainCommand: true });
+});
+
 test("getBashCommandType: unknown commands", () => {
 	expectBashType("python -c \"print(1)\"", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("node -e \"console.log(1)\"", { hasReads: false, hasWrites: false, isPlainCommand: true });
@@ -192,9 +200,11 @@ test("decideToolCall: reader mode integration", () => {
 
 	expect(decide("reader", "bash", { command: "ls -la" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "grep rm README.md" }).action).toBe("allow");
-	expect(decide("reader", "bash", { command: "find . -name '*.ts'" }).action).toBe("confirm");
+	expect(decide("reader", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "find . -exec rm {} \\;" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "cat a > b" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "ls | grep src" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "ls && pwd" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git log --oneline | head -n 20" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "ls | rm -rf tmp" }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "python -c 'print(1)'" }).action).toBe("confirm");
@@ -206,7 +216,8 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "write", { path: "new-file.ts" }).action).toBe("allow");
 	expect(decide("smart", "write", { path: "../outside.txt" }).action).toBe("confirm");
 	expect(decide("smart", "edit", { path: "" }).action).toBe("confirm");
-	expect(decide("smart", "bash", { command: "find . -name '*.ts'" }).action).toBe("confirm");
+	expect(decide("smart", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
+	expect(decide("smart", "bash", { command: "find . -delete" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "ls -la" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "ls | grep src" }).action).toBe("allow");
 });

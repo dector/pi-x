@@ -8,8 +8,8 @@ Intercepts tool calls and applies configurable approval policies.
   - Every tool call asks for confirmation.
 - `reader`
   - Auto-allows read-only operations (`read`, `ls`, `grep`, plus allowlisted read-only `bash` commands).
-  - Auto-allows read-only `bash` pipelines when **every stage** is allowlisted and read-only (for example: `ls -la | grep policy`, `git log --oneline | head -n 20`).
-  - `find` requires confirmation (including in pipelines).
+  - Auto-allows composed read-only `bash` commands (`|`, `&&`, `||`, `;`, newline) when **every segment** is read-only (for example: `ls -la | grep policy`, `ls && pwd`, `git log --oneline | head -n 20`).
+  - `find` is auto-allowed only for safe read-only forms (e.g. no `-exec`/`-delete`/dynamic args).
   - Everything else asks for confirmation.
 - `smart`
   - Includes all `reader` behavior.
@@ -63,6 +63,13 @@ Required files:
 
 - `index.ts`
 - `policy.ts`
+- `package.json`
+- `bun.lock` (or regenerate with install)
+
+Install dependencies in the extension directory:
+
+- `cd ~/.pi/agent/extensions/safe-mode && bun install`
+  - or `cd .pi/extensions/safe-mode && bun install`
 
 Then run `/reload`.
 
@@ -70,7 +77,7 @@ Then run `/reload`.
 
 Status rendering is emitted via status-bar events (`status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
 
-Read-only bash matching is intentionally strict.
+Read-only bash matching is intentionally strict and AST-based (via `bash-parser`).
 
-- Allowed automatically: single read-only commands and read-only pipelines (`|`) where each stage is read-only.
-- Requires confirmation: control-flow chaining (`&&`, `||`, `;`, newline, `&`), redirections (`>`, `>>`, `<`, `<<`), substitutions (`` `...` ``, `$()`), unknown commands, or mixed pipelines (e.g. `ls | rm -rf tmp`).
+- Allowed automatically: read-only commands and composed read-only chains (`|`, `&&`, `||`, `;`, newline) where each segment is read-only.
+- Requires confirmation: redirections (`>`, `>>`, `<`, `<<`), substitutions (`` `...` ``, `$()`), unknown commands, mixed chains (e.g. `ls | rm -rf tmp`), and `find` forms that can mutate (`-exec`, `-delete`, etc).

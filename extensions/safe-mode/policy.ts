@@ -1,3 +1,4 @@
+import parseBash from "bash-parser";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export const SAFE_MODES = ["paranoid", "reader", "smart", "yolo"] as const;
@@ -32,8 +33,6 @@ const READ_ONLY_BASH_COMMANDS = new Set([
 	"env",
 	"printenv",
 ]);
-
-const BASH_COMMANDS_REQUIRING_APPROVAL = new Set(["find"]);
 
 const WRITE_BASH_COMMANDS = new Set([
 	"rm",
@@ -83,6 +82,21 @@ export interface ToolDecision {
 export interface BashCommandType {
 	hasReads: boolean;
 	hasWrites: boolean;
+	isPlainCommand: boolean;
+}
+
+interface BashPolicyAnalysis {
+	hasReads: boolean;
+	hasWrites: boolean;
+	hasPipe: boolean;
+	hasOtherControlFlow: boolean;
+	hasInputRedirection: boolean;
+	hasOutputRedirection: boolean;
+	hasSubstitution: boolean;
+	hasUnknownCommand: boolean;
+	requiresApproval: boolean;
+	parseError: boolean;
+	commandCount: number;
 	isPlainCommand: boolean;
 }
 
@@ -187,26 +201,14 @@ function isReadOnlyBashCommand(command: string): boolean {
 	const trimmed = command.trim();
 	if (trimmed.length === 0) return false;
 
-	const syntax = inspectShellSyntax(trimmed);
-	if (syntax.hasOtherControlFlow || syntax.hasRedirection || syntax.hasSubstitution) {
-		return false;
-	}
+	const analysis = analyzeBashCommand(trimmed);
+	if (analysis.parseError) return false;
+	if (analysis.hasInputRedirection || analysis.hasOutputRedirection || analysis.hasSubstitution) return false;
+	if (analysis.commandCount === 0) return false;
+	if (analysis.requiresApproval) return false;
+	if (analysis.hasUnknownCommand) return false;
 
-	if (syntax.hasPipe) {
-		const stages = splitPipelineStages(trimmed);
-		if (!stages || stages.length < 2) return false;
-		return stages.every((stage) => isReadOnlyBashStage(stage));
-	}
-
-	const type = getBashCommandType(trimmed);
-	if (!type.isPlainCommand || !type.hasReads || type.hasWrites) return false;
-
-	const program = getBashProgram(trimmed);
-	if (program && BASH_COMMANDS_REQUIRING_APPROVAL.has(program)) {
-		return false;
-	}
-
-	return true;
+	return analysis.hasReads && !analysis.hasWrites;
 }
 
 export function getBashCommandType(command: string): BashCommandType {
@@ -215,283 +217,260 @@ export function getBashCommandType(command: string): BashCommandType {
 		return { hasReads: false, hasWrites: false, isPlainCommand: false };
 	}
 
-	const syntax = inspectShellSyntax(trimmed);
-	const isPlainCommand = !syntax.hasOtherControlFlow && !syntax.hasRedirection && !syntax.hasSubstitution && !syntax.hasPipe;
-
-	let hasReads = syntax.hasInputRedirection;
-	let hasWrites = syntax.hasOutputRedirection;
-
-	const argv = tokenizeBashCommand(trimmed);
-	if (!argv) {
-		return { hasReads, hasWrites, isPlainCommand: false };
-	}
-
-	const parsed = extractProgram(argv);
-	if (!parsed) {
-		return { hasReads, hasWrites, isPlainCommand };
-	}
-
-	const classification = classifyCommand(parsed.program, parsed.args);
-	hasReads = hasReads || classification.hasReads;
-	hasWrites = hasWrites || classification.hasWrites;
-
-	return { hasReads, hasWrites, isPlainCommand };
-}
-
-function getBashProgram(command: string): string | undefined {
-	const argv = tokenizeBashCommand(command.trim());
-	if (!argv) return undefined;
-	return extractProgram(argv)?.program;
-}
-
-function isReadOnlyBashStage(command: string): boolean {
-	const argv = tokenizeBashCommand(command.trim());
-	if (!argv) return false;
-
-	const parsed = extractProgram(argv);
-	if (!parsed) return false;
-	if (BASH_COMMANDS_REQUIRING_APPROVAL.has(parsed.program)) return false;
-
-	const classification = classifyCommand(parsed.program, parsed.args);
-	return classification.hasReads && !classification.hasWrites;
-}
-
-function splitPipelineStages(command: string): string[] | undefined {
-	const stages: string[] = [];
-	let current = "";
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let escaped = false;
-
-	for (let i = 0; i < command.length; i += 1) {
-		const char = command[i]!;
-
-		if (escaped) {
-			current += char;
-			escaped = false;
-			continue;
-		}
-
-		if (!inSingleQuote && char === "\\") {
-			escaped = true;
-			continue;
-		}
-
-		if (!inDoubleQuote && char === "'") {
-			inSingleQuote = !inSingleQuote;
-			current += char;
-			continue;
-		}
-
-		if (!inSingleQuote && char === '"') {
-			inDoubleQuote = !inDoubleQuote;
-			current += char;
-			continue;
-		}
-
-		if (!inSingleQuote && !inDoubleQuote && char === "|") {
-			if (command[i + 1] === "|") {
-				return undefined;
-			}
-
-			const stage = current.trim();
-			if (stage.length === 0) return undefined;
-			stages.push(stage);
-			current = "";
-			continue;
-		}
-
-		current += char;
-	}
-
-	if (escaped || inSingleQuote || inDoubleQuote) {
-		return undefined;
-	}
-
-	const tail = current.trim();
-	if (tail.length === 0) return undefined;
-	stages.push(tail);
-	return stages;
-}
-
-function inspectShellSyntax(command: string): {
-	hasPipe: boolean;
-	hasOtherControlFlow: boolean;
-	hasRedirection: boolean;
-	hasInputRedirection: boolean;
-	hasOutputRedirection: boolean;
-	hasSubstitution: boolean;
-} {
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let escaped = false;
-
-	let hasPipe = false;
-	let hasOtherControlFlow = false;
-	let hasInputRedirection = false;
-	let hasOutputRedirection = false;
-	let hasSubstitution = false;
-
-	for (let i = 0; i < command.length; i += 1) {
-		const char = command[i]!;
-
-		if (escaped) {
-			escaped = false;
-			continue;
-		}
-
-		if (!inSingleQuote && char === "\\") {
-			escaped = true;
-			continue;
-		}
-
-		if (!inDoubleQuote && char === "'") {
-			inSingleQuote = !inSingleQuote;
-			continue;
-		}
-
-		if (!inSingleQuote && char === '"') {
-			inDoubleQuote = !inDoubleQuote;
-			continue;
-		}
-
-		if (inSingleQuote || inDoubleQuote) {
-			continue;
-		}
-
-		if (char === "\n" || char === ";") {
-			hasOtherControlFlow = true;
-			continue;
-		}
-
-		if (char === "&") {
-			hasOtherControlFlow = true;
-			if (command[i + 1] === "&") i += 1;
-			continue;
-		}
-
-		if (char === "|") {
-			if (command[i + 1] === "|") {
-				hasOtherControlFlow = true;
-				i += 1;
-				continue;
-			}
-
-			hasPipe = true;
-			continue;
-		}
-
-		if (char === ">") {
-			hasOutputRedirection = true;
-			continue;
-		}
-
-		if (char === "<") {
-			hasInputRedirection = true;
-			continue;
-		}
-
-		if (char === "`") {
-			hasSubstitution = true;
-			continue;
-		}
-
-		if (char === "$" && command[i + 1] === "(") {
-			hasSubstitution = true;
-			i += 1;
-			continue;
-		}
+	const analysis = analyzeBashCommand(trimmed);
+	if (analysis.parseError) {
+		return { hasReads: false, hasWrites: false, isPlainCommand: false };
 	}
 
 	return {
-		hasPipe,
-		hasOtherControlFlow,
-		hasRedirection: hasInputRedirection || hasOutputRedirection,
-		hasInputRedirection,
-		hasOutputRedirection,
-		hasSubstitution,
+		hasReads: analysis.hasReads || analysis.hasInputRedirection,
+		hasWrites: analysis.hasWrites || analysis.hasOutputRedirection,
+		isPlainCommand: analysis.isPlainCommand,
 	};
 }
 
-function tokenizeBashCommand(command: string): string[] | undefined {
-	const tokens: string[] = [];
-	let current = "";
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let escaped = false;
-
-	const pushCurrent = (): void => {
-		if (current.length > 0) {
-			tokens.push(current);
-			current = "";
-		}
+function analyzeBashCommand(command: string): BashPolicyAnalysis {
+	const analysis: BashPolicyAnalysis = {
+		hasReads: false,
+		hasWrites: false,
+		hasPipe: false,
+		hasOtherControlFlow: false,
+		hasInputRedirection: false,
+		hasOutputRedirection: false,
+		hasSubstitution: false,
+		hasUnknownCommand: false,
+		requiresApproval: false,
+		parseError: false,
+		commandCount: 0,
+		isPlainCommand: false,
 	};
 
-	for (let i = 0; i < command.length; i += 1) {
-		const char = command[i]!;
-
-		if (escaped) {
-			current += char;
-			escaped = false;
-			continue;
-		}
-
-		if (!inSingleQuote && char === "\\") {
-			escaped = true;
-			continue;
-		}
-
-		if (!inDoubleQuote && char === "'") {
-			inSingleQuote = !inSingleQuote;
-			continue;
-		}
-
-		if (!inSingleQuote && char === '"') {
-			inDoubleQuote = !inDoubleQuote;
-			continue;
-		}
-
-		if (!inSingleQuote && !inDoubleQuote && /\s/.test(char)) {
-			pushCurrent();
-			continue;
-		}
-
-		current += char;
+	if (command.endsWith("\\")) {
+		analysis.parseError = true;
+		return analysis;
 	}
 
-	if (escaped || inSingleQuote || inDoubleQuote) {
-		return undefined;
+	let ast: any;
+	try {
+		ast = parseBash(command);
+	} catch {
+		analysis.parseError = true;
+		return analysis;
 	}
 
-	pushCurrent();
-	return tokens;
+	evaluateAstNode(ast, analysis);
+
+	analysis.isPlainCommand = isSinglePlainCommand(ast, analysis);
+	return analysis;
 }
 
-function extractProgram(argv: string[]): { program: string; args: string[] } | undefined {
-	let index = 0;
-	while (index < argv.length && isEnvAssignment(argv[index]!)) {
-		index += 1;
+function evaluateAstNode(node: any, analysis: BashPolicyAnalysis): void {
+	if (!node || typeof node !== "object") return;
+
+	switch (node.type) {
+		case "Script": {
+			const commands = asArray(node.commands);
+			if (commands.length > 1) analysis.hasOtherControlFlow = true;
+			for (const command of commands) evaluateAstNode(command, analysis);
+			return;
+		}
+		case "LogicalExpression":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.left, analysis);
+			evaluateAstNode(node.right, analysis);
+			return;
+		case "Pipeline": {
+			analysis.hasPipe = true;
+			for (const command of asArray(node.commands)) evaluateAstNode(command, analysis);
+			return;
+		}
+		case "Command":
+			evaluateCommandNode(node, analysis);
+			return;
+		case "Subshell":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.list, analysis);
+			return;
+		case "CompoundList":
+			for (const command of asArray(node.commands)) evaluateAstNode(command, analysis);
+			return;
+		case "If":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.clause, analysis);
+			evaluateAstNode(node.then, analysis);
+			evaluateAstNode(node.else, analysis);
+			return;
+		case "For":
+		case "While":
+		case "Until":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.clause, analysis);
+			evaluateAstNode(node.do, analysis);
+			return;
+		case "Case":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.clause, analysis);
+			for (const item of asArray(node.cases)) {
+				evaluateAstNode(item, analysis);
+			}
+			return;
+		case "Function":
+			analysis.hasOtherControlFlow = true;
+			evaluateAstNode(node.body, analysis);
+			return;
+		default:
+			return;
+	}
+}
+
+function evaluateCommandNode(node: any, analysis: BashPolicyAnalysis): void {
+	analysis.commandCount += 1;
+	if (node.async) analysis.hasOtherControlFlow = true;
+
+	const words = collectCommandWords(node);
+	for (const word of words) {
+		evaluateWordExpansions(word, analysis);
 	}
 
-	if (index >= argv.length) return undefined;
+	const redirects = collectRedirectNodes(node);
+	for (const redirect of redirects) {
+		const op = getRedirectOperator(redirect);
+		if (op.includes(">")) analysis.hasOutputRedirection = true;
+		if (op.includes("<")) analysis.hasInputRedirection = true;
+		evaluateWordExpansions(redirect?.file, analysis);
+	}
 
-	const rawProgram = argv[index]!;
-	const program = normalizeExecutable(rawProgram);
-	const args = argv.slice(index + 1);
-	return { program, args };
+	const command = extractAstCommand(node);
+	if (!command) {
+		analysis.hasUnknownCommand = true;
+		return;
+	}
+
+	const classification = classifyCommand(command.program, command.args, command.hasDynamicArgs);
+	analysis.hasReads = analysis.hasReads || classification.hasReads;
+	analysis.hasWrites = analysis.hasWrites || classification.hasWrites;
+	analysis.requiresApproval = analysis.requiresApproval || needsCommandApproval(command.program, command.args, command.hasDynamicArgs);
+
+	if (!classification.hasReads && !classification.hasWrites) {
+		analysis.hasUnknownCommand = true;
+	}
 }
 
-function isEnvAssignment(token: string): boolean {
-	return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
+function extractAstCommand(node: any): { program: string; args: string[]; hasDynamicArgs: boolean } | undefined {
+	const name = extractWordText(node?.name);
+	if (!name) return undefined;
+
+	const program = normalizeExecutable(name);
+	const args: string[] = [];
+	let hasDynamicArgs = hasWordExpansion(node?.name);
+
+	for (const item of asArray(node?.suffix)) {
+		if (!item || item.type !== "Word") continue;
+		const text = extractWordText(item);
+		if (text.length === 0) continue;
+		args.push(text);
+		if (hasWordExpansion(item)) hasDynamicArgs = true;
+	}
+
+	return { program, args, hasDynamicArgs };
 }
 
-function normalizeExecutable(rawProgram: string): string {
-	const segments = rawProgram.split("/");
-	const last = segments[segments.length - 1] ?? rawProgram;
-	return last.toLowerCase();
+function collectCommandWords(node: any): any[] {
+	const words: any[] = [];
+	for (const item of [...asArray(node?.prefix), ...asArray(node?.suffix)]) {
+		if (!item) continue;
+		if (item.type === "Word" || item.type === "AssignmentWord") words.push(item);
+	}
+	if (node?.name) words.push(node.name);
+	return words;
 }
 
-function classifyCommand(program: string, args: string[]): { hasReads: boolean; hasWrites: boolean } {
+function collectRedirectNodes(node: any): any[] {
+	const redirects: any[] = [];
+	for (const item of [...asArray(node?.prefix), ...asArray(node?.suffix)]) {
+		if (!item) continue;
+		if (item.type === "Redirect" || isStandaloneRedirectToken(item)) redirects.push(item);
+	}
+	return redirects;
+}
+
+function getRedirectOperator(node: any): string {
+	if (!node || typeof node !== "object") return "";
+	if (typeof node?.op?.text === "string") return node.op.text;
+	if (typeof node?.text === "string") return node.text;
+	return "";
+}
+
+function isStandaloneRedirectToken(node: any): boolean {
+	if (!node || typeof node?.type !== "string") return false;
+	return REDIRECT_TOKEN_TYPES.has(node.type);
+}
+
+const REDIRECT_TOKEN_TYPES = new Set([
+	"less",
+	"great",
+	"dgreat",
+	"clobber",
+	"lessand",
+	"greatand",
+	"lessgreat",
+	"dless",
+	"dlessdash",
+]);
+
+function evaluateWordExpansions(word: any, analysis: BashPolicyAnalysis): void {
+	if (!word || typeof word !== "object") return;
+	const expansions = asArray(word.expansion);
+	if (expansions.length === 0) return;
+
+	analysis.hasSubstitution = true;
+	for (const expansion of expansions) {
+		if (expansion?.type === "CommandExpansion" && expansion.commandAST) {
+			evaluateAstNode(expansion.commandAST, analysis);
+		}
+	}
+}
+
+function hasWordExpansion(word: any): boolean {
+	return asArray(word?.expansion).length > 0;
+}
+
+function extractWordText(word: any): string {
+	if (!word || typeof word.text !== "string") return "";
+	return word.text;
+}
+
+function isSinglePlainCommand(ast: any, analysis: BashPolicyAnalysis): boolean {
+	if (!ast || ast.type !== "Script") return false;
+	const commands = asArray(ast.commands);
+	if (commands.length !== 1) return false;
+	const only = commands[0];
+	if (!only || only.type !== "Command") return false;
+	if (only.async) return false;
+	if (analysis.hasPipe || analysis.hasOtherControlFlow || analysis.hasSubstitution) return false;
+	if (analysis.hasInputRedirection || analysis.hasOutputRedirection) return false;
+	return true;
+}
+
+function asArray<T>(value: T | T[] | undefined): T[] {
+	if (Array.isArray(value)) return value;
+	if (value === undefined || value === null) return [];
+	return [value];
+}
+
+function needsCommandApproval(program: string, args: string[], hasDynamicArgs: boolean): boolean {
+	if (program !== "find") return false;
+	return hasFindWriteLikeArgs(args) || hasDynamicArgs;
+}
+
+function classifyCommand(program: string, args: string[], hasDynamicArgs: boolean): { hasReads: boolean; hasWrites: boolean } {
+	if (program === "find") {
+		if (hasFindWriteLikeArgs(args) || hasDynamicArgs) {
+			return { hasReads: false, hasWrites: true };
+		}
+		return { hasReads: true, hasWrites: false };
+	}
+
 	if (READ_ONLY_BASH_COMMANDS.has(program)) {
 		return { hasReads: true, hasWrites: false };
 	}
@@ -514,6 +493,22 @@ function classifyCommand(program: string, args: string[]): { hasReads: boolean; 
 	}
 
 	return { hasReads: false, hasWrites: false };
+}
+
+function hasFindWriteLikeArgs(args: string[]): boolean {
+	return args.some((arg) => {
+		const lower = arg.toLowerCase();
+		return (
+			lower === "-exec" ||
+			lower === "-execdir" ||
+			lower === "-ok" ||
+			lower === "-okdir" ||
+			lower === "-delete" ||
+			lower === "-fprint" ||
+			lower === "-fprint0" ||
+			lower === "-fprintf"
+		);
+	});
 }
 
 function classifyGitCommand(args: string[]): { hasReads: boolean; hasWrites: boolean } {
@@ -572,6 +567,12 @@ function normalizeSubcommand(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	if (value.startsWith("-")) return undefined;
 	return value.toLowerCase();
+}
+
+function normalizeExecutable(rawProgram: string): string {
+	const segments = rawProgram.split("/");
+	const last = segments[segments.length - 1] ?? rawProgram;
+	return last.toLowerCase();
 }
 
 function normalizeToolPath(raw: unknown): string | undefined {
