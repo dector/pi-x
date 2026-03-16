@@ -1,0 +1,6 @@
+{
+  "allow": [
+    "bun test"
+  ],
+  "deny": []
+}
