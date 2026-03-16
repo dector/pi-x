@@ -2,6 +2,10 @@
 
 for [shittycodingagent.ai](https://shittycodingagent.ai/).
 
+<p align="center">
+  <img src="docs/images/pi-x.webp" alt="pi-x" />
+</p>
+
 This repo currently contains the following extension(s):
 
 - [`status-bar`](extensions/status-bar/README.md) — **Required shared dependency** for other status-producing extensions in this repo. Install this first.
