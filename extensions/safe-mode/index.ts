@@ -105,9 +105,13 @@ async function saveProjectSmartAllowlist(projectRoot: string, commands: Set<stri
 	await writeFile(filePath, `${JSON.stringify(content, null, 2)}\n`, "utf8");
 }
 
+function modeLabel(mode: SafeMode, outerAccess: boolean, options?: { ui?: boolean }): string {
+	const suffix = mode !== "paranoid" && outerAccess ? (options?.ui ? "+" : "!") : "";
+	return `[${mode.toUpperCase()}${suffix}]`;
+}
+
 function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
-	const suffix = mode !== "paranoid" && outerAccess ? "!" : "";
-	const label = `[${mode.toUpperCase()}${suffix}]`;
+	const label = modeLabel(mode, outerAccess, { ui: true });
 	switch (mode) {
 		case "yolo":
 			return ctx.ui.theme.fg("error", label);
@@ -517,9 +521,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		pi.appendEntry<SafeModeState>("safe-mode", { mode, outerAccess });
 	}
 
-	function statusLabel(): string {
-		const suffix = mode !== "paranoid" && outerAccess ? "!" : "";
-		return `[${mode.toUpperCase()}${suffix}]`;
+	function statusLabel(options?: { ui?: boolean }): string {
+		return modeLabel(mode, outerAccess, options);
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -540,7 +543,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		if (notify && ctx.hasUI) {
-			ctx.ui.notify(`Safe mode: ${statusLabel()}`, "info");
+			ctx.ui.notify(`Safe mode: ${statusLabel({ ui: true })}`, "info");
 		}
 	}
 
@@ -607,7 +610,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			if (input.length === 0) {
 				if (ctx.hasUI) {
 					ctx.ui.notify(
-						`Current safe mode: ${statusLabel()} (outer access: ${outerAccess ? "on" : "off"}). Available: ${formatModeList()}`,
+						`Current safe mode: ${statusLabel({ ui: true })} (outer access: ${outerAccess ? "on" : "off"}). Available: ${formatModeList()}`,
 						"info",
 					);
 				}
