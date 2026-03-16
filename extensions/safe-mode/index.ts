@@ -67,30 +67,30 @@ function normalizeAllowlistCommands(raw: unknown): string[] {
 	return [...deduped];
 }
 
-async function loadProjectSmartAllowlist(projectRoot: string): Promise<Set<string>> {
+async function loadProjectSmartAllowlist(projectRoot: string): Promise<{ commands: Set<string>; exists: boolean }> {
 	const filePath = getSmartAllowlistPath(projectRoot);
 	try {
 		const raw = await readFile(filePath, "utf8");
 		const parsed = JSON.parse(raw) as unknown;
 		if (Array.isArray(parsed)) {
-			return new Set(normalizeAllowlistCommands(parsed));
+			return { commands: new Set(normalizeAllowlistCommands(parsed)), exists: true };
 		}
 
 		if (parsed && typeof parsed === "object") {
 			if ("allow" in parsed) {
 				const commands = normalizeAllowlistCommands((parsed as { allow?: unknown }).allow);
-				return new Set(commands);
+				return { commands: new Set(commands), exists: true };
 			}
 
 			if ("commands" in parsed) {
 				const commands = normalizeAllowlistCommands((parsed as { commands?: unknown }).commands);
-				return new Set(commands);
+				return { commands: new Set(commands), exists: true };
 			}
 		}
 
-		return new Set();
+		return { commands: new Set(), exists: true };
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return new Set();
+		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { commands: new Set(), exists: false };
 		throw error;
 	}
 }
@@ -490,6 +490,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 	let outerAccess = false;
 	let activeProjectRoot = "";
+	let projectAllowlistFileExists = false;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
 
@@ -500,9 +501,11 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	async function loadProjectApprovals(ctx: ExtensionContext): Promise<void> {
 		autoApprovedBashCommandsForProject.clear();
 		activeProjectRoot = ctx.cwd;
+		projectAllowlistFileExists = false;
 		try {
 			const loaded = await loadProjectSmartAllowlist(ctx.cwd);
-			for (const command of loaded) {
+			projectAllowlistFileExists = loaded.exists;
+			for (const command of loaded.commands) {
 				autoApprovedBashCommandsForProject.add(command);
 			}
 		} catch (error) {
@@ -513,8 +516,12 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function persistProjectApprovals(ctx: ExtensionContext): Promise<void> {
+		if (autoApprovedBashCommandsForProject.size === 0 && !projectAllowlistFileExists) {
+			return;
+		}
 		const projectRoot = activeProjectRoot || ctx.cwd;
 		await saveProjectSmartAllowlist(projectRoot, autoApprovedBashCommandsForProject);
+		projectAllowlistFileExists = true;
 	}
 
 	function persistState(): void {

@@ -107,6 +107,7 @@ When approval is required:
 - Smart-mode project allowlist is persisted per repository at:
   - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`
   - format: `{ "allow": ["..."], "deny": [] }` (`deny` currently ignored)
+  - file is created only when project-level approvals are actually saved; if absent, built-in default rules apply
 
 ## Non-interactive behavior
 
