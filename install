@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Installs extensions from this repo onto the current machine using rsync.
+# Default target: ~/.pi/agent/extensions
+# Override with: PI_EXTENSIONS_DIR=/some/path ./install
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_ROOT="$SCRIPT_DIR/extensions"
+DEST_ROOT="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"
+
+if [[ ! -d "$SRC_ROOT" ]]; then
+  echo "Error: source extensions directory not found: $SRC_ROOT" >&2
+  exit 1
+fi
+
+echo "Target extension directory: $DEST_ROOT"
+echo "Warning: rsync uses --delete and may remove files under each extension target."
+read -r -p "Continue and sync into this directory? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+  echo "Aborted."
+  exit 1
+fi
+
+mkdir -p "$DEST_ROOT"
+
+# Install status-bar first because other extensions depend on it.
+extensions=(
+  "status-bar"
+  "switch-thinking"
+  "safe-mode"
+  "context-watcher"
+  "repo-stats"
+)
+
+echo "Installing extensions into: $DEST_ROOT"
+for ext in "${extensions[@]}"; do
+  src="$SRC_ROOT/$ext/"
+  dest="$DEST_ROOT/$ext/"
+
+  if [[ ! -d "$src" ]]; then
+    echo "Skipping missing extension: $ext"
+    continue
+  fi
+
+  echo "- $ext"
+  rsync -a --delete "$src" "$dest"
+done
+
+echo "Done. Reload pi to apply updates (/reload)."
