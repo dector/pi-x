@@ -65,13 +65,15 @@ Notes:
 - `/safe-mode outer on|off|toggle`
   - Configure outside-project behavior.
 - `/safe-mode-list`
-  - Open an interactive manager for exact `bash` command lines auto-approved for the current session.
+  - Open an interactive manager for exact `bash` command lines auto-approved for this session and this project.
+  - Project-persistent entries are shown first with `(project)` prefix.
+  - Project-persistent entries are editable only in `smart`/`smart!`; in other modes they are shown muted/read-only.
   - Keys:
     - `j` / `k`: move cursor
     - `space`: select/unselect command
     - `d`: remove current command (or all selected commands)
-    - `u`: restore last removed command before current cursor position
-    - `D` (`Shift+d`): clear all commands (with `y/n` confirmation)
+    - `u`: restore last removed command
+    - `D` (`Shift+d`): clear all session commands (with `y/n` confirmation)
     - `Esc`: close manager
   - Footer shows selection count as `N/M selected`.
 
@@ -88,6 +90,7 @@ When approval is required:
 - `Y` or `y` confirms once (allow this tool call)
 - `N` or `n` rejects (block tool call)
 - `A` or `a` remembers the exact `bash` command line for this session and auto-approves exact repeats
+- `P` or `p` permanently allows the exact `bash` command for this project (**only shown in `smart`/`smart!`**)
 - `Esc` blocks the tool call, prompts for steering text, and sends it to the agent as a steer message
 - Existing selection navigation (arrows / j / k) remains unchanged
 
@@ -100,7 +103,10 @@ When approval is required:
 
 ## Persistence
 
-Mode and outer access changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
+- Mode and outer access changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
+- Smart-mode project allowlist is persisted per repository at:
+  - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`
+  - format: `{ "allow": ["..."], "deny": [] }` (`deny` currently ignored)
 
 ## Non-interactive behavior
 

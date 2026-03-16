@@ -1,5 +1,7 @@
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import {
 	DEFAULT_SAFE_MODE,
 	SAFE_MODES,
@@ -15,12 +17,20 @@ interface SafeModeState {
 	outerAccess: boolean;
 }
 
-type ApprovalDecision = "approve-once" | "approve-all-session" | "deny" | "steer";
+type ApprovalDecision = "approve-once" | "approve-all-session" | "approve-project" | "deny" | "steer";
+
+type AllowlistScope = "project" | "session";
+
+type AllowlistEntry = {
+	command: string;
+	scope: AllowlistScope;
+};
 
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
+const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
 
 type MaybeCustomEntry = {
 	type?: string;
@@ -39,6 +49,60 @@ function parseBooleanLike(value: unknown): boolean | undefined {
 	if (normalized === "true" || normalized === "on" || normalized === "1") return true;
 	if (normalized === "false" || normalized === "off" || normalized === "0") return false;
 	return undefined;
+}
+
+function getSmartAllowlistPath(projectRoot: string): string {
+	return resolve(projectRoot, SMART_ALLOWLIST_RELATIVE_PATH);
+}
+
+function normalizeAllowlistCommands(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const deduped = new Set<string>();
+	for (const item of raw) {
+		if (typeof item !== "string") continue;
+		const command = item.trim();
+		if (command.length === 0) continue;
+		deduped.add(command);
+	}
+	return [...deduped];
+}
+
+async function loadProjectSmartAllowlist(projectRoot: string): Promise<Set<string>> {
+	const filePath = getSmartAllowlistPath(projectRoot);
+	try {
+		const raw = await readFile(filePath, "utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		if (Array.isArray(parsed)) {
+			return new Set(normalizeAllowlistCommands(parsed));
+		}
+
+		if (parsed && typeof parsed === "object") {
+			if ("allow" in parsed) {
+				const commands = normalizeAllowlistCommands((parsed as { allow?: unknown }).allow);
+				return new Set(commands);
+			}
+
+			if ("commands" in parsed) {
+				const commands = normalizeAllowlistCommands((parsed as { commands?: unknown }).commands);
+				return new Set(commands);
+			}
+		}
+
+		return new Set();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return new Set();
+		throw error;
+	}
+}
+
+async function saveProjectSmartAllowlist(projectRoot: string, commands: Set<string>): Promise<void> {
+	const filePath = getSmartAllowlistPath(projectRoot);
+	await mkdir(dirname(filePath), { recursive: true });
+	const content = {
+		allow: [...commands].sort((a, b) => a.localeCompare(b)),
+		deny: [] as string[],
+	};
+	await writeFile(filePath, `${JSON.stringify(content, null, 2)}\n`, "utf8");
 }
 
 function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
@@ -113,9 +177,16 @@ function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Re
 	};
 }
 
-const APPROVAL_OPTIONS = ["[Y]es", "[N]o", "[A]ll for this session", "[Esc] to steer"] as const;
+const BASE_APPROVAL_OPTIONS = ["[Y]es", "[N]o", "[A]ll for this session", "[Esc] to steer"] as const;
+const PROJECT_APPROVAL_OPTION = "[P]ermanently allow";
 
-async function confirmApproval(ctx: ExtensionContext, title: string, message: string): Promise<ApprovalDecision> {
+async function confirmApproval(
+	ctx: ExtensionContext,
+	title: string,
+	message: string,
+	options?: { allowProjectApproval?: boolean },
+): Promise<ApprovalDecision> {
+	const allowProjectApproval = options?.allowProjectApproval ?? false;
 	const controller = new AbortController();
 	let keyDecision: ApprovalDecision | undefined;
 
@@ -138,6 +209,12 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 			return { consume: true };
 		}
 
+		if (allowProjectApproval && (data === "p" || data === "P")) {
+			keyDecision = "approve-project";
+			controller.abort();
+			return { consume: true };
+		}
+
 		if (data === ESC) {
 			keyDecision = "steer";
 			controller.abort();
@@ -148,10 +225,14 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 	});
 
 	try {
-		const selected = await ctx.ui.select(`${title}${message}`, [...APPROVAL_OPTIONS], { signal: controller.signal });
+		const selectOptions = allowProjectApproval
+			? [BASE_APPROVAL_OPTIONS[0], BASE_APPROVAL_OPTIONS[1], BASE_APPROVAL_OPTIONS[2], PROJECT_APPROVAL_OPTION, BASE_APPROVAL_OPTIONS[3]]
+			: [...BASE_APPROVAL_OPTIONS];
+		const selected = await ctx.ui.select(`${title}${message}`, selectOptions, { signal: controller.signal });
 		if (keyDecision) return keyDecision;
 		if (selected === "[Y]es") return "approve-once";
 		if (selected === "[A]ll for this session") return "approve-all-session";
+		if (selected === PROJECT_APPROVAL_OPTION) return "approve-project";
 		if (selected === "[N]o") return "deny";
 		if (selected === "[Esc] to steer") return "steer";
 		return "steer";
@@ -160,29 +241,55 @@ async function confirmApproval(ctx: ExtensionContext, title: string, message: st
 	}
 }
 
-async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession: Set<string>): Promise<void> {
-	let commands = [...commandsForSession];
-	if (commands.length === 0) return;
+async function showSafeModeListManager(args: {
+	ctx: ExtensionContext;
+	sessionCommands: Set<string>;
+	projectCommands: Set<string>;
+	canModifyProjectRules: boolean;
+}): Promise<{ sessionCommands: Set<string>; projectCommands: Set<string> }> {
+	const { ctx, canModifyProjectRules } = args;
+	let projectCommands = [...args.projectCommands];
+	let sessionCommands = [...args.sessionCommands].filter((command) => !args.projectCommands.has(command));
+
+	type Entry = { key: string; command: string; scope: AllowlistScope };
+	const toEntries = (): Entry[] => [
+		...projectCommands.map((command) => ({ key: `project:${command}`, command, scope: "project" as const })),
+		...sessionCommands.map((command) => ({ key: `session:${command}`, command, scope: "session" as const })),
+	];
+
+	if (toEntries().length === 0) {
+		return { sessionCommands: new Set(), projectCommands: new Set() };
+	}
 
 	await ctx.ui.custom<void>((tui, theme, _kb, done) => {
 		let selectedIndex = 0;
-		const selectedCommands = new Set<string>();
-		const removedStack: string[] = [];
+		const selectedEntries = new Set<string>();
+		const removedStack: AllowlistEntry[] = [];
 		let awaitingClearConfirmation = false;
 
 		interface ListView {
 			container: Container;
 			list: SelectList;
 			items: SelectItem[];
+			entries: Entry[];
 		}
 
-		const getSelectedCountText = (): string => `${selectedCommands.size}/${commands.length} selected`;
+		const getSelectedCountText = (entries: Entry[]): string => `${selectedEntries.size}/${entries.length} selected`;
+		const getCurrentEntry = (entries: Entry[]): Entry | undefined => entries[selectedIndex];
+		const isProjectLocked = (entry: Entry): boolean => entry.scope === "project" && !canModifyProjectRules;
+		const entryToAllowlistEntry = (entry: Entry): AllowlistEntry => ({ command: entry.command, scope: entry.scope });
 
 		const buildView = (): ListView => {
-			const items: SelectItem[] = commands.map((command) => ({
-				value: command,
-				label: `${selectedCommands.has(command) ? "[x]" : "[ ]"} ${command}`,
-			}));
+			const entries = toEntries();
+			const items: SelectItem[] = entries.map((entry) => {
+				const isSelected = selectedEntries.has(entry.key);
+				const prefix = isSelected ? "[x]" : "[ ]";
+				const label = `${prefix} ${entry.scope === "project" ? "(project) " : ""}${entry.command}`;
+				return {
+					value: entry.key,
+					label: isProjectLocked(entry) ? theme.fg("muted", label) : label,
+				};
+			});
 
 			const clampedIndex = items.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, items.length - 1));
 			selectedIndex = clampedIndex;
@@ -208,18 +315,20 @@ async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession
 				selectedIndex = nextIndex >= 0 ? nextIndex : 0;
 			};
 			list.onCancel = () => done();
-
 			container.addChild(list);
 
 			if (awaitingClearConfirmation) {
-				container.addChild(new Text(theme.fg("warning", "Clear all commands? [y/n]")));
+				container.addChild(new Text(theme.fg("warning", "Clear all session commands? [y/n]")));
 			} else {
-				container.addChild(new Text(theme.fg("dim", "j/k move • space select • d delete • D clear all • u undo • esc close")));
+				container.addChild(new Text(theme.fg("dim", "j/k move • space select • d delete • D clear session • u undo • esc close")));
+				if (!canModifyProjectRules) {
+					container.addChild(new Text(theme.fg("muted", "(project) entries are read-only outside smart mode")));
+				}
 			}
-			container.addChild(new Text(theme.fg("muted", getSelectedCountText())));
+			container.addChild(new Text(theme.fg("muted", getSelectedCountText(entries))));
 			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
-			return { container, list, items };
+			return { container, list, items, entries };
 		};
 
 		let view = buildView();
@@ -237,51 +346,53 @@ async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession
 			tui.requestRender();
 		};
 
-		const currentCommand = (): string | undefined => commands[selectedIndex];
-
 		const toggleSelection = () => {
-			const current = currentCommand();
-			if (!current) return;
-			if (selectedCommands.has(current)) {
-				selectedCommands.delete(current);
+			const current = getCurrentEntry(view.entries);
+			if (!current || isProjectLocked(current)) return;
+			if (selectedEntries.has(current.key)) {
+				selectedEntries.delete(current.key);
 			} else {
-				selectedCommands.add(current);
+				selectedEntries.add(current.key);
 			}
 			refresh();
 		};
 
+		const removeEntry = (entry: Entry) => {
+			if (entry.scope === "project") {
+				projectCommands = projectCommands.filter((command) => command !== entry.command);
+			} else {
+				sessionCommands = sessionCommands.filter((command) => command !== entry.command);
+			}
+			selectedEntries.delete(entry.key);
+			removedStack.push(entryToAllowlistEntry(entry));
+		};
+
 		const deleteSelectedOrCurrent = () => {
-			if (commands.length === 0) return;
+			if (view.entries.length === 0) return;
 
-			if (selectedCommands.size > 0) {
-				const toRemove = commands.filter((command) => selectedCommands.has(command));
-				for (const command of toRemove) {
-					removedStack.push(command);
+			if (selectedEntries.size > 0) {
+				for (const entry of view.entries) {
+					if (!selectedEntries.has(entry.key) || isProjectLocked(entry)) continue;
+					removeEntry(entry);
 				}
-				commands = commands.filter((command) => !selectedCommands.has(command));
-				selectedCommands.clear();
 			} else {
-				const current = currentCommand();
-				if (!current) return;
-				removedStack.push(current);
-				commands.splice(selectedIndex, 1);
+				const current = getCurrentEntry(view.entries);
+				if (!current || isProjectLocked(current)) return;
+				removeEntry(current);
 			}
 
-			if (commands.length === 0) {
-				selectedIndex = 0;
-			} else {
-				selectedIndex = Math.max(0, Math.min(selectedIndex, commands.length - 1));
-			}
+			const nextEntries = toEntries();
+			selectedIndex = nextEntries.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, nextEntries.length - 1));
 			refresh();
 		};
 
 		const clearAll = () => {
-			if (commands.length === 0) return;
-			for (const command of commands) {
-				removedStack.push(command);
+			if (sessionCommands.length === 0) return;
+			for (const command of sessionCommands) {
+				removedStack.push({ command, scope: "session" });
 			}
-			commands = [];
-			selectedCommands.clear();
+			sessionCommands = [];
+			selectedEntries.clear();
 			selectedIndex = 0;
 			refresh();
 		};
@@ -289,10 +400,11 @@ async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession
 		const undoLastRemoval = () => {
 			const restored = removedStack.pop();
 			if (!restored) return;
-			const insertIndex = commands.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, commands.length));
-			commands.splice(insertIndex, 0, restored);
-			selectedIndex = insertIndex;
-			selectedCommands.delete(restored);
+			if (restored.scope === "project") {
+				projectCommands.splice(projectCommands.length, 0, restored.command);
+			} else {
+				sessionCommands.splice(sessionCommands.length, 0, restored.command);
+			}
 			refresh();
 		};
 
@@ -364,19 +476,41 @@ async function showSafeModeListManager(ctx: ExtensionContext, commandsForSession
 		};
 	});
 
-	commandsForSession.clear();
-	for (const command of commands) {
-		commandsForSession.add(command);
-	}
+	return {
+		sessionCommands: new Set(sessionCommands),
+		projectCommands: new Set(projectCommands),
+	};
 }
 
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 	let outerAccess = false;
+	let activeProjectRoot = "";
 	const autoApprovedBashCommandsForSession = new Set<string>();
+	const autoApprovedBashCommandsForProject = new Set<string>();
 
 	function resetSessionApprovals(): void {
 		autoApprovedBashCommandsForSession.clear();
+	}
+
+	async function loadProjectApprovals(ctx: ExtensionContext): Promise<void> {
+		autoApprovedBashCommandsForProject.clear();
+		activeProjectRoot = ctx.cwd;
+		try {
+			const loaded = await loadProjectSmartAllowlist(ctx.cwd);
+			for (const command of loaded) {
+				autoApprovedBashCommandsForProject.add(command);
+			}
+		} catch (error) {
+			if (ctx.hasUI) {
+				ctx.ui.notify(`safe-mode: failed to load project allowlist (${String(error)})`, "warning");
+			}
+		}
+	}
+
+	async function persistProjectApprovals(ctx: ExtensionContext): Promise<void> {
+		const projectRoot = activeProjectRoot || ctx.cwd;
+		await saveProjectSmartAllowlist(projectRoot, autoApprovedBashCommandsForProject);
 	}
 
 	function persistState(): void {
@@ -524,15 +658,40 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("safe-mode-list", {
-		description: "Manage exact bash commands auto-approved for this session",
+		description: "Manage exact bash commands auto-approved for this session and project",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) return;
-			if (autoApprovedBashCommandsForSession.size === 0) {
-				ctx.ui.notify("safe-mode: no session auto-approved bash commands", "info");
+			if (activeProjectRoot !== ctx.cwd) {
+				await loadProjectApprovals(ctx);
+			}
+
+			if (autoApprovedBashCommandsForSession.size === 0 && autoApprovedBashCommandsForProject.size === 0) {
+				ctx.ui.notify("safe-mode: no auto-approved bash commands", "info");
 				return;
 			}
 
-			await showSafeModeListManager(ctx, autoApprovedBashCommandsForSession);
+			const updated = await showSafeModeListManager({
+				ctx,
+				sessionCommands: autoApprovedBashCommandsForSession,
+				projectCommands: autoApprovedBashCommandsForProject,
+				canModifyProjectRules: mode === "smart",
+			});
+
+			autoApprovedBashCommandsForSession.clear();
+			for (const command of updated.sessionCommands) {
+				autoApprovedBashCommandsForSession.add(command);
+			}
+
+			autoApprovedBashCommandsForProject.clear();
+			for (const command of updated.projectCommands) {
+				autoApprovedBashCommandsForProject.add(command);
+			}
+
+			try {
+				await persistProjectApprovals(ctx);
+			} catch (error) {
+				ctx.ui.notify(`safe-mode: failed to persist project allowlist (${String(error)})`, "warning");
+			}
 		},
 	});
 
@@ -553,16 +712,19 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionApprovals();
 		applyResolvedState(ctx);
+		await loadProjectApprovals(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		resetSessionApprovals();
 		applyResolvedState(ctx);
+		await loadProjectApprovals(ctx);
 	});
 
 	pi.on("session_fork", async (_event, ctx) => {
 		resetSessionApprovals();
 		applyResolvedState(ctx);
+		await loadProjectApprovals(ctx);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -570,6 +732,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const exactBashCommand = event.toolName === "bash" ? getExactBashCommand(input) : undefined;
 
 		if (exactBashCommand && autoApprovedBashCommandsForSession.has(exactBashCommand)) {
+			return;
+		}
+
+		if (mode === "smart" && exactBashCommand && autoApprovedBashCommandsForProject.has(exactBashCommand)) {
 			return;
 		}
 
@@ -594,11 +760,26 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
-		const approval = await confirmApproval(ctx, prompt.title, prompt.message);
+		const approval = await confirmApproval(ctx, prompt.title, prompt.message, {
+			allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
+		});
 		if (approval === "approve-all-session") {
 			if (exactBashCommand) {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);
 				ctx.ui.notify("safe-mode: remembered exact bash command for this session", "info");
+			}
+			return;
+		}
+
+		if (approval === "approve-project") {
+			if (mode === "smart" && exactBashCommand) {
+				autoApprovedBashCommandsForProject.add(exactBashCommand);
+				try {
+					await persistProjectApprovals(ctx);
+					ctx.ui.notify("safe-mode: remembered exact bash command for this project", "info");
+				} catch (error) {
+					ctx.ui.notify(`safe-mode: failed to persist project allowlist (${String(error)})`, "warning");
+				}
 			}
 			return;
 		}
