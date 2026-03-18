@@ -9,6 +9,11 @@ Adds an `http` tool that uses **Node's native fetch API** (no shelling out to cu
 - **Any custom headers** via:
   - `headers` object (`{ "Authorization": "Bearer ..." }`)
   - `headerLines` array (`["X-Trace-Id: 123"]`)
+- **Optional web-to-md mode** (`webToMd`) using local `pandoc`
+  - checks `pandoc` availability before fetch
+  - converts HTML response to Markdown (`pandoc -f html -t gfm`)
+  - returns Markdown inline up to `webToMdMaxBytes`
+  - spills larger Markdown to `/tmp/pi-http/web-to-md-*/result.md`
 
 ## Tool
 
@@ -26,6 +31,13 @@ Provide request fields directly:
 - `followRedirects` (default `true`)
 - `includeResponseHeaders` (default `true`)
 - `failOnHttpError`, `timeoutSec`, `outputFile`
+- `webToMd` (default `false`)
+- `webToMdMaxBytes` (default `12000`)
+
+Validation notes:
+
+- `webToMd` and `outputFile` cannot be combined.
+- `webToMdMaxBytes` must be finite and `> 0`.
 
 ### curl-compatible mode
 
@@ -47,6 +59,36 @@ Supported examples include common flags like:
 - `-u/--user`
 
 Unsupported curl flags fail fast with an explicit error message.
+
+## web-to-md examples
+
+### Inline Markdown (small output)
+
+```json
+{
+  "url": "https://example.com",
+  "webToMd": true,
+  "webToMdMaxBytes": 12000
+}
+```
+
+### Large Markdown spills to file
+
+```json
+{
+  "url": "https://example.com/large-page",
+  "webToMd": true,
+  "webToMdMaxBytes": 100
+}
+```
+
+Response body includes a message like:
+
+- `[webToMd output saved to /tmp/pi-http/web-to-md-XXXXXX/result.md (34567 bytes)]`
+
+### `pandoc` missing
+
+If `webToMd=true` and `pandoc` is not on `PATH`, the request fails immediately before network fetch with an explicit error.
 
 ## curl → http tool cheat sheet
 
@@ -236,6 +278,7 @@ curl -X POST https://httpbin.org/post -H 'Authorization: Bearer TOKEN' -d '{"ok"
 
 - Output is truncated to pi defaults (**50KB** / **2000 lines**). If truncated, full output is saved to a temp file and path is returned.
 - `insecure` / `--insecure` is currently ignored in fetch mode and reported as a warning.
+- web-to-md spill files are intentionally written under `/tmp/pi-http` to avoid excessive inline token usage for large pages.
 
 ## Install
 

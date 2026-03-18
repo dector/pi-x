@@ -13,7 +13,7 @@ This repo currently contains the following extension(s):
 - [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. Depends on `status-bar` for status rendering.
 - [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`CTX:10.0%`) with threshold-based colors. Depends on `status-bar`.
 - [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. Depends on `status-bar`.
-- [`http`](extensions/http/README.md) — Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields and curl-compatible args support.
+- [`http`](extensions/http/README.md) — Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`.
 
 ## Install policy for pi agents
 

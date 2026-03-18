@@ -1,4 +1,5 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, TruncationResult } from "@mariozechner/pi-coding-agent";
@@ -9,6 +10,10 @@ import {
 	truncateHead,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
+import { Text } from "@mariozechner/pi-tui";
+
+const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;
+const WEB_TO_MD_BASE_DIR = "/tmp/pi-http";
 
 const HttpToolParams = Type.Object({
 	url: Type.Optional(Type.String({ description: "Request URL (required unless curlArgs contains a URL)." })),
@@ -38,6 +43,8 @@ const HttpToolParams = Type.Object({
 	failOnHttpError: Type.Optional(Type.Boolean({ description: "If true, returns error result metadata for HTTP >= 400." })),
 	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
 	outputFile: Type.Optional(Type.String({ description: "Write response body to file path (relative to cwd allowed)." })),
+	webToMd: Type.Optional(Type.Boolean({ description: "Convert fetched HTML to Markdown using pandoc." })),
+	webToMdMaxBytes: Type.Optional(Type.Number({ description: `Max Markdown bytes to return inline. Default: ${DEFAULT_WEB_TO_MD_MAX_BYTES}.` })),
 	curlArgs: Type.Optional(
 		Type.Array(Type.String({
 			description: "curl-compatible arguments. Parsed as a compatibility layer (subset of curl flags).",
@@ -61,6 +68,8 @@ type HttpToolParamsInput = {
 	failOnHttpError?: boolean;
 	timeoutSec?: number;
 	outputFile?: string;
+	webToMd?: boolean;
+	webToMdMaxBytes?: number;
 	curlArgs?: string[];
 };
 
@@ -75,6 +84,8 @@ type NormalizedRequest = {
 	failOnHttpError: boolean;
 	timeoutSec?: number;
 	outputFile?: string;
+	webToMd: boolean;
+	webToMdMaxBytes: number;
 	warnings: string[];
 	rawArgs?: string[];
 };
@@ -97,6 +108,11 @@ interface HttpToolDetails {
 	curlArgs?: string[];
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	webToMd?: boolean;
+	webToMdInline?: boolean;
+	webToMdMaxBytes?: number;
+	webToMdOutputBytes?: number;
+	webToMdFilePath?: string;
 }
 
 function shellQuote(arg: string): string {
@@ -136,6 +152,42 @@ function buildHeaders(objectHeaders?: Record<string, string>, headerLines?: stri
 	return headers;
 }
 
+function normalizeWebToMdMaxBytes(value?: number): number {
+	if (value === undefined) return DEFAULT_WEB_TO_MD_MAX_BYTES;
+	if (!Number.isFinite(value) || value <= 0) {
+		throw new Error("'webToMdMaxBytes' must be a finite number greater than 0.");
+	}
+	return Math.floor(value);
+}
+
+function shortenForDisplay(value: string, max = 80): string {
+	if (value.length <= max) return value;
+	return `${value.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function extractUrlFromCurlArgs(curlArgs?: string[]): string | undefined {
+	if (!curlArgs || curlArgs.length === 0) return undefined;
+
+	for (let i = 0; i < curlArgs.length; i += 1) {
+		const token = curlArgs[i] ?? "";
+		if (token === "--url") {
+			return curlArgs[i + 1];
+		}
+		if (!token.startsWith("-")) {
+			return token;
+		}
+	}
+
+	return undefined;
+}
+
+function buildCallSummary(input: HttpToolParamsInput): string {
+	const method = (input.method?.trim() || "GET").toUpperCase();
+	const url = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
+	if (!url) return method;
+	return `${method} ${shortenForDisplay(url)}`;
+}
+
 function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): NormalizedRequest {
 	if (!input.url || !input.url.trim()) {
 		throw new Error("'url' is required in structured mode.");
@@ -167,6 +219,13 @@ function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): Normal
 
 	const method = (input.method?.trim() || (body ? "POST" : "GET")).toUpperCase();
 	const url = applyQuery(input.url, input.query);
+	const webToMd = input.webToMd ?? false;
+	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
+	const outputFile = input.outputFile ? resolve(cwd, input.outputFile) : undefined;
+
+	if (webToMd && outputFile) {
+		throw new Error("'webToMd' cannot be combined with 'outputFile'.");
+	}
 
 	return {
 		mode: "structured",
@@ -178,7 +237,9 @@ function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): Normal
 		includeResponseHeaders: input.includeResponseHeaders ?? true,
 		failOnHttpError: input.failOnHttpError ?? false,
 		timeoutSec: input.timeoutSec,
-		outputFile: input.outputFile ? resolve(cwd, input.outputFile) : undefined,
+		outputFile,
+		webToMd,
+		webToMdMaxBytes,
 		warnings: input.insecure ? ["'insecure' is ignored in fetch mode."] : [],
 	};
 }
@@ -200,6 +261,8 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 	let failOnHttpError = input.failOnHttpError ?? false;
 	let timeoutSec = input.timeoutSec;
 	let outputFile = input.outputFile ? resolve(cwd, input.outputFile) : undefined;
+	const webToMd = input.webToMd ?? false;
+	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
 
 	const headerLines = [...(input.headerLines ?? [])];
 	const warnings: string[] = [];
@@ -303,6 +366,10 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 	if (!url || !url.trim()) throw new Error("No URL provided in curlArgs mode.");
 	const headers = buildHeaders(input.headers, headerLines);
 
+	if (webToMd && outputFile) {
+		throw new Error("'webToMd' cannot be combined with 'outputFile'.");
+	}
+
 	return {
 		mode: "curl-compat",
 		url,
@@ -314,9 +381,80 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 		failOnHttpError,
 		timeoutSec,
 		outputFile,
+		webToMd,
+		webToMdMaxBytes,
 		warnings,
 		rawArgs: args,
 	};
+}
+
+async function ensurePandocInstalled(): Promise<void> {
+	await new Promise<void>((resolvePromise, reject) => {
+		const child = spawn("pandoc", ["--version"], { stdio: ["ignore", "ignore", "pipe"] });
+		let stderr = "";
+
+		child.stderr.on("data", (chunk: Buffer | string) => {
+			stderr += chunk.toString();
+		});
+
+		child.on("error", (err) => {
+			if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+				reject(new Error("webToMd requires pandoc, but 'pandoc' was not found in PATH."));
+				return;
+			}
+			reject(new Error(`Failed to run pandoc preflight check: ${err.message}`));
+		});
+
+		child.on("close", (code) => {
+			if (code === 0) {
+				resolvePromise();
+				return;
+			}
+			const snippet = stderr.trim().slice(0, 300);
+			reject(new Error(`pandoc preflight check failed with exit code ${code}.${snippet ? ` stderr: ${snippet}` : ""}`));
+		});
+	});
+}
+
+async function convertHtmlToMarkdown(html: string): Promise<string> {
+	return await new Promise<string>((resolvePromise, reject) => {
+		const child = spawn("pandoc", ["-f", "html", "-t", "gfm"], { stdio: ["pipe", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+
+		child.stdout.on("data", (chunk: Buffer | string) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on("data", (chunk: Buffer | string) => {
+			stderr += chunk.toString();
+		});
+
+		child.on("error", (err) => {
+			reject(new Error(`Failed to run pandoc conversion: ${err.message}`));
+		});
+
+		child.on("close", (code) => {
+			if (code === 0) {
+				resolvePromise(stdout);
+				return;
+			}
+			const snippet = stderr.trim().slice(0, 500);
+			reject(new Error(`pandoc conversion failed with exit code ${code}.${snippet ? ` stderr: ${snippet}` : ""}`));
+		});
+
+		child.stdin.write(html, "utf8", (error) => {
+			if (error) reject(new Error(`Failed to write HTML to pandoc stdin: ${error.message}`));
+			child.stdin.end();
+		});
+	});
+}
+
+async function spillMarkdownToFile(markdown: string): Promise<{ filePath: string; bytes: number }> {
+	await mkdir(WEB_TO_MD_BASE_DIR, { recursive: true });
+	const dir = await mkdtemp(join(WEB_TO_MD_BASE_DIR, "web-to-md-"));
+	const filePath = join(dir, "result.md");
+	await writeFile(filePath, markdown, "utf8");
+	return { filePath, bytes: Buffer.byteLength(markdown, "utf8") };
 }
 
 async function truncateWithSpill(content: string): Promise<{ text: string; truncation?: TruncationResult; fullOutputPath?: string }> {
@@ -353,21 +491,65 @@ function buildCommandLike(request: NormalizedRequest): string {
 	return args.map(shellQuote).join(" ");
 }
 
+function formatFetchError(error: unknown, request: NormalizedRequest, timedOut: boolean): string {
+	if (timedOut) {
+		return `fetch timed out after ${request.timeoutSec}s while requesting ${request.url}`;
+	}
+
+	if (error instanceof Error && error.name === "AbortError") {
+		return `fetch aborted while requesting ${request.url}`;
+	}
+
+	if (!(error instanceof Error)) {
+		return `fetch failed for ${request.url}: ${String(error)}`;
+	}
+
+	const details: string[] = [];
+	const cause = (error as Error & { cause?: unknown }).cause;
+	if (cause && typeof cause === "object") {
+		const maybeCause = cause as {
+			code?: unknown;
+			errno?: unknown;
+			syscall?: unknown;
+			hostname?: unknown;
+			host?: unknown;
+			port?: unknown;
+			message?: unknown;
+		};
+		if (typeof maybeCause.code === "string") details.push(`code=${maybeCause.code}`);
+		if (typeof maybeCause.errno === "string" || typeof maybeCause.errno === "number") details.push(`errno=${String(maybeCause.errno)}`);
+		if (typeof maybeCause.syscall === "string") details.push(`syscall=${maybeCause.syscall}`);
+		if (typeof maybeCause.hostname === "string") details.push(`hostname=${maybeCause.hostname}`);
+		if (typeof maybeCause.host === "string") details.push(`host=${maybeCause.host}`);
+		if (typeof maybeCause.port === "number" || typeof maybeCause.port === "string") details.push(`port=${String(maybeCause.port)}`);
+		if (typeof maybeCause.message === "string" && maybeCause.message.trim()) {
+			details.push(`cause=${maybeCause.message.trim()}`);
+		}
+	}
+
+	const base = `fetch failed for ${request.url}: ${error.message}`;
+	return details.length > 0 ? `${base} (${details.join(", ")})` : base;
+}
+
 async function executeRequest(request: NormalizedRequest, signal?: AbortSignal): Promise<{
 	statusCode: number;
 	statusText: string;
 	contentType?: string;
 	redirected: boolean;
 	responseHeadersText: string;
-	bodyText: string;
+	responseBuffer: Buffer;
 }> {
 	const controller = new AbortController();
 	let timeout: NodeJS.Timeout | undefined;
 	const onAbort = () => controller.abort();
 	signal?.addEventListener("abort", onAbort, { once: true });
 
+	let timedOut = false;
 	if (request.timeoutSec && request.timeoutSec > 0) {
-		timeout = setTimeout(() => controller.abort(), Math.ceil(request.timeoutSec * 1000));
+		timeout = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, Math.ceil(request.timeoutSec * 1000));
 	}
 
 	try {
@@ -387,9 +569,6 @@ async function executeRequest(request: NormalizedRequest, signal?: AbortSignal):
 		const headersText = [...response.headers.entries()]
 			.map(([k, v]) => `${k}: ${v}`)
 			.join("\n");
-		const bodyText = request.outputFile
-			? `(response body written to ${request.outputFile})`
-			: responseBuffer.toString("utf8");
 
 		return {
 			statusCode: response.status,
@@ -397,8 +576,10 @@ async function executeRequest(request: NormalizedRequest, signal?: AbortSignal):
 			contentType: response.headers.get("content-type") ?? undefined,
 			redirected: response.redirected,
 			responseHeadersText: headersText,
-			bodyText,
+			responseBuffer,
 		};
+	} catch (error) {
+		throw new Error(formatFetchError(error, request, timedOut));
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
 		if (timeout) clearTimeout(timeout);
@@ -418,11 +599,22 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
 		],
 		parameters: HttpToolParams,
+		renderCall(args, theme) {
+			const input = args as HttpToolParamsInput;
+			const summary = buildCallSummary(input);
+			let text = theme.fg("toolTitle", `${theme.bold("http")} `);
+			text += theme.fg("muted", summary);
+			return new Text(text, 0, 0);
+		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const input = params as HttpToolParamsInput;
 			const request = Array.isArray(input.curlArgs) && input.curlArgs.length > 0
 				? parseCurlCompat(input, ctx.cwd)
 				: buildStructuredRequest(input, ctx.cwd);
+
+			if (request.webToMd) {
+				await ensurePandocInstalled();
+			}
 
 			const result = await executeRequest(request, signal);
 			const httpError = result.statusCode >= 400;
@@ -436,7 +628,32 @@ export default function httpExtension(pi: ExtensionAPI): void {
 				output += `\n${result.responseHeadersText}\n`;
 			}
 
-			output += `\n${result.bodyText}`;
+			let webToMdInline: boolean | undefined;
+			let webToMdOutputBytes: number | undefined;
+			let webToMdFilePath: string | undefined;
+			let bodyText: string;
+
+			if (request.webToMd) {
+				const html = result.responseBuffer.toString("utf8");
+				const markdown = await convertHtmlToMarkdown(html);
+				webToMdOutputBytes = Buffer.byteLength(markdown, "utf8");
+
+				if (webToMdOutputBytes <= request.webToMdMaxBytes) {
+					webToMdInline = true;
+					bodyText = markdown;
+				} else {
+					webToMdInline = false;
+					const spilled = await spillMarkdownToFile(markdown);
+					webToMdFilePath = spilled.filePath;
+					bodyText = `[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
+				}
+			} else {
+				bodyText = request.outputFile
+					? `(response body written to ${request.outputFile})`
+					: result.responseBuffer.toString("utf8");
+			}
+
+			output += `\n${bodyText}`;
 
 			if (request.warnings.length > 0) {
 				output += `\n\n[warnings]\n${request.warnings.map((w) => `- ${w}`).join("\n")}`;
@@ -465,6 +682,11 @@ export default function httpExtension(pi: ExtensionAPI): void {
 				curlArgs: request.rawArgs,
 				truncation: truncated.truncation,
 				fullOutputPath: truncated.fullOutputPath,
+				webToMd: request.webToMd || undefined,
+				webToMdInline,
+				webToMdMaxBytes: request.webToMd ? request.webToMdMaxBytes : undefined,
+				webToMdOutputBytes,
+				webToMdFilePath,
 			};
 
 			return {
