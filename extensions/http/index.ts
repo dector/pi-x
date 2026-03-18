@@ -437,7 +437,7 @@ async function ensurePandocInstalled(): Promise<void> {
 
 		child.on("error", (err) => {
 			if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-				reject(new Error("http.md requires pandoc, but 'pandoc' was not found in PATH."));
+				reject(new Error("http_md requires pandoc, but 'pandoc' was not found in PATH."));
 				return;
 			}
 			reject(new Error(`Failed to run pandoc preflight check: ${err.message}`));
@@ -785,7 +785,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
-		name: "http.md",
+		name: "http_md",
 		label: "HTTP Markdown",
 		description:
 			"Fetch a web page and convert HTML to Markdown using pandoc. Supports structured request fields and curl-compatible args.",
@@ -799,7 +799,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		renderCall(args, theme) {
 			const input = args as HttpMarkdownToolParamsInput;
 			const summary = buildCallSummary(input);
-			let text = theme.fg("toolTitle", `${theme.bold("http.md")} `);
+			let text = theme.fg("toolTitle", `${theme.bold("http_md")} `);
 			text += theme.fg("muted", summary);
 			return new Text(text, 0, 0);
 		},

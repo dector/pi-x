@@ -3,7 +3,7 @@
 Adds two tools powered by **Node's native fetch API**:
 
 - `http` for regular HTTP requests
-- `http.md` for webpage → Markdown conversion (via local `pandoc`)
+- `http_md` for webpage → Markdown conversion (via local `pandoc`)
 
 ## Tools
 
@@ -29,7 +29,7 @@ HTTP client with:
 - `outputFile`
 - `curlArgs`
 
-## `http.md`
+## `http_md`
 
 Fetches a webpage and converts HTML response to Markdown using:
 
@@ -52,11 +52,11 @@ and the tool returns a pointer message with the path.
 ### Validation notes
 
 - `webToMdMaxBytes` must be finite and `> 0`.
-- `outputFile` / `-o` / `--output` are not supported in `http.md`.
+- `outputFile` / `-o` / `--output` are not supported in `http_md`.
 
 ### `pandoc` requirement
 
-`http.md` requires `pandoc` to be available on `PATH` and fails fast if missing.
+`http_md` requires `pandoc` to be available on `PATH` and fails fast if missing.
 
 ## curl-compatible mode
 
