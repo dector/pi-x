@@ -43,7 +43,40 @@ const HttpToolParams = Type.Object({
 	failOnHttpError: Type.Optional(Type.Boolean({ description: "If true, returns error result metadata for HTTP >= 400." })),
 	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
 	outputFile: Type.Optional(Type.String({ description: "Write response body to file path (relative to cwd allowed)." })),
-	webToMd: Type.Optional(Type.Boolean({ description: "Convert fetched HTML to Markdown using pandoc." })),
+	curlArgs: Type.Optional(
+		Type.Array(Type.String({
+			description: "curl-compatible arguments. Parsed as a compatibility layer (subset of curl flags).",
+		})),
+	),
+});
+
+const HttpMarkdownToolParams = Type.Object({
+	url: Type.Optional(Type.String({ description: "Request URL (required unless curlArgs contains a URL)." })),
+	method: Type.Optional(Type.String({ description: "HTTP method (GET, POST, PUT, PATCH, DELETE, ...)." })),
+	headers: Type.Optional(
+		Type.Record(Type.String(), Type.String(), {
+			description: "Headers object, e.g. { Authorization: 'Bearer ...' }.",
+		}),
+	),
+	headerLines: Type.Optional(Type.Array(Type.String({ description: "Raw header lines, e.g. 'X-Trace-Id: 123'." }))),
+	query: Type.Optional(
+		Type.Record(Type.String(), Type.String(), {
+			description: "Query string parameters appended to the URL.",
+		}),
+	),
+	json: Type.Optional(Type.Any({ description: "JSON body (serialized with JSON.stringify)." })),
+	form: Type.Optional(
+		Type.Record(Type.String(), Type.String(), {
+			description: "application/x-www-form-urlencoded fields.",
+		}),
+	),
+	body: Type.Optional(Type.String({ description: "Raw request body string." })),
+	stdin: Type.Optional(Type.String({ description: "Body content provided as stdin-like input." })),
+	followRedirects: Type.Optional(Type.Boolean({ description: "Follow redirects. Default: true." })),
+	includeResponseHeaders: Type.Optional(Type.Boolean({ description: "Include response headers in output. Default: true." })),
+	insecure: Type.Optional(Type.Boolean({ description: "curl-compatible flag. In fetch mode this is not supported." })),
+	failOnHttpError: Type.Optional(Type.Boolean({ description: "If true, returns error result metadata for HTTP >= 400." })),
+	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
 	webToMdMaxBytes: Type.Optional(Type.Number({ description: `Max Markdown bytes to return inline. Default: ${DEFAULT_WEB_TO_MD_MAX_BYTES}.` })),
 	curlArgs: Type.Optional(
 		Type.Array(Type.String({
@@ -52,7 +85,7 @@ const HttpToolParams = Type.Object({
 	),
 });
 
-type HttpToolParamsInput = {
+type HttpBaseParamsInput = {
 	url?: string;
 	method?: string;
 	headers?: Record<string, string>;
@@ -67,10 +100,15 @@ type HttpToolParamsInput = {
 	insecure?: boolean;
 	failOnHttpError?: boolean;
 	timeoutSec?: number;
-	outputFile?: string;
-	webToMd?: boolean;
-	webToMdMaxBytes?: number;
 	curlArgs?: string[];
+};
+
+type HttpToolParamsInput = HttpBaseParamsInput & {
+	outputFile?: string;
+};
+
+type HttpMarkdownToolParamsInput = HttpBaseParamsInput & {
+	webToMdMaxBytes?: number;
 };
 
 type NormalizedRequest = {
@@ -84,8 +122,6 @@ type NormalizedRequest = {
 	failOnHttpError: boolean;
 	timeoutSec?: number;
 	outputFile?: string;
-	webToMd: boolean;
-	webToMdMaxBytes: number;
 	warnings: string[];
 	rawArgs?: string[];
 };
@@ -108,9 +144,11 @@ interface HttpToolDetails {
 	curlArgs?: string[];
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
-	webToMd?: boolean;
+}
+
+interface HttpMarkdownToolDetails extends HttpToolDetails {
 	webToMdInline?: boolean;
-	webToMdMaxBytes?: number;
+	webToMdMaxBytes: number;
 	webToMdOutputBytes?: number;
 	webToMdFilePath?: string;
 }
@@ -181,14 +219,18 @@ function extractUrlFromCurlArgs(curlArgs?: string[]): string | undefined {
 	return undefined;
 }
 
-function buildCallSummary(input: HttpToolParamsInput): string {
+function buildCallSummary(input: HttpBaseParamsInput): string {
 	const method = (input.method?.trim() || "GET").toUpperCase();
 	const url = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
 	if (!url) return method;
 	return `${method} ${shortenForDisplay(url)}`;
 }
 
-function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): NormalizedRequest {
+function buildStructuredRequest(
+	input: HttpBaseParamsInput & { outputFile?: string },
+	cwd: string,
+	options: { allowOutputFile: boolean },
+): NormalizedRequest {
 	if (!input.url || !input.url.trim()) {
 		throw new Error("'url' is required in structured mode.");
 	}
@@ -219,12 +261,10 @@ function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): Normal
 
 	const method = (input.method?.trim() || (body ? "POST" : "GET")).toUpperCase();
 	const url = applyQuery(input.url, input.query);
-	const webToMd = input.webToMd ?? false;
-	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
 	const outputFile = input.outputFile ? resolve(cwd, input.outputFile) : undefined;
 
-	if (webToMd && outputFile) {
-		throw new Error("'webToMd' cannot be combined with 'outputFile'.");
+	if (outputFile && !options.allowOutputFile) {
+		throw new Error("'outputFile' is not supported by this tool.");
 	}
 
 	return {
@@ -238,8 +278,6 @@ function buildStructuredRequest(input: HttpToolParamsInput, cwd: string): Normal
 		failOnHttpError: input.failOnHttpError ?? false,
 		timeoutSec: input.timeoutSec,
 		outputFile,
-		webToMd,
-		webToMdMaxBytes,
 		warnings: input.insecure ? ["'insecure' is ignored in fetch mode."] : [],
 	};
 }
@@ -249,7 +287,11 @@ function readOptionValue(args: string[], index: number, option: string): { value
 	return { value: args[index + 1] ?? "", nextIndex: index + 1 };
 }
 
-function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedRequest {
+function parseCurlCompat(
+	input: HttpBaseParamsInput & { outputFile?: string },
+	cwd: string,
+	options: { allowOutputFile: boolean },
+): NormalizedRequest {
 	const args = [...(input.curlArgs ?? [])];
 	if (args.length === 0) throw new Error("curlArgs is empty.");
 
@@ -261,8 +303,6 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 	let failOnHttpError = input.failOnHttpError ?? false;
 	let timeoutSec = input.timeoutSec;
 	let outputFile = input.outputFile ? resolve(cwd, input.outputFile) : undefined;
-	const webToMd = input.webToMd ?? false;
-	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
 
 	const headerLines = [...(input.headerLines ?? [])];
 	const warnings: string[] = [];
@@ -366,8 +406,8 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 	if (!url || !url.trim()) throw new Error("No URL provided in curlArgs mode.");
 	const headers = buildHeaders(input.headers, headerLines);
 
-	if (webToMd && outputFile) {
-		throw new Error("'webToMd' cannot be combined with 'outputFile'.");
+	if (outputFile && !options.allowOutputFile) {
+		throw new Error("'--output/-o' is not supported by this tool.");
 	}
 
 	return {
@@ -381,8 +421,6 @@ function parseCurlCompat(input: HttpToolParamsInput, cwd: string): NormalizedReq
 		failOnHttpError,
 		timeoutSec,
 		outputFile,
-		webToMd,
-		webToMdMaxBytes,
 		warnings,
 		rawArgs: args,
 	};
@@ -399,7 +437,7 @@ async function ensurePandocInstalled(): Promise<void> {
 
 		child.on("error", (err) => {
 			if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-				reject(new Error("webToMd requires pandoc, but 'pandoc' was not found in PATH."));
+				reject(new Error("http.md requires pandoc, but 'pandoc' was not found in PATH."));
 				return;
 			}
 			reject(new Error(`Failed to run pandoc preflight check: ${err.message}`));
@@ -586,6 +624,141 @@ async function executeRequest(request: NormalizedRequest, signal?: AbortSignal):
 	}
 }
 
+function normalizeRequest(
+	input: HttpBaseParamsInput & { outputFile?: string },
+	cwd: string,
+	options: { allowOutputFile: boolean },
+): NormalizedRequest {
+	return Array.isArray(input.curlArgs) && input.curlArgs.length > 0
+		? parseCurlCompat(input, cwd, options)
+		: buildStructuredRequest(input, cwd, options);
+}
+
+async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?: AbortSignal) {
+	const request = normalizeRequest(input, cwd, { allowOutputFile: true });
+	const result = await executeRequest(request, signal);
+	const httpError = result.statusCode >= 400;
+
+	let output = `HTTP ${result.statusCode}${result.statusText ? ` ${result.statusText}` : ""}`;
+	if (result.contentType) output += ` | ${result.contentType}`;
+	if (result.redirected) output += " | redirected";
+	output += "\n";
+
+	if (request.includeResponseHeaders && result.responseHeadersText) {
+		output += `\n${result.responseHeadersText}\n`;
+	}
+
+	const bodyText = request.outputFile
+		? `(response body written to ${request.outputFile})`
+		: result.responseBuffer.toString("utf8");
+	output += `\n${bodyText}`;
+
+	if (request.warnings.length > 0) {
+		output += `\n\n[warnings]\n${request.warnings.map((w) => `- ${w}`).join("\n")}`;
+	}
+
+	if (request.failOnHttpError && httpError) {
+		output += "\n\n[failOnHttpError enabled: request returned HTTP error status]";
+	}
+
+	const truncated = await truncateWithSpill(output);
+	const details: HttpToolDetails = {
+		mode: request.mode,
+		method: request.method,
+		url: request.url,
+		statusCode: result.statusCode,
+		statusText: result.statusText,
+		contentType: result.contentType,
+		redirected: result.redirected,
+		followRedirects: request.followRedirects,
+		timeoutSec: request.timeoutSec,
+		outputFile: request.outputFile,
+		warnings: request.warnings.length > 0 ? request.warnings : undefined,
+		failOnHttpError: request.failOnHttpError,
+		httpError,
+		commandLike: buildCommandLike(request),
+		curlArgs: request.rawArgs,
+		truncation: truncated.truncation,
+		fullOutputPath: truncated.fullOutputPath,
+	};
+
+	return {
+		content: [{ type: "text" as const, text: truncated.text }],
+		details,
+	};
+}
+
+async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: string, signal?: AbortSignal) {
+	const request = normalizeRequest(input, cwd, { allowOutputFile: false });
+	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
+	await ensurePandocInstalled();
+
+	const result = await executeRequest(request, signal);
+	const httpError = result.statusCode >= 400;
+
+	let output = `HTTP ${result.statusCode}${result.statusText ? ` ${result.statusText}` : ""}`;
+	if (result.contentType) output += ` | ${result.contentType}`;
+	if (result.redirected) output += " | redirected";
+	output += "\n";
+
+	if (request.includeResponseHeaders && result.responseHeadersText) {
+		output += `\n${result.responseHeadersText}\n`;
+	}
+
+	const html = result.responseBuffer.toString("utf8");
+	const markdown = await convertHtmlToMarkdown(html);
+	const webToMdOutputBytes = Buffer.byteLength(markdown, "utf8");
+
+	let webToMdInline: boolean;
+	let webToMdFilePath: string | undefined;
+	if (webToMdOutputBytes <= webToMdMaxBytes) {
+		webToMdInline = true;
+		output += `\n${markdown}`;
+	} else {
+		webToMdInline = false;
+		const spilled = await spillMarkdownToFile(markdown);
+		webToMdFilePath = spilled.filePath;
+		output += `\n[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
+	}
+
+	if (request.warnings.length > 0) {
+		output += `\n\n[warnings]\n${request.warnings.map((w) => `- ${w}`).join("\n")}`;
+	}
+
+	if (request.failOnHttpError && httpError) {
+		output += "\n\n[failOnHttpError enabled: request returned HTTP error status]";
+	}
+
+	const truncated = await truncateWithSpill(output);
+	const details: HttpMarkdownToolDetails = {
+		mode: request.mode,
+		method: request.method,
+		url: request.url,
+		statusCode: result.statusCode,
+		statusText: result.statusText,
+		contentType: result.contentType,
+		redirected: result.redirected,
+		followRedirects: request.followRedirects,
+		timeoutSec: request.timeoutSec,
+		warnings: request.warnings.length > 0 ? request.warnings : undefined,
+		failOnHttpError: request.failOnHttpError,
+		httpError,
+		commandLike: buildCommandLike(request),
+		curlArgs: request.rawArgs,
+		truncation: truncated.truncation,
+		fullOutputPath: truncated.fullOutputPath,
+		webToMdInline,
+		webToMdMaxBytes,
+		webToMdOutputBytes,
+		webToMdFilePath,
+	};
+
+	return {
+		content: [{ type: "text" as const, text: truncated.text }],
+		details,
+	};
+}
+
 export default function httpExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "http",
@@ -607,92 +780,31 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			return new Text(text, 0, 0);
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const input = params as HttpToolParamsInput;
-			const request = Array.isArray(input.curlArgs) && input.curlArgs.length > 0
-				? parseCurlCompat(input, ctx.cwd)
-				: buildStructuredRequest(input, ctx.cwd);
+			return await executeHttpTool(params as HttpToolParamsInput, ctx.cwd, signal);
+		},
+	});
 
-			if (request.webToMd) {
-				await ensurePandocInstalled();
-			}
-
-			const result = await executeRequest(request, signal);
-			const httpError = result.statusCode >= 400;
-
-			let output = `HTTP ${result.statusCode}${result.statusText ? ` ${result.statusText}` : ""}`;
-			if (result.contentType) output += ` | ${result.contentType}`;
-			if (result.redirected) output += " | redirected";
-			output += "\n";
-
-			if (request.includeResponseHeaders && result.responseHeadersText) {
-				output += `\n${result.responseHeadersText}\n`;
-			}
-
-			let webToMdInline: boolean | undefined;
-			let webToMdOutputBytes: number | undefined;
-			let webToMdFilePath: string | undefined;
-			let bodyText: string;
-
-			if (request.webToMd) {
-				const html = result.responseBuffer.toString("utf8");
-				const markdown = await convertHtmlToMarkdown(html);
-				webToMdOutputBytes = Buffer.byteLength(markdown, "utf8");
-
-				if (webToMdOutputBytes <= request.webToMdMaxBytes) {
-					webToMdInline = true;
-					bodyText = markdown;
-				} else {
-					webToMdInline = false;
-					const spilled = await spillMarkdownToFile(markdown);
-					webToMdFilePath = spilled.filePath;
-					bodyText = `[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
-				}
-			} else {
-				bodyText = request.outputFile
-					? `(response body written to ${request.outputFile})`
-					: result.responseBuffer.toString("utf8");
-			}
-
-			output += `\n${bodyText}`;
-
-			if (request.warnings.length > 0) {
-				output += `\n\n[warnings]\n${request.warnings.map((w) => `- ${w}`).join("\n")}`;
-			}
-
-			if (request.failOnHttpError && httpError) {
-				output += "\n\n[failOnHttpError enabled: request returned HTTP error status]";
-			}
-
-			const truncated = await truncateWithSpill(output);
-			const details: HttpToolDetails = {
-				mode: request.mode,
-				method: request.method,
-				url: request.url,
-				statusCode: result.statusCode,
-				statusText: result.statusText,
-				contentType: result.contentType,
-				redirected: result.redirected,
-				followRedirects: request.followRedirects,
-				timeoutSec: request.timeoutSec,
-				outputFile: request.outputFile,
-				warnings: request.warnings.length > 0 ? request.warnings : undefined,
-				failOnHttpError: request.failOnHttpError,
-				httpError,
-				commandLike: buildCommandLike(request),
-				curlArgs: request.rawArgs,
-				truncation: truncated.truncation,
-				fullOutputPath: truncated.fullOutputPath,
-				webToMd: request.webToMd || undefined,
-				webToMdInline,
-				webToMdMaxBytes: request.webToMd ? request.webToMdMaxBytes : undefined,
-				webToMdOutputBytes,
-				webToMdFilePath,
-			};
-
-			return {
-				content: [{ type: "text", text: truncated.text }],
-				details,
-			};
+	pi.registerTool({
+		name: "http.md",
+		label: "HTTP Markdown",
+		description:
+			"Fetch a web page and convert HTML to Markdown using pandoc. Supports structured request fields and curl-compatible args.",
+		promptSnippet: "Fetch webpage content and convert it to Markdown.",
+		promptGuidelines: [
+			"Use this tool when webpage-to-Markdown output is needed.",
+			"Use headers/headerLines to pass arbitrary custom headers.",
+			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
+		],
+		parameters: HttpMarkdownToolParams,
+		renderCall(args, theme) {
+			const input = args as HttpMarkdownToolParamsInput;
+			const summary = buildCallSummary(input);
+			let text = theme.fg("toolTitle", `${theme.bold("http.md")} `);
+			text += theme.fg("muted", summary);
+			return new Text(text, 0, 0);
+		},
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return await executeHttpMarkdownTool(params as HttpMarkdownToolParamsInput, ctx.cwd, signal);
 		},
 	});
 }
