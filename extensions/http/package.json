@@ -1,0 +1,12 @@
+{
+  "name": "http",
+  "private": true,
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "0.59.0",
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck index.ts"
+  }
+}
