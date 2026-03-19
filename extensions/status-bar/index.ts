@@ -12,6 +12,9 @@ import {
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
+const COMPACT_ITEM_JOIN_SEPARATOR = "·";
+const SWITCH_THINKING_ID = "switch-thinking";
+const SWITCH_THINKING_ACTIVE_ID = "switch-thinking-active";
 
 interface FirstLineEntry {
 	content: string;
@@ -205,13 +208,28 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let footerOwnerContext: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
 
-	const renderSection = (ids: string[]): string | undefined => {
+	const renderSection = (
+		ids: string[],
+		overrides?: Map<string, string | undefined>,
+		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
+	): string | undefined => {
 		const items = ids
-			.map((id) => contentById.get(id))
+			.map((id) => (overrides?.has(id) ? overrides.get(id) : contentById.get(id)))
 			.filter((value): value is string => hasVisibleText(value))
 			.map((value) => sanitizeStatusText(value));
 		if (items.length === 0) return undefined;
-		return items.join(STATUS_BAR_JOIN_SEPARATOR);
+		return items.join(joinSeparator);
+	};
+
+	const isCrowded = (width: number, left?: string, center?: string, right?: string): boolean => {
+		if (width <= 0) return true;
+		if (visibleWidth(left ?? "") + visibleWidth(center ?? "") + visibleWidth(right ?? "") + SECTION_GAP * 2 > width) {
+			return true;
+		}
+		if (!!left && !!right && visibleWidth(left) + SECTION_GAP + visibleWidth(right) > width) {
+			return true;
+		}
+		return false;
 	};
 
 	const resolveFirstLine = (): string | undefined => {
@@ -277,11 +295,28 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						? renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine)
 						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 
-					const left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left);
-					const center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center);
-					const right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right);
-					const line2 = renderThreeSectionLine(width, left, center, right);
+					let joinSeparator = STATUS_BAR_JOIN_SEPARATOR;
+					let left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
+					let center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
+					let right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);
 
+					if (isCrowded(width, left, center, right)) {
+						joinSeparator = COMPACT_ITEM_JOIN_SEPARATOR;
+						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
+						center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
+						right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);
+					}
+
+					const hasThinkingSection = DEFAULT_STATUS_BAR_LAYOUT.left.includes(SWITCH_THINKING_ID);
+					const activeThinking = contentById.get(SWITCH_THINKING_ACTIVE_ID);
+					const needCompactThinking = hasThinkingSection && hasVisibleText(activeThinking) && isCrowded(width, left, center, right);
+
+					if (needCompactThinking) {
+						const leftOverrides = new Map<string, string | undefined>([[SWITCH_THINKING_ID, activeThinking]]);
+						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, leftOverrides, joinSeparator);
+					}
+
+					const line2 = renderThreeSectionLine(width, left, center, right);
 					return [line1, line2];
 				},
 			};

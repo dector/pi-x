@@ -40,6 +40,7 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 }
 
 const STATUS_BAR_ID = "switch-thinking";
+const STATUS_BAR_ACTIVE_ID = "switch-thinking-active";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
 
@@ -66,6 +67,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 			lastStatusMode = undefined;
 			if (lastStatusSignature !== undefined) {
 				pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
+				pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ACTIVE_ID });
 				lastStatusSignature = undefined;
 			}
 			return;
@@ -85,10 +87,15 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 			if (!ctx.hasUI) return mode;
 			return mode === current ? ctx.ui.theme.fg("accent", mode) : ctx.ui.theme.fg("muted", mode);
 		});
+		const activeMode = ctx.hasUI ? ctx.ui.theme.fg("accent", current) : current;
 
 		pi.events.emit(STATUS_BAR_SET_EVENT, {
 			id: STATUS_BAR_ID,
 			content: modes.join(" "),
+		});
+		pi.events.emit(STATUS_BAR_SET_EVENT, {
+			id: STATUS_BAR_ACTIVE_ID,
+			content: activeMode,
 		});
 	};
 
