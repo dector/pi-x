@@ -39,5 +39,5 @@ export const STATUS_BAR_JOIN_SEPARATOR = " · " as const;
 export const DEFAULT_STATUS_BAR_LAYOUT: StatusBarLayout = {
 	left: ["safe-mode", "switch-thinking"],
 	center: [],
-	right: ["context-watcher"],
+	right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"],
 };

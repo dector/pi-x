@@ -295,13 +295,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						? renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine)
 						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 
-					let joinSeparator = STATUS_BAR_JOIN_SEPARATOR;
+					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
 					let left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
 					let center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
 					let right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);
 
 					if (isCrowded(width, left, center, right)) {
-						joinSeparator = COMPACT_ITEM_JOIN_SEPARATOR;
+						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
 						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
 						center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
 						right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);

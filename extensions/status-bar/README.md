@@ -15,7 +15,7 @@ Install and enable it first so producer extensions can render their status outpu
 - Default order:
   - `left: ["safe-mode", "switch-thinking"]`
   - `center: []`
-  - `right: ["context-watcher"]`
+  - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`

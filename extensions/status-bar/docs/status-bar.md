@@ -16,7 +16,7 @@ Default layout:
 {
   left: ["safe-mode", "switch-thinking"],
   center: [],
-  right: ["context-watcher"],
+  right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"],
 }
 ```
 

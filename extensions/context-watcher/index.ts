@@ -1,6 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
-const STATUS_BAR_ID = "context-watcher";
+const STATUS_BAR_IDS = {
+	tokens: "context-watcher-tokens",
+	model: "context-watcher-model",
+	percent: "context-watcher-percent",
+} as const;
+
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
 
@@ -31,8 +36,12 @@ function collectUsage(ctx: ExtensionContext): { input: number; output: number; c
 	return { input, output, cacheRead };
 }
 
-function formatLabel(input: number, output: number, cacheRead: number, modelName: string, percent: number): string {
-	return `↑${formatTokens(input)}/↓${formatTokens(output)}/${formatTokens(cacheRead)} · ${modelName}: ${percent.toFixed(1)}%`;
+function formatTokenLabel(input: number, output: number, cacheRead: number): string {
+	return `↑${formatTokens(input)}/↓${formatTokens(output)}/${formatTokens(cacheRead)}`;
+}
+
+function formatPercentLabel(percent: number): string {
+	return `${percent.toFixed(1)}%`;
 }
 
 function styleLabel(ctx: ExtensionContext, percent: number, label: string): string {
@@ -49,7 +58,9 @@ export default function contextWatcherExtension(pi: ExtensionAPI): void {
 	const clearStatus = () => {
 		if (lastSignature === undefined) return;
 		lastSignature = undefined;
-		pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
+		for (const id of Object.values(STATUS_BAR_IDS)) {
+			pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id });
+		}
 	};
 
 	const updateStatus = (ctx: ExtensionContext): void => {
@@ -63,15 +74,24 @@ export default function contextWatcherExtension(pi: ExtensionAPI): void {
 		const rounded = Number(safePercent.toFixed(1));
 		const modelName = ctx.model?.id ?? "no-model";
 		const usage = collectUsage(ctx);
-		const label = formatLabel(usage.input, usage.output, usage.cacheRead, modelName, rounded);
+		const tokenLabel = formatTokenLabel(usage.input, usage.output, usage.cacheRead);
+		const percentLabel = formatPercentLabel(rounded);
 		const bucket = rounded <= 20 ? "muted" : rounded <= 30 ? "text" : rounded <= 50 ? "warning" : "error";
 		const signature = `${usage.input}|${usage.output}|${usage.cacheRead}|${modelName}|${rounded}|${bucket}|${ctx.hasUI ? "ui" : "noui"}`;
 		if (signature === lastSignature) return;
 		lastSignature = signature;
 
 		pi.events.emit(STATUS_BAR_SET_EVENT, {
-			id: STATUS_BAR_ID,
-			content: styleLabel(ctx, rounded, label),
+			id: STATUS_BAR_IDS.tokens,
+			content: styleLabel(ctx, rounded, tokenLabel),
+		});
+		pi.events.emit(STATUS_BAR_SET_EVENT, {
+			id: STATUS_BAR_IDS.model,
+			content: styleLabel(ctx, rounded, modelName),
+		});
+		pi.events.emit(STATUS_BAR_SET_EVENT, {
+			id: STATUS_BAR_IDS.percent,
+			content: styleLabel(ctx, rounded, percentLabel),
 		});
 	};
 
