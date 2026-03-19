@@ -58,7 +58,6 @@ extensions=(
   "status-bar"
   "switch-thinking"
   "safe-mode"
-  "context-watcher"
   "repo-stats"
   "http"
   "interactive-bash"

@@ -15,6 +15,78 @@ const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
 const COMPACT_ITEM_JOIN_SEPARATOR = "·";
 const SWITCH_THINKING_ID = "switch-thinking";
 const SWITCH_THINKING_ACTIVE_ID = "switch-thinking-active";
+const CONTEXT_WATCHER_IDS = {
+	tokens: "context-watcher-tokens",
+	model: "context-watcher-model",
+	percent: "context-watcher-percent",
+} as const;
+
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
+}
+
+function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number } {
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+
+	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as Record<string, unknown> | undefined;
+		if (!message || message.role !== "assistant") continue;
+		const usage = message.usage as Record<string, unknown> | undefined;
+		if (!usage) continue;
+		input += typeof usage.input === "number" ? usage.input : 0;
+		output += typeof usage.output === "number" ? usage.output : 0;
+		cacheRead += typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
+	}
+
+	return { input, output, cacheRead };
+}
+
+function styleContextLabel(
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	percent: number,
+	label: string,
+): string {
+	if (percent <= 20) return theme.fg("muted", label);
+	if (percent <= 30) return theme.fg("text", label);
+	if (percent <= 50) return theme.fg("warning", label);
+	return theme.fg("error", label);
+}
+
+function getContextWatcherOverrides(
+	ctx: ExtensionContext,
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+): Map<string, string | undefined> {
+	const overrides = new Map<string, string | undefined>([
+		[CONTEXT_WATCHER_IDS.tokens, undefined],
+		[CONTEXT_WATCHER_IDS.model, undefined],
+		[CONTEXT_WATCHER_IDS.percent, undefined],
+	]);
+
+	const percent = ctx.getContextUsage()?.percent;
+	if (typeof percent !== "number" || !Number.isFinite(percent)) {
+		return overrides;
+	}
+
+	const safePercent = Math.max(0, percent);
+	const roundedPercent = Number(safePercent.toFixed(1));
+	const usage = collectUsage(ctx);
+	const modelName = ctx.model?.id ?? "no-model";
+	const tokenLabel = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
+	const percentLabel = `${roundedPercent.toFixed(1)}%`;
+
+	overrides.set(CONTEXT_WATCHER_IDS.tokens, styleContextLabel(theme, roundedPercent, tokenLabel));
+	overrides.set(CONTEXT_WATCHER_IDS.model, styleContextLabel(theme, roundedPercent, modelName));
+	overrides.set(CONTEXT_WATCHER_IDS.percent, styleContextLabel(theme, roundedPercent, percentLabel));
+
+	return overrides;
+}
 
 interface FirstLineEntry {
 	content: string;
@@ -295,16 +367,18 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						? renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine)
 						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 
+					const contextOverrides = getContextWatcherOverrides(activeCtx, theme);
+
 					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
 					let left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
 					let center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
-					let right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);
+					let right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, contextOverrides, joinSeparator);
 
 					if (isCrowded(width, left, center, right)) {
 						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
 						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
 						center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
-						right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, undefined, joinSeparator);
+						right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, contextOverrides, joinSeparator);
 					}
 
 					const hasThinkingSection = DEFAULT_STATUS_BAR_LAYOUT.left.includes(SWITCH_THINKING_ID);

@@ -36,6 +36,7 @@ export interface StatusBarFirstLineClearPayload {
 export const STATUS_BAR_JOIN_SEPARATOR = " · " as const;
 
 // M1 default layout (frozen contract)
+// Note: context-watcher-* IDs are now produced internally by status-bar.
 export const DEFAULT_STATUS_BAR_LAYOUT: StatusBarLayout = {
 	left: ["safe-mode", "switch-thinking"],
 	center: [],

@@ -16,6 +16,7 @@ Install and enable it first so producer extensions can render their status outpu
   - `left: ["safe-mode", "switch-thinking"]`
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
+- `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`
@@ -55,11 +56,12 @@ The footer renders two lines:
 
 ## Producer compatibility
 
-Existing second-line producers continue to work unchanged:
+Second-line producers:
 
 - `safe-mode`
 - `switch-thinking`
-- `context-watcher`
+
+Context usage (`context-watcher-*` IDs) is now produced internally by `status-bar`.
 
 First-line producers (example):
 

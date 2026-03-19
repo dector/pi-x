@@ -44,6 +44,8 @@ Footer lines:
 
 Status-bar stores latest content per producer (`id -> content`) and resolves section values by `DEFAULT_STATUS_BAR_LAYOUT`.
 
+For `context-watcher-*` IDs, status-bar now computes values internally from the active context/session.
+
 Rules:
 
 - Include only non-empty producer content.
@@ -80,5 +82,5 @@ Placement priority:
 ### Status-bar extension
 
 - Own layout, joining, alignment, and truncation.
-- Never reinterpret producer business meaning.
-- Never add business logic (priority/TTL/sorting policies).
+- Resolve first-line priority arbitration.
+- Compute built-in context watcher values (`context-watcher-*`) from active session/model/context usage.
