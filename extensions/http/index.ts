@@ -11,6 +11,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
+import { load as loadHtml } from "cheerio";
 
 const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;
 const WEB_TO_MD_BASE_DIR = "/tmp/pi-http";
@@ -85,6 +86,22 @@ const HttpMarkdownToolParams = Type.Object({
 	),
 });
 
+const DEFAULT_WEB_SEARCH_PAGE = 1;
+const DEFAULT_WEB_SEARCH_PAGES = 1;
+const DEFAULT_WEB_SEARCH_RESULTS_PER_PAGE = 30;
+const MAX_WEB_SEARCH_PAGES = 10;
+
+const WebSearchToolParams = Type.Object({
+	query: Type.String({ description: "Search query string." }),
+	page: Type.Optional(Type.Number({ description: `Start page number (1-indexed). Default: ${DEFAULT_WEB_SEARCH_PAGE}.` })),
+	pages: Type.Optional(Type.Number({ description: `How many pages to fetch, starting from 'page'. Default: ${DEFAULT_WEB_SEARCH_PAGES}. Max: ${MAX_WEB_SEARCH_PAGES}.` })),
+	resultsPerPage: Type.Optional(
+		Type.Number({ description: `Approximate number of results per page. Default: ${DEFAULT_WEB_SEARCH_RESULTS_PER_PAGE}.` }),
+	),
+	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds for each page fetch." })),
+	followRedirects: Type.Optional(Type.Boolean({ description: "Follow redirects when requesting DuckDuckGo pages. Default: true." })),
+});
+
 type HttpBaseParamsInput = {
 	url?: string;
 	method?: string;
@@ -109,6 +126,23 @@ type HttpToolParamsInput = HttpBaseParamsInput & {
 
 type HttpMarkdownToolParamsInput = HttpBaseParamsInput & {
 	webToMdMaxBytes?: number;
+};
+
+type WebSearchToolParamsInput = {
+	query: string;
+	page?: number;
+	pages?: number;
+	resultsPerPage?: number;
+	timeoutSec?: number;
+	followRedirects?: boolean;
+};
+
+type WebSearchResultItem = {
+	page: number;
+	rank: number;
+	title: string;
+	url: string;
+	description: string;
 };
 
 type NormalizedRequest = {
@@ -151,6 +185,19 @@ interface HttpMarkdownToolDetails extends HttpToolDetails {
 	webToMdMaxBytes: number;
 	webToMdOutputBytes?: number;
 	webToMdFilePath?: string;
+}
+
+interface WebSearchToolDetails {
+	query: string;
+	page: number;
+	pagesRequested: number;
+	pagesFetched: number[];
+	resultsPerPage: number;
+	timeoutSec?: number;
+	followRedirects: boolean;
+	totalResults: number;
+	warnings?: string[];
+	errorsByPage?: Array<{ page: number; error: string }>;
 }
 
 function shellQuote(arg: string): string {
@@ -198,6 +245,114 @@ function normalizeWebToMdMaxBytes(value?: number): number {
 	return Math.floor(value);
 }
 
+function normalizePositiveInt(value: number | undefined, fallback: number, fieldName: string): number {
+	if (value === undefined) return fallback;
+	if (!Number.isFinite(value) || value <= 0) {
+		throw new Error(`'${fieldName}' must be a finite number greater than 0.`);
+	}
+	return Math.floor(value);
+}
+
+function normalizeWebSearchParams(input: WebSearchToolParamsInput) {
+	const query = (input.query ?? "").trim();
+	if (!query) throw new Error("'query' is required.");
+
+	const page = normalizePositiveInt(input.page, DEFAULT_WEB_SEARCH_PAGE, "page");
+	const pages = normalizePositiveInt(input.pages, DEFAULT_WEB_SEARCH_PAGES, "pages");
+	if (pages > MAX_WEB_SEARCH_PAGES) {
+		throw new Error(`'pages' must be <= ${MAX_WEB_SEARCH_PAGES}.`);
+	}
+
+	const resultsPerPage = normalizePositiveInt(
+		input.resultsPerPage,
+		DEFAULT_WEB_SEARCH_RESULTS_PER_PAGE,
+		"resultsPerPage",
+	);
+
+	return {
+		query,
+		page,
+		pages,
+		resultsPerPage,
+		timeoutSec: input.timeoutSec,
+		followRedirects: input.followRedirects ?? true,
+	};
+}
+
+function buildDuckDuckGoSearchUrl(query: string, page: number, resultsPerPage: number): string {
+	const offset = (page - 1) * resultsPerPage;
+	const params = new URLSearchParams({
+		q: query,
+		s: String(offset),
+		dc: String(offset),
+	});
+	return `https://html.duckduckgo.com/html/?${params.toString()}`;
+}
+
+function unwrapDuckDuckGoResultUrl(href: string): string {
+	let absolute = href.trim();
+	if (!absolute) return "";
+	if (absolute.startsWith("//")) absolute = `https:${absolute}`;
+	if (absolute.startsWith("/")) absolute = `https://duckduckgo.com${absolute}`;
+
+	let parsed: URL;
+	try {
+		parsed = new URL(absolute);
+	} catch {
+		return href;
+	}
+
+	const isDuckDuckGoRedirect =
+		parsed.hostname.endsWith("duckduckgo.com") && (parsed.pathname === "/l/" || parsed.pathname === "/l");
+	if (!isDuckDuckGoRedirect) return parsed.toString();
+
+	const decoded = parsed.searchParams.get("uddg");
+	if (!decoded) return parsed.toString();
+
+	try {
+		return decodeURIComponent(decoded);
+	} catch {
+		return decoded;
+	}
+}
+
+function parseDuckDuckGoResults(html: string, page: number): { results: WebSearchResultItem[]; warnings: string[] } {
+	const $ = loadHtml(html);
+	const results: WebSearchResultItem[] = [];
+	const warnings: string[] = [];
+
+	const nodes = $(".result");
+	if (nodes.length === 0) {
+		warnings.push("No '.result' nodes found in DuckDuckGo HTML response.");
+		return { results, warnings };
+	}
+
+	nodes.each((index, element) => {
+		const node = $(element);
+		const anchor = node.find("a.result__a").first();
+		const href = anchor.attr("href") ?? "";
+		const url = unwrapDuckDuckGoResultUrl(href);
+		const title = anchor.text().replace(/\s+/g, " ").trim();
+		const description = node.find(".result__snippet").first().text().replace(/\s+/g, " ").trim();
+
+		if (!url || !title) return;
+
+		results.push({
+			page,
+			rank: index + 1,
+			title,
+			url,
+			description,
+		});
+	});
+
+	if (results.length === 0) {
+		warnings.push("DuckDuckGo page contained result nodes, but no parseable result links were found.");
+	}
+
+	return { results, warnings };
+}
+
 function shortenForDisplay(value: string, max = 80): string {
 	if (value.length <= max) return value;
 	return `${value.slice(0, Math.max(0, max - 1))}…`;
@@ -224,6 +379,14 @@ function buildCallSummary(input: HttpBaseParamsInput): string {
 	const url = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
 	if (!url) return method;
 	return `${method} ${shortenForDisplay(url)}`;
+}
+
+function buildWebSearchCallSummary(input: WebSearchToolParamsInput): string {
+	const query = shortenForDisplay((input.query ?? "").trim() || "(empty query)");
+	const startPage = Number.isFinite(input.page) && (input.page ?? 0) > 0 ? Math.floor(input.page ?? 1) : DEFAULT_WEB_SEARCH_PAGE;
+	const pages = Number.isFinite(input.pages) && (input.pages ?? 0) > 0 ? Math.floor(input.pages ?? 1) : DEFAULT_WEB_SEARCH_PAGES;
+	if (pages <= 1) return `"${query}" (page ${startPage})`;
+	return `"${query}" (pages ${startPage}-${startPage + pages - 1})`;
 }
 
 function buildStructuredRequest(
@@ -759,6 +922,95 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 	};
 }
 
+async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: AbortSignal) {
+	const normalized = normalizeWebSearchParams(input);
+	const results: WebSearchResultItem[] = [];
+	const warnings: string[] = [];
+	const errorsByPage: Array<{ page: number; error: string }> = [];
+	const pagesFetched: number[] = [];
+
+	for (let offset = 0; offset < normalized.pages; offset += 1) {
+		const page = normalized.page + offset;
+		const url = buildDuckDuckGoSearchUrl(normalized.query, page, normalized.resultsPerPage);
+		const request: NormalizedRequest = {
+			mode: "structured",
+			url,
+			method: "GET",
+			headers: new Headers({
+				"user-agent":
+					"Mozilla/5.0 (compatible; pi-http-web-search/1.0; +https://duckduckgo.com)",
+				accept: "text/html,application/xhtml+xml",
+			}),
+			followRedirects: normalized.followRedirects,
+			includeResponseHeaders: false,
+			failOnHttpError: false,
+			timeoutSec: normalized.timeoutSec,
+			warnings: [],
+		};
+
+		try {
+			const response = await executeRequest(request, signal);
+			pagesFetched.push(page);
+
+			if (response.statusCode >= 400) {
+				errorsByPage.push({
+					page,
+					error: `DuckDuckGo returned HTTP ${response.statusCode}${response.statusText ? ` ${response.statusText}` : ""}`,
+				});
+				continue;
+			}
+
+			const html = response.responseBuffer.toString("utf8");
+			const parsed = parseDuckDuckGoResults(html, page);
+			results.push(...parsed.results);
+			warnings.push(...parsed.warnings.map((warning) => `page ${page}: ${warning}`));
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			errorsByPage.push({ page, error: message });
+		}
+	}
+
+	if (pagesFetched.length === 0) {
+		const errorSummary = errorsByPage.length > 0 ? errorsByPage.map((entry) => `page ${entry.page}: ${entry.error}`).join("; ") : "unknown error";
+		throw new Error(`web_search could not fetch any DuckDuckGo result pages (${errorSummary})`);
+	}
+
+	const payload = {
+		query: normalized.query,
+		page: normalized.page,
+		pagesRequested: normalized.pages,
+		resultsPerPage: normalized.resultsPerPage,
+		totalResults: results.length,
+		results,
+		errorsByPage: errorsByPage.length > 0 ? errorsByPage : undefined,
+		warnings: warnings.length > 0 ? warnings : undefined,
+	};
+
+	const output = JSON.stringify(payload, null, 2);
+	const truncated = await truncateWithSpill(output);
+	const details: WebSearchToolDetails = {
+		query: normalized.query,
+		page: normalized.page,
+		pagesRequested: normalized.pages,
+		pagesFetched,
+		resultsPerPage: normalized.resultsPerPage,
+		timeoutSec: normalized.timeoutSec,
+		followRedirects: normalized.followRedirects,
+		totalResults: results.length,
+		warnings: warnings.length > 0 ? warnings : undefined,
+		errorsByPage: errorsByPage.length > 0 ? errorsByPage : undefined,
+	};
+
+	return {
+		content: [{ type: "text" as const, text: truncated.text }],
+		details: {
+			...details,
+			truncation: truncated.truncation,
+			fullOutputPath: truncated.fullOutputPath,
+		},
+	};
+}
+
 export default function httpExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "http",
@@ -805,6 +1057,30 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			return await executeHttpMarkdownTool(params as HttpMarkdownToolParamsInput, ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "web_search",
+		label: "Web Search",
+		description:
+			"Search DuckDuckGo HTML results and return parsed result items (url, title, description).",
+		promptSnippet: "Search the web and return parsed result metadata.",
+		promptGuidelines: [
+			"Use this tool when you need search results, not full webpage content.",
+			"Request more pages with 'pages' when broader coverage is needed.",
+			"Use http/http_md on returned URLs when full content is required.",
+		],
+		parameters: WebSearchToolParams,
+		renderCall(args, theme) {
+			const input = args as WebSearchToolParamsInput;
+			const summary = buildWebSearchCallSummary(input);
+			let text = theme.fg("toolTitle", `${theme.bold("web_search")} `);
+			text += theme.fg("muted", summary);
+			return new Text(text, 0, 0);
+		},
+		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+			return await executeWebSearchTool(params as WebSearchToolParamsInput, signal);
 		},
 	});
 }

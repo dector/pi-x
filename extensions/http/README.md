@@ -1,9 +1,10 @@
 # http (pi extension)
 
-Adds two tools powered by **Node's native fetch API**:
+Adds three tools powered by **Node's native fetch API**:
 
 - `http` for regular HTTP requests
 - `http_md` for webpage → Markdown conversion (via local `pandoc`)
+- `web_search` for DuckDuckGo HTML search result extraction
 
 ## Tools
 
@@ -57,6 +58,34 @@ and the tool returns a pointer message with the path.
 ### `pandoc` requirement
 
 `http_md` requires `pandoc` to be available on `PATH` and fails fast if missing.
+
+## `web_search`
+
+Searches DuckDuckGo's HTML endpoint and parses result DOM nodes.
+
+Returns only:
+
+- `url`
+- `title`
+- `description`
+
+### Fields
+
+- `query` (required)
+- `page` (default `1`) — start page, 1-indexed
+- `pages` (default `1`, max `10`) — number of pages to fetch from `page`
+- `resultsPerPage` (default `30`) — used to compute page offsets
+- `timeoutSec` — per-page timeout
+- `followRedirects` (default `true`)
+
+### Output
+
+Returns JSON with:
+
+- query/page metadata
+- merged `results` across requested pages
+- optional `warnings`
+- optional `errorsByPage` for partial failures
 
 ## curl-compatible mode
 
