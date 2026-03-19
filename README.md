@@ -14,6 +14,7 @@ This repo currently contains the following extension(s):
 - [`context-watcher`](extensions/context-watcher/README.md) — Shows current context-window usage in the status bar (`↑in/↓out/cache · model · %`) with threshold-based colors. Depends on `status-bar`.
 - [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. Depends on `status-bar`.
 - [`http`](extensions/http/README.md) — Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`.
+- [`interactive-bash`](extensions/interactive-bash/README.md) — Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts).
 
 ## Install policy for pi agents
 

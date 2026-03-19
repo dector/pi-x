@@ -5,6 +5,28 @@ set -euo pipefail
 # Default target: ~/.pi/agent/extensions
 # Override with: PI_EXTENSIONS_DIR=/some/path ./install
 
+usage() {
+  cat <<'EOF'
+Usage: ./install
+
+This installer always requires interactive confirmation.
+EOF
+}
+
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$SCRIPT_DIR/extensions"
 DEST_ROOT="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"
@@ -16,6 +38,13 @@ fi
 
 echo "Target extension directory: $DEST_ROOT"
 echo "Warning: rsync uses --delete and may remove files under each extension target."
+
+if [[ ! -t 0 ]]; then
+  echo "Error: confirmation required but no interactive stdin detected." >&2
+  echo "Run ./install from an interactive terminal session." >&2
+  exit 1
+fi
+
 read -r -p "Continue and sync into this directory? [y/N] " confirm
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
   echo "Aborted."
@@ -32,6 +61,7 @@ extensions=(
   "context-watcher"
   "repo-stats"
   "http"
+  "interactive-bash"
 )
 
 echo "Installing extensions into: $DEST_ROOT"
