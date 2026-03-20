@@ -1,7 +1,8 @@
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
 	DEFAULT_SAFE_MODE,
 	SAFE_MODES,
@@ -31,6 +32,12 @@ const STATUS_BAR_SET_EVENT = "status-bar:set";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
+const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "extensions", "safe-mode", "settings.json");
+
+interface SafeModeDefaults {
+	mode?: SafeMode;
+	outerAccess?: boolean;
+}
 
 type MaybeCustomEntry = {
 	type?: string;
@@ -49,6 +56,59 @@ function parseBooleanLike(value: unknown): boolean | undefined {
 	if (normalized === "true" || normalized === "on" || normalized === "1") return true;
 	if (normalized === "false" || normalized === "off" || normalized === "0") return false;
 	return undefined;
+}
+
+function parseModeSpec(
+	raw: unknown,
+	options?: { inferOuterWhenMissing?: boolean },
+): { mode: SafeMode; outerAccess?: boolean } | undefined {
+	if (typeof raw !== "string") return undefined;
+	const normalized = raw.trim().toLowerCase();
+	if (normalized.length === 0) return undefined;
+	const hasOuter = normalized.endsWith("+");
+	const modeInput = hasOuter ? normalized.slice(0, -1).trim() : normalized;
+	const parsedMode = parseSafeMode(modeInput);
+	if (!parsedMode) return undefined;
+	if (hasOuter) return { mode: parsedMode, outerAccess: true };
+	if (options?.inferOuterWhenMissing) return { mode: parsedMode, outerAccess: false };
+	return { mode: parsedMode };
+}
+
+function formatModeSpec(mode: SafeMode, outerAccess: boolean): string {
+	return `${mode}${mode !== "paranoid" && outerAccess ? "+" : ""}`;
+}
+
+async function loadGlobalDefaults(): Promise<SafeModeDefaults> {
+	try {
+		const raw = await readFile(GLOBAL_SETTINGS_PATH, "utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== "object") return {};
+		const data = parsed as { mode?: unknown; outerAccess?: unknown };
+		const mode = parseSafeMode(data.mode);
+		const outerAccess = parseBooleanLike(data.outerAccess);
+		return {
+			mode,
+			outerAccess,
+		};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return {};
+		throw error;
+	}
+}
+
+async function saveGlobalDefaults(defaults: SafeModeDefaults): Promise<void> {
+	const hasMode = Boolean(defaults.mode);
+	const hasOuter = defaults.outerAccess !== undefined;
+	if (!hasMode && !hasOuter) {
+		await rm(GLOBAL_SETTINGS_PATH, { force: true });
+		return;
+	}
+
+	await mkdir(dirname(GLOBAL_SETTINGS_PATH), { recursive: true });
+	const payload: { mode?: SafeMode; outerAccess?: boolean } = {};
+	if (defaults.mode) payload.mode = defaults.mode;
+	if (defaults.outerAccess !== undefined) payload.outerAccess = defaults.outerAccess;
+	await writeFile(GLOBAL_SETTINGS_PATH, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 function getSmartAllowlistPath(projectRoot: string): string {
@@ -491,6 +551,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let outerAccess = false;
 	let activeProjectRoot = "";
 	let projectAllowlistFileExists = false;
+	let configuredDefaultMode: SafeMode | undefined;
+	let configuredDefaultOuterAccess: boolean | undefined;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
 
@@ -571,6 +633,20 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function setModeAndOuter(nextMode: SafeMode, nextOuterAccess: boolean, ctx: ExtensionContext): void {
+		const modeChanged = nextMode !== mode;
+		const outerChanged = nextOuterAccess !== outerAccess;
+		mode = nextMode;
+		outerAccess = nextOuterAccess;
+		updateStatus(ctx);
+		if (modeChanged || outerChanged) {
+			persistState();
+		}
+		if (ctx.hasUI) {
+			ctx.ui.notify(`Safe mode: ${statusLabel({ ui: true })}`, "info");
+		}
+	}
+
 	function applyResolvedState(ctx: ExtensionContext): void {
 		const persisted = getPersistedStateFromBranch(ctx);
 
@@ -592,78 +668,164 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			);
 		}
 
-		mode = modeFlag ?? persisted.mode ?? DEFAULT_SAFE_MODE;
-		outerAccess = outerFlag ?? persisted.outerAccess ?? false;
+		mode = modeFlag ?? persisted.mode ?? configuredDefaultMode ?? DEFAULT_SAFE_MODE;
+		outerAccess = outerFlag ?? persisted.outerAccess ?? configuredDefaultOuterAccess ?? false;
 		updateStatus(ctx);
 	}
 
 	pi.registerFlag("safe-mode", {
 		description: `Tool approval mode: ${formatModeList()}`,
 		type: "string",
-		default: DEFAULT_SAFE_MODE,
 	});
 
 	pi.registerFlag(OUTER_ACCESS_FLAG, {
 		description: "Apply mode rules to paths outside the project root",
 		type: "boolean",
-		default: false,
 	});
+
+	const handleSafeCommand = async (args: string | undefined, ctx: ExtensionContext): Promise<void> => {
+		const input = args?.trim() ?? "";
+
+		if (input.length === 0) {
+			if (ctx.hasUI) {
+				ctx.ui.notify(
+					`Current safe mode: ${statusLabel({ ui: true })} (outer access: ${outerAccess ? "on" : "off"}). Available: ${formatModeList()}`,
+					"info",
+				);
+			}
+			return;
+		}
+
+		const normalized = input.toLowerCase();
+		if (normalized === "cycle") {
+			setMode(cycleSafeMode(mode), ctx);
+			return;
+		}
+
+		if (normalized.startsWith("default")) {
+			const parts = input.split(/\s+/).filter((part) => part.length > 0);
+			if (parts.length === 1) {
+				if (ctx.hasUI) {
+					if (configuredDefaultMode) {
+						ctx.ui.notify(
+							`Safe mode default: ${formatModeSpec(configuredDefaultMode, configuredDefaultOuterAccess ?? false)} (settings: ${GLOBAL_SETTINGS_PATH})`,
+							"info",
+						);
+					} else {
+						ctx.ui.notify(`Safe mode default: not set (builtin: ${DEFAULT_SAFE_MODE})`, "info");
+					}
+				}
+				return;
+			}
+
+			const action = parts[1]?.toLowerCase();
+			if (action === "reset" || action === "clear") {
+				configuredDefaultMode = undefined;
+				configuredDefaultOuterAccess = undefined;
+				try {
+					await saveGlobalDefaults({});
+					if (ctx.hasUI) {
+						ctx.ui.notify(`Safe mode default reset (builtin: ${DEFAULT_SAFE_MODE})`, "info");
+					}
+				} catch (error) {
+					if (ctx.hasUI) {
+						ctx.ui.notify(`safe-mode: failed to reset defaults (${String(error)})`, "warning");
+					}
+				}
+				return;
+			}
+
+			if (parts.length !== 2) {
+				if (ctx.hasUI) {
+					ctx.ui.notify("Usage: /safe default <mode[+]> | /safe default | /safe default reset", "warning");
+				}
+				return;
+			}
+
+			const parsedDefault = parseModeSpec(parts[1], { inferOuterWhenMissing: true });
+			if (!parsedDefault) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`Invalid default '${parts[1]}'. Use one of: ${formatModeList()} (optional +).`, "warning");
+				}
+				return;
+			}
+
+			configuredDefaultMode = parsedDefault.mode;
+			configuredDefaultOuterAccess = parsedDefault.outerAccess ?? false;
+			try {
+				await saveGlobalDefaults({ mode: configuredDefaultMode, outerAccess: configuredDefaultOuterAccess });
+				if (ctx.hasUI) {
+					ctx.ui.notify(
+						`Safe mode default saved: ${formatModeSpec(configuredDefaultMode, configuredDefaultOuterAccess ?? false)}`,
+						"info",
+					);
+				}
+			} catch (error) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`safe-mode: failed to save defaults (${String(error)})`, "warning");
+				}
+			}
+			return;
+		}
+
+		if (normalized.startsWith("outer")) {
+			const parts = normalized.split(/\s+/);
+			const action = parts[1];
+			if (action === "toggle") {
+				setOuterAccess(!outerAccess, ctx);
+				return;
+			}
+			if (action === "on" || action === "true") {
+				setOuterAccess(true, ctx);
+				return;
+			}
+			if (action === "off" || action === "false") {
+				setOuterAccess(false, ctx);
+				return;
+			}
+
+			if (ctx.hasUI) {
+				ctx.ui.notify("Invalid outer modifier. Use: /safe outer on|off|toggle", "warning");
+			}
+			return;
+		}
+
+		const parsed = parseModeSpec(input);
+		if (!parsed) {
+			if (ctx.hasUI) {
+				ctx.ui.notify(
+					`Invalid mode '${input}'. Use one of: ${formatModeList()} (optional +), 'cycle', 'default', or 'outer on|off|toggle'.`,
+					"warning",
+				);
+			}
+			return;
+		}
+
+		if (parsed.outerAccess !== undefined) {
+			setModeAndOuter(parsed.mode, parsed.outerAccess, ctx);
+			return;
+		}
+		setMode(parsed.mode, ctx);
+	};
 
 	pi.registerCommand("safe-mode", {
 		description: `Show or set safe mode (${formatModeList()})`,
 		handler: async (args, ctx) => {
-			const input = args?.trim() ?? "";
+			await handleSafeCommand(args, ctx);
+		},
+	});
 
-			if (input.length === 0) {
-				if (ctx.hasUI) {
-					ctx.ui.notify(
-						`Current safe mode: ${statusLabel({ ui: true })} (outer access: ${outerAccess ? "on" : "off"}). Available: ${formatModeList()}`,
-						"info",
-					);
-				}
-				return;
-			}
+	pi.registerCommand("safe", {
+		description: `Alias for /safe-mode with defaults support`,
+		handler: async (args, ctx) => {
+			await handleSafeCommand(args, ctx);
+		},
+	});
 
-			const normalized = input.toLowerCase();
-			if (normalized === "cycle") {
-				setMode(cycleSafeMode(mode), ctx);
-				return;
-			}
-
-			if (normalized.startsWith("outer")) {
-				const parts = normalized.split(/\s+/);
-				const action = parts[1];
-				if (action === "toggle") {
-					setOuterAccess(!outerAccess, ctx);
-					return;
-				}
-				if (action === "on" || action === "true") {
-					setOuterAccess(true, ctx);
-					return;
-				}
-				if (action === "off" || action === "false") {
-					setOuterAccess(false, ctx);
-					return;
-				}
-
-				if (ctx.hasUI) {
-					ctx.ui.notify("Invalid outer modifier. Use: /safe-mode outer on|off|toggle", "warning");
-				}
-				return;
-			}
-
-			const parsed = parseSafeMode(input);
-			if (!parsed) {
-				if (ctx.hasUI) {
-					ctx.ui.notify(
-						`Invalid mode '${input}'. Use one of: ${formatModeList()}, 'cycle', or 'outer on|off|toggle'.`,
-						"warning",
-					);
-				}
-				return;
-			}
-
-			setMode(parsed, ctx);
+	pi.registerCommand("yolo", {
+		description: "Set safe mode to yolo+",
+		handler: async (_args, ctx) => {
+			setModeAndOuter("yolo", true, ctx);
 		},
 	});
 
@@ -719,20 +881,37 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const refreshDefaults = async (ctx: ExtensionContext): Promise<void> => {
+		try {
+			const defaults = await loadGlobalDefaults();
+			configuredDefaultMode = defaults.mode;
+			configuredDefaultOuterAccess = defaults.outerAccess;
+		} catch (error) {
+			configuredDefaultMode = undefined;
+			configuredDefaultOuterAccess = undefined;
+			if (ctx.hasUI) {
+				ctx.ui.notify(`safe-mode: failed to load defaults (${String(error)})`, "warning");
+			}
+		}
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionApprovals();
+		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		resetSessionApprovals();
+		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
 	});
 
 	pi.on("session_fork", async (_event, ctx) => {
 		resetSessionApprovals();
+		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
 	});

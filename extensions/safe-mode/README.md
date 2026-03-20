@@ -56,14 +56,22 @@ Notes:
 
 ## Commands
 
-- `/safe-mode`
+- `/safe` (alias: `/safe-mode`)
   - Show current mode and outer access status.
-- `/safe-mode <paranoid|reader|smart|yolo>`
-  - Set mode.
-- `/safe-mode cycle`
+- `/safe <paranoid|reader|smart|yolo>[+]`
+  - Set mode (`+` enables outer access, e.g. `smart+`).
+- `/safe cycle`
   - Cycle modes.
-- `/safe-mode outer on|off|toggle`
+- `/safe outer on|off|toggle`
   - Configure outside-project behavior.
+- `/safe default`
+  - Show saved default mode from settings.
+- `/safe default <paranoid|reader|smart|yolo>[+]`
+  - Save default mode in settings for future sessions.
+- `/safe default reset`
+  - Clear saved default (falls back to built-in `smart`).
+- `/yolo`
+  - Quick command to set `yolo+`.
 - `/safe-mode-list`
   - Open an interactive manager for exact `bash` command lines auto-approved for this session and this project.
   - Project-persistent entries are shown first with `(project)` prefix.
@@ -104,6 +112,10 @@ When approval is required:
 ## Persistence
 
 - Mode and outer access changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
+- Optional global defaults from `/safe default ...` are stored at:
+  - `~/.pi/agent/extensions/safe-mode/settings.json`
+  - shape: `{ "mode": "smart", "outerAccess": true }`
+- Resolution order on startup: CLI flags (`--safe-mode`, `--safe-mode-outer-access`) → session persisted state → saved defaults → built-in defaults.
 - Smart-mode project allowlist is persisted per repository at:
   - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`
   - format: `{ "allow": ["..."], "deny": [] }` (`deny` currently ignored)
