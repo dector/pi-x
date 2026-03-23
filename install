@@ -36,7 +36,26 @@ if [[ ! -d "$SRC_ROOT" ]]; then
   exit 1
 fi
 
+PKG_MGR=""
+PKG_INSTALL_CMD=()
+
+if command -v bun >/dev/null 2>&1; then
+  PKG_MGR="bun"
+  PKG_INSTALL_CMD=(bun install)
+elif command -v pnpm >/dev/null 2>&1; then
+  PKG_MGR="pnpm"
+  PKG_INSTALL_CMD=(pnpm install)
+elif command -v npm >/dev/null 2>&1; then
+  PKG_MGR="npm"
+  PKG_INSTALL_CMD=(npm install)
+else
+  echo "Error: no package manager found in PATH." >&2
+  echo "Install one of: bun (preferred), pnpm, npm" >&2
+  exit 1
+fi
+
 echo "Target extension directory: $DEST_ROOT"
+echo "Using package manager: $PKG_MGR"
 echo "Warning: rsync uses --delete and may remove files under each extension target."
 
 if [[ ! -t 0 ]]; then
@@ -63,6 +82,8 @@ extensions=(
   "interactive-bash"
 )
 
+installed_extensions=()
+
 echo "Installing extensions into: $DEST_ROOT"
 for ext in "${extensions[@]}"; do
   src="$SRC_ROOT/$ext/"
@@ -75,6 +96,28 @@ for ext in "${extensions[@]}"; do
 
   echo "- $ext"
   rsync -a --delete "$src" "$dest"
+  installed_extensions+=("$ext")
 done
 
-echo "Done. Reload pi to apply updates (/reload)."
+echo "Installing extension dependencies with $PKG_MGR..."
+for ext in "${installed_extensions[@]}"; do
+  ext_dir="$DEST_ROOT/$ext"
+
+  if [[ ! -d "$ext_dir" ]]; then
+    echo "Skipping missing destination directory: $ext_dir"
+    continue
+  fi
+
+  if [[ ! -f "$ext_dir/package.json" ]]; then
+    echo "- $ext: skipping dependency install (no package.json)"
+    continue
+  fi
+
+  echo "- $ext: ${PKG_INSTALL_CMD[*]}"
+  (
+    cd "$ext_dir"
+    "${PKG_INSTALL_CMD[@]}"
+  )
+done
+
+echo "Done. Extensions synced and dependencies installed. Reload pi to apply updates (/reload)."
