@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import {
 	DEFAULT_STATUS_BAR_LAYOUT,
 	STATUS_BAR_EVENTS,
@@ -272,6 +272,176 @@ function renderThreeSectionLine(width: number, left?: string, center?: string, r
 	return truncateToWidth(normalizedLeft ?? "", width, "");
 }
 
+interface StatusBarContractSettingItem {
+	id: string;
+	label: string;
+	value: string;
+	description?: string;
+}
+
+async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) return;
+
+	const items: StatusBarContractSettingItem[] = [
+		{
+			id: "event-set",
+			label: "Event: set",
+			value: STATUS_BAR_EVENTS.set,
+			description: "Producers publish status content updates with this event.",
+		},
+		{
+			id: "event-clear",
+			label: "Event: clear",
+			value: STATUS_BAR_EVENTS.clear,
+			description: "Producers remove previously published content with this event.",
+		},
+		{
+			id: "event-first-line-set",
+			label: "Event: first line set",
+			value: STATUS_BAR_EVENTS.firstLineSet,
+			description: "Sets first-line content (e.g. repo summary) with optional priority.",
+		},
+		{
+			id: "event-first-line-clear",
+			label: "Event: first line clear",
+			value: STATUS_BAR_EVENTS.firstLineClear,
+			description: "Clears first-line producer content by id.",
+		},
+		{
+			id: "item-join",
+			label: "Item join separator",
+			value: JSON.stringify(STATUS_BAR_JOIN_SEPARATOR),
+			description: "Used between items within the same section.",
+		},
+		{
+			id: "section-separator",
+			label: "Section separator",
+			value: JSON.stringify(SECTION_DELIMITER),
+			description: "Minimum spacing between left / center / right sections.",
+		},
+		{
+			id: "renderer",
+			label: "Renderer",
+			value: "ctx.ui.setFooter(custom)",
+			description: "Status bar is rendered via custom footer, not setStatus.",
+		},
+		{
+			id: "layout-left",
+			label: "Layout: left",
+			value: DEFAULT_STATUS_BAR_LAYOUT.left.join(", "),
+			description: "Producer IDs rendered in the left section.",
+		},
+		{
+			id: "layout-center",
+			label: "Layout: center",
+			value: DEFAULT_STATUS_BAR_LAYOUT.center.join(", ") || "(empty)",
+			description: "Producer IDs rendered in the center section.",
+		},
+		{
+			id: "layout-right",
+			label: "Layout: right",
+			value: DEFAULT_STATUS_BAR_LAYOUT.right.join(", "),
+			description: "Producer IDs rendered in the right section.",
+		},
+	];
+
+	await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+		let selectedIndex = 0;
+
+		interface View {
+			container: Container;
+			list: SelectList;
+			listItems: SelectItem[];
+		}
+
+		const buildView = (): View => {
+			const selected = items[selectedIndex] ?? items[0]!;
+			const listItems: SelectItem[] = items.map((item) => ({
+				value: item.id,
+				label: item.label,
+				description: item.description,
+			}));
+
+			const container = new Container();
+			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+			container.addChild(new Text(theme.fg("accent", theme.bold("Status Bar Contract (read-only)"))));
+
+			const list = new SelectList(listItems, Math.min(Math.max(listItems.length, 1), 10), {
+				selectedPrefix: (text) => theme.fg("accent", text),
+				selectedText: (text) => theme.fg("accent", text),
+				description: (text) => theme.fg("muted", text),
+				scrollInfo: (text) => theme.fg("dim", text),
+				noMatch: (text) => theme.fg("warning", text),
+			});
+
+			if (listItems.length > 0) {
+				list.setSelectedIndex(selectedIndex);
+			}
+
+			list.onSelectionChange = (entry) => {
+				const nextIndex = listItems.findIndex((candidate) => candidate.value === entry.value);
+				if (nextIndex < 0 || nextIndex === selectedIndex) return;
+				selectedIndex = nextIndex;
+				refresh();
+			};
+			list.onSelect = () => done();
+			list.onCancel = () => done();
+
+			container.addChild(list);
+			container.addChild(new Text(theme.fg("dim", "Value")));
+			container.addChild(new Text(theme.fg("text", selected.value)));
+			if (selected.description) {
+				container.addChild(new Text(theme.fg("muted", selected.description)));
+			}
+			container.addChild(new Text(theme.fg("dim", "↑↓/j k navigate • enter/esc close")));
+			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+			return { container, list, listItems };
+		};
+
+		let view = buildView();
+
+		const refresh = () => {
+			view = buildView();
+			tui.requestRender();
+		};
+
+		const moveSelection = (delta: number) => {
+			if (view.listItems.length === 0) return;
+			const nextIndex = Math.max(0, Math.min(view.listItems.length - 1, selectedIndex + delta));
+			if (nextIndex === selectedIndex) return;
+			selectedIndex = nextIndex;
+			refresh();
+		};
+
+		return {
+			render(width: number) {
+				return view.container.render(width);
+			},
+			invalidate() {
+				view.container.invalidate();
+			},
+			handleInput(data: string) {
+				if (matchesKey(data, "j") || data === "j") {
+					moveSelection(1);
+					return;
+				}
+				if (matchesKey(data, "k") || data === "k") {
+					moveSelection(-1);
+					return;
+				}
+				if (matchesKey(data, Key.escape)) {
+					done();
+					return;
+				}
+
+				view.list.handleInput(data);
+				tui.requestRender();
+			},
+		};
+	});
+}
+
 export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
 	const firstLineById = new Map<string, FirstLineEntry>();
@@ -497,14 +667,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("status-bar-contract", {
-		description: "Show status-bar contract (events + item join + section separator + layout)",
+		description: "Open a read-only status-bar contract settings view",
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
-			ctx.ui.notify(
-				`events: ${STATUS_BAR_EVENTS.set}, ${STATUS_BAR_EVENTS.clear}, ${STATUS_BAR_EVENTS.firstLineSet}, ${STATUS_BAR_EVENTS.firstLineClear} | item-join="${STATUS_BAR_JOIN_SEPARATOR}" | section-separator="${SECTION_DELIMITER}" | renderer=setFooter(custom) | layout left=[${DEFAULT_STATUS_BAR_LAYOUT.left.join(", ")}] center=[${DEFAULT_STATUS_BAR_LAYOUT.center.join(", ")}] right=[${DEFAULT_STATUS_BAR_LAYOUT.right.join(", ")}]`,
-				"info",
-			);
+			await showStatusBarContractUI(ctx);
 		},
 	});
 

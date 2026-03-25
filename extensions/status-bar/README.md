@@ -70,7 +70,7 @@ First-line producers (example):
 ## Dev helper commands
 
 - `/status-bar-contract`
-  - Shows current contract and renderer details.
+  - Opens a read-only settings-style view with contract and renderer details.
 - `/status-bar-set <id> <content>`
   - Sets test content for a second-line ID and re-renders.
 - `/status-bar-clear <id>`
