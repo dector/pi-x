@@ -19,6 +19,8 @@ We should design rules from a **default-deny/confirm posture**:
 
 ## Milestone 1 — Command-policy registry refactor (high-design-quality milestone)
 
+Detailed follow-up plan: `docs/tasks/matcher-registry-refactor-milestone-1-technical-plan.md`
+
 ### Goals
 - Build a **very strong, extensible design** for bash command validation.
 - Keep a **single entry point** for command validation so callers do not depend on internals.
