@@ -298,6 +298,25 @@ test("decideToolCall: trusted pi docs outside project", () => {
 	).toBe("confirm");
 });
 
+test("decideToolCall: bash target-scope matrix (inside vs outside)", () => {
+	const cases = [
+		{ mode: "reader", outerAccess: false, command: "cat README.md", expected: "allow" },
+		{ mode: "reader", outerAccess: false, command: "cat /tmp/outside.txt", expected: "confirm" },
+		{ mode: "reader", outerAccess: true, command: "cat /tmp/outside.txt", expected: "allow" },
+		{ mode: "smart", outerAccess: false, command: "cat README.md", expected: "allow" },
+		{ mode: "smart", outerAccess: false, command: "cat /tmp/outside.txt", expected: "confirm" },
+		{ mode: "smart", outerAccess: true, command: "cat /tmp/outside.txt", expected: "allow" },
+		{ mode: "reader", outerAccess: false, command: "cat README.md | head -n 5", expected: "allow" },
+		{ mode: "reader", outerAccess: false, command: "cat /tmp/outside.txt | head -n 5", expected: "confirm" },
+		{ mode: "reader", outerAccess: true, command: "cat /tmp/outside.txt | head -n 5", expected: "allow" },
+	] as const;
+
+	for (const testCase of cases) {
+		const decision = decide(testCase.mode, "bash", { command: testCase.command }, PROJECT_ROOT, testCase.outerAccess);
+		expect(decision.action).toBe(testCase.expected);
+	}
+});
+
 test("decideToolCall: paranoid/yolo sanity", () => {
 	expect(decide("paranoid", "read", { path: "policy.ts" }).action).toBe("confirm");
 	expect(decide("paranoid", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
