@@ -169,8 +169,9 @@ export function decideToolCall(args: {
 	input: Record<string, unknown>;
 	projectRoot: string;
 	outerAccess: boolean;
+	trustedReadRoots?: string[];
 }): ToolDecision {
-	const { mode, toolName, input, projectRoot, outerAccess } = args;
+	const { mode, toolName, input, projectRoot, outerAccess, trustedReadRoots } = args;
 	const summary = describeToolCall(toolName, input);
 
 	if (mode === "paranoid") {
@@ -182,11 +183,13 @@ export function decideToolCall(args: {
 	}
 
 	if (!outerAccess && targetsOutsideProject(toolName, input, projectRoot)) {
-		return {
-			action: "confirm",
-			reason: `Operation targets outside project root (${projectRoot}).`,
-			summary,
-		};
+		if (!isTrustedOutsideReadAllowed({ mode, toolName, input, projectRoot, trustedReadRoots })) {
+			return {
+				action: "confirm",
+				reason: `Operation targets outside project root (${projectRoot}).`,
+				summary,
+			};
+		}
 	}
 
 	if (mode === "yolo") {
@@ -228,6 +231,86 @@ export function decideToolCall(args: {
 }
 
 const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
+
+function isTrustedOutsideReadAllowed(args: {
+	mode: SafeMode;
+	toolName: string;
+	input: Record<string, unknown>;
+	projectRoot: string;
+	trustedReadRoots?: string[];
+}): boolean {
+	const { mode, toolName, input, projectRoot, trustedReadRoots } = args;
+	if (mode !== "reader" && mode !== "smart") return false;
+	if (!isReaderAllowed(toolName, input)) return false;
+
+	const roots = normalizeTrustedReadRoots(trustedReadRoots, projectRoot);
+	if (roots.length === 0) return false;
+
+	return hasOnlyTrustedOutsideTargets(toolName, input, projectRoot, roots);
+}
+
+function normalizeTrustedReadRoots(trustedReadRoots: string[] | undefined, projectRoot: string): string[] {
+	if (!Array.isArray(trustedReadRoots)) return [];
+	const normalized = new Set<string>();
+	for (const root of trustedReadRoots) {
+		if (typeof root !== "string") continue;
+		const trimmed = root.trim();
+		if (trimmed.length === 0) continue;
+		normalized.add(resolvePathInput(trimmed, projectRoot));
+	}
+	return [...normalized];
+}
+
+function hasOnlyTrustedOutsideTargets(
+	toolName: string,
+	input: Record<string, unknown>,
+	projectRoot: string,
+	trustedRoots: string[],
+): boolean {
+	if (PATH_SCOPED_TOOLS.has(toolName)) {
+		const pathValue = normalizeToolPath(input.path);
+		if (!pathValue) return false;
+		if (isPathInsideProject(pathValue, projectRoot)) return false;
+		return isPathInsideAnyRoot(pathValue, projectRoot, trustedRoots);
+	}
+
+	if (toolName !== "bash") return false;
+	const command = typeof input.command === "string" ? input.command : "";
+	return bashHasOnlyTrustedOutsideTargets(command, projectRoot, trustedRoots);
+}
+
+function bashHasOnlyTrustedOutsideTargets(command: string, projectRoot: string, trustedRoots: string[]): boolean {
+	const trimmed = command.trim();
+	if (trimmed.length === 0) return false;
+
+	let ast: any;
+	try {
+		ast = parseBash(trimmed);
+	} catch {
+		return false;
+	}
+
+	const pathCandidates: string[] = [];
+	collectPathCandidatesFromAst(ast, pathCandidates);
+
+	let hasOutsideTarget = false;
+	for (const candidate of pathCandidates) {
+		if (!isPathLikeArg(candidate)) continue;
+		if (isPathInsideProject(candidate, projectRoot)) continue;
+		hasOutsideTarget = true;
+		if (!isPathInsideAnyRoot(candidate, projectRoot, trustedRoots)) return false;
+	}
+
+	return hasOutsideTarget;
+}
+
+function isPathInsideAnyRoot(pathValue: string, projectRoot: string, trustedRoots: string[]): boolean {
+	const absolutePath = resolvePathInput(pathValue, projectRoot);
+	for (const trustedRoot of trustedRoots) {
+		if (isPathInsideBase(absolutePath, trustedRoot)) return true;
+	}
+	return false;
+}
 
 function targetsOutsideProject(toolName: string, input: Record<string, unknown>, projectRoot: string): boolean {
 	if (PATH_SCOPED_TOOLS.has(toolName)) {
@@ -767,9 +850,15 @@ function resolvePathInput(pathValue: string, projectRoot: string): string {
 	return resolve(absoluteProjectRoot, pathValue);
 }
 
+function isPathInsideBase(pathValue: string, basePath: string): boolean {
+	const absoluteBasePath = resolve(basePath);
+	const absolutePath = resolve(pathValue);
+	const rel = relative(absoluteBasePath, absolutePath);
+	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
 function isPathInsideProject(pathValue: string, projectRoot: string): boolean {
 	const absoluteProjectRoot = resolve(projectRoot);
 	const absolutePath = resolvePathInput(pathValue, absoluteProjectRoot);
-	const rel = relative(absoluteProjectRoot, absolutePath);
-	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+	return isPathInsideBase(absolutePath, absoluteProjectRoot);
 }

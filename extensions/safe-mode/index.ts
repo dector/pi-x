@@ -1,6 +1,8 @@
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -33,6 +35,67 @@ const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
 const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "extensions", "safe-mode", "settings.json");
+const requireForResolve = createRequire(import.meta.url);
+
+function collectInstalledPiPackageRoots(): string[] {
+	const roots = new Set<string>();
+
+	try {
+		const packageJsonPath = requireForResolve.resolve("@mariozechner/pi-coding-agent/package.json");
+		roots.add(resolve(dirname(packageJsonPath)));
+	} catch {
+		// ignore: extension-local module resolution can fail when pi is installed globally
+	}
+
+	const home = homedir();
+	const knownInstallParents = [
+		join(home, ".local", "share", "mise", "installs", "npm-mariozechner-pi-coding-agent"),
+		join(home, ".pi", "agent"),
+		"/usr/local/lib/node_modules",
+		"/usr/lib/node_modules",
+	];
+
+	for (const parent of knownInstallParents) {
+		if (!existsSync(parent)) continue;
+
+		const directPackageRoot = join(parent, "@mariozechner", "pi-coding-agent");
+		if (existsSync(join(directPackageRoot, "package.json"))) {
+			roots.add(resolve(directPackageRoot));
+		}
+
+		if (!parent.endsWith("npm-mariozechner-pi-coding-agent")) continue;
+		for (const entry of readdirSync(parent, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const candidate = join(parent, entry.name, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
+			if (existsSync(join(candidate, "package.json"))) {
+				roots.add(resolve(candidate));
+			}
+		}
+	}
+
+	return [...roots];
+}
+
+function resolveTrustedPiDocumentationRoots(): string[] {
+	const packageRoots = collectInstalledPiPackageRoots();
+	const deduped = new Set<string>();
+
+	for (const packageRoot of packageRoots) {
+		for (const candidate of [
+			join(packageRoot, "README.md"),
+			join(packageRoot, "docs"),
+			join(packageRoot, "examples"),
+		]) {
+			if (existsSync(candidate)) {
+				deduped.add(resolve(candidate));
+			}
+		}
+	}
+
+	return [...deduped];
+}
+
+const TRUSTED_PI_DOCUMENTATION_ROOTS = resolveTrustedPiDocumentationRoots();
 
 interface SafeModeDefaults {
 	mode?: SafeMode;
@@ -934,6 +997,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			input,
 			projectRoot: ctx.cwd,
 			outerAccess,
+			trustedReadRoots: TRUSTED_PI_DOCUMENTATION_ROOTS,
 		});
 
 		if (decision.action === "allow") return;

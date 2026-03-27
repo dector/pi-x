@@ -8,6 +8,12 @@ import {
 } from "./policy.ts";
 
 const PROJECT_ROOT = "/tmp/pi-safe-mode-project";
+const PI_PACKAGE_ROOT = "/opt/pi-coding-agent";
+const TRUSTED_PI_DOC_ROOTS = [
+	`${PI_PACKAGE_ROOT}/README.md`,
+	`${PI_PACKAGE_ROOT}/docs`,
+	`${PI_PACKAGE_ROOT}/examples`,
+];
 
 type BashExpectation = Partial<BashCommandType>;
 
@@ -26,8 +32,9 @@ function decide(
 	input: Record<string, unknown>,
 	projectRoot = PROJECT_ROOT,
 	outerAccess = false,
+	trustedReadRoots?: string[],
 ) {
-	return decideToolCall({ mode, toolName, input, projectRoot, outerAccess });
+	return decideToolCall({ mode, toolName, input, projectRoot, outerAccess, trustedReadRoots });
 }
 
 test("getBashCommandType: empty/invalid input", () => {
@@ -265,6 +272,30 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "bash", { command: "find . -delete" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "ls -la" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "ls | grep src" }).action).toBe("allow");
+});
+
+test("decideToolCall: trusted pi docs outside project", () => {
+	const docsFile = `${PI_PACKAGE_ROOT}/docs/extensions.md`;
+	const readmeFile = `${PI_PACKAGE_ROOT}/README.md`;
+	const outsideFile = "/tmp/outside.txt";
+
+	expect(decide("reader", "read", { path: docsFile }).action).toBe("confirm");
+	expect(decide("reader", "read", { path: docsFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("allow");
+	expect(decide("smart", "read", { path: readmeFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("allow");
+
+	expect(decide("reader", "read", { path: outsideFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("confirm");
+	expect(decide("smart", "write", { path: docsFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("confirm");
+
+	expect(
+		decide("reader", "bash", { command: `cat ${docsFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action,
+	).toBe("allow");
+	expect(
+		decide("reader", "bash", { command: `cat ${docsFile} ${outsideFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS)
+			.action,
+	).toBe("confirm");
+	expect(
+		decide("reader", "bash", { command: `cat ${outsideFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action,
+	).toBe("confirm");
 });
 
 test("decideToolCall: paranoid/yolo sanity", () => {

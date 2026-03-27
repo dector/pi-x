@@ -27,6 +27,8 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
 - `outerAccess=false` (default)
   - Mode auto-approvals apply inside project root (`ctx.cwd`) only.
   - If an operation clearly targets paths outside the project root, approval is required.
+  - Exception: in `reader`/`smart`, read-only access to installed **pi documentation paths** is auto-allowed (package `README.md`, `docs/`, and `examples/`).
+  - This auto-discovery is most reliable when pi is installed via **mise** (other install layouts are best-effort).
 - `outerAccess=true`
   - `reader`/`yolo`: mode rules also apply to outside paths.
   - `smart`: read rules apply outside paths, but `edit`/`write` remain inside-project only.
@@ -52,6 +54,7 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 Notes:
 - `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.
 - For `reader`/`smart`, non-read-only operations still ask for approval.
+- For `reader`/`smart` with `outerAccess=false`, installed pi docs are a narrow read-only exception (`README.md`, `docs/`, `examples/` under the resolved `@mariozechner/pi-coding-agent` package).
 - For `yolo`, `outerAccess=false` still gates outside-repo targets; `YOLO!` allows those too.
 
 ## Commands
