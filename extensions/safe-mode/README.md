@@ -98,10 +98,10 @@ Notes:
 ## Approval dialog
 
 When approval is required:
-- `Y` or `y` confirms once (allow this tool call)
-- `N` or `n` rejects (block tool call)
-- `A` or `a` remembers the exact `bash` command line for this session and auto-approves exact repeats
-- `P` or `p` permanently allows the exact `bash` command for this project (**only shown in `smart`/`smart!`**)
+- `Y` confirms once (allow this tool call)
+- `N` rejects (block tool call)
+- `A` remembers the exact `bash` command line for this session and auto-approves exact repeats
+- `P` permanently allows the exact `bash` command for this project (**only shown in `smart`/`smart!`**)
 - `Esc` blocks the tool call, prompts for steering text, and sends it to the agent as a steer message
 - Existing selection navigation (arrows / j / k) remains unchanged
 

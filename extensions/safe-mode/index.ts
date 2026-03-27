@@ -318,25 +318,25 @@ async function confirmApproval(
 	let keyDecision: ApprovalDecision | undefined;
 
 	const unsubscribe = ctx.ui.onTerminalInput((data) => {
-		if (data === "y" || data === "Y") {
+		if (data === "Y") {
 			keyDecision = "approve-once";
 			controller.abort();
 			return { consume: true };
 		}
 
-		if (data === "n" || data === "N") {
+		if (data === "N") {
 			keyDecision = "deny";
 			controller.abort();
 			return { consume: true };
 		}
 
-		if (data === "a" || data === "A") {
+		if (data === "A") {
 			keyDecision = "approve-all-session";
 			controller.abort();
 			return { consume: true };
 		}
 
-		if (allowProjectApproval && (data === "p" || data === "P")) {
+		if (allowProjectApproval && data === "P") {
 			keyDecision = "approve-project";
 			controller.abort();
 			return { consume: true };
