@@ -1,21 +1,24 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Loader, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
-const PATCH_FLAG = "__pi_ui_working_loader_patch_v4";
+const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
 const GLOBAL_MIN_TRACK_LENGTH_KEY = "__pi_ui_working_min_track_length";
 const GLOBAL_HUE_STEP_KEY = "__pi_ui_working_hue_step_deg";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 
 const RESET_FG = "\x1b[39m";
-const BALL_CHAR = "·";
+
+// Thick pipe phases inside a single terminal cell: left, center, right.
+const PIPE_PHASE_CHARS = ["▌", "┃", "▐"] as const;
 
 const DEFAULT_MIN_TRACK_LENGTH = 15;
 const MIN_TRACK_LENGTH = 15;
 const MAX_TRACK_LENGTH = 400;
 
-const DEFAULT_INTERVAL_MS = 80;
-const DEFAULT_HUE_STEP_DEG = 3;
+// Faster defaults
+const DEFAULT_INTERVAL_MS = 16;
+const DEFAULT_HUE_STEP_DEG = 8;
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
@@ -63,7 +66,7 @@ function setGlobalHueStep(stepDeg: number): void {
 function getGlobalHueStep(): number {
 	const value = (globalThis as Record<string, unknown>)[GLOBAL_HUE_STEP_KEY];
 	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_HUE_STEP_DEG;
-	return clamp(value, 0.2, 30);
+	return clamp(value, 0.2, 60);
 }
 
 function encodeFrameStep(step: number): string {
@@ -78,17 +81,9 @@ function decodeFrameStep(message: string): number | undefined {
 	return Math.max(0, parsed);
 }
 
-function resolveTrackLength(width: number, minimumLength: number): number {
+function resolveTrackLength(width: number, _minimumLength: number): number {
 	if (width <= 0) return 0;
-	if (width < minimumLength) return width;
-	return Math.max(minimumLength, Math.floor(width / 3));
-}
-
-function positionForStep(step: number, length: number): number {
-	if (length <= 1) return 0;
-	const cycle = length * 2 - 2;
-	const raw = step % cycle;
-	return raw < length ? raw : cycle - raw;
+	return width;
 }
 
 function hsvToRgb(h: number, s: number, v: number): { r: number; g: number; b: number } {
@@ -128,18 +123,35 @@ function hsvToRgb(h: number, s: number, v: number): { r: number; g: number; b: n
 	};
 }
 
-function smoothBallColor(step: number): string {
+function smoothPipeColor(step: number): string {
 	const hue = step * getGlobalHueStep();
 	const { r, g, b } = hsvToRgb(hue, 0.85, 1);
 	return `\x1b[38;2;${r};${g};${b}m`;
 }
 
+function phasedPositionForStep(step: number, length: number, phaseCount: number): { position: number; phase: number } {
+	if (length <= 1) return { position: 0, phase: Math.floor(phaseCount / 2) };
+
+	const safePhaseCount = Math.max(1, phaseCount);
+	const travelUnits = (length - 1) * safePhaseCount;
+	if (travelUnits <= 0) return { position: 0, phase: Math.floor(safePhaseCount / 2) };
+
+	const cycle = travelUnits * 2;
+	const raw = step % cycle;
+	const unit = raw <= travelUnits ? raw : cycle - raw;
+
+	const position = Math.max(0, Math.min(length - 1, Math.floor(unit / safePhaseCount)));
+	const phase = unit % safePhaseCount;
+	return { position, phase };
+}
+
 function frameForStep(step: number, length: number): string {
-	const pos = positionForStep(step, length);
-	const color = smoothBallColor(step);
-	const left = " ".repeat(pos);
-	const right = " ".repeat(Math.max(0, length - pos - 1));
-	return `${left}${color}${BALL_CHAR}${RESET_FG}${right}`;
+	const { position, phase } = phasedPositionForStep(step, length, PIPE_PHASE_CHARS.length);
+	const marker = PIPE_PHASE_CHARS[phase] ?? PIPE_PHASE_CHARS[1];
+	const color = smoothPipeColor(step);
+	const left = " ".repeat(position);
+	const right = " ".repeat(Math.max(0, length - position - 1));
+	return `${left}${color}${marker}${RESET_FG}${right}`;
 }
 
 function centerLine(width: number, text: string): string {
@@ -232,7 +244,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	);
 	setGlobalMinTrackLength(minimumTrackLength);
 
-	const intervalMs = Math.max(60, parseIntEnv("PI_UI_WORKING_INTERVAL_MS", DEFAULT_INTERVAL_MS));
+	const intervalMs = Math.max(5, parseIntEnv("PI_UI_WORKING_INTERVAL_MS", DEFAULT_INTERVAL_MS));
 	setGlobalHueStep(parseFloatEnv("PI_UI_WORKING_HUE_STEP_DEG", DEFAULT_HUE_STEP_DEG));
 
 	let frame = 0;
@@ -287,13 +299,13 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("pi-ui-working-length", {
-		description: `Set minimum working indicator length (${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH})`,
+		description: `Set minimum working indicator length (${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH}) [full-width mode keeps using terminal width]`,
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim();
 			if (!trimmed) {
 				notify(
 					ctx,
-					`pi-ui minimum working length: ${minimumTrackLength} (effective length = max(width/3, minimum); env: PI_UI_WORKING_LENGTH)`,
+					`pi-ui minimum working length: ${minimumTrackLength} (full-width mode active: effective length = terminal width; env: PI_UI_WORKING_LENGTH)`,
 				);
 				return;
 			}
@@ -307,7 +319,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			minimumTrackLength = next;
 			setGlobalMinTrackLength(minimumTrackLength);
 			restartIfActive();
-			notify(ctx, `pi-ui minimum working length set to ${minimumTrackLength}`);
+			notify(ctx, `pi-ui minimum working length set to ${minimumTrackLength} (full-width mode active)`);
 		},
 	});
 }
