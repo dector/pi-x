@@ -4,35 +4,34 @@ Small UI tweaks for pi.
 
 ## Current tweak
 
-Replaces the default `Working...` loader text with an animated bracket track:
-
-- `[·    ]`
-- `[ ·   ]`
-- `[  ·  ]`
-- ...
+Replaces the default `Working...` loader with a centered animated dot indicator.
 
 Features:
 
 - Uses a **center dot** (`·`) as the moving ball
-- Ball color changes every frame (rainbow palette)
-- Track length is configurable
+- Ball color transitions are smooth (truecolor HSV hue cycling)
+- Indicator is centered horizontally
+- Dynamic length per frame:
+  - `max(width/3, minimumLength)`
+  - if terminal width is below `minimumLength`, uses full width
 
 ## Configuration
 
 ### Env vars
 
-- `PI_UI_WORKING_LENGTH` — track length (default: `5`, range: `2-40`)
-- `PI_UI_WORKING_INTERVAL_MS` — animation speed in ms (default: `160`)
+- `PI_UI_WORKING_LENGTH` — minimum track length (default: `15`, range: `15-400`)
+- `PI_UI_WORKING_INTERVAL_MS` — animation speed in ms (default: `80`)
+- `PI_UI_WORKING_HUE_STEP_DEG` — hue change per frame in degrees (default: `3`)
 
 Example:
 
 ```bash
-PI_UI_WORKING_LENGTH=8 PI_UI_WORKING_INTERVAL_MS=120 pi
+PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=120 PI_UI_WORKING_HUE_STEP_DEG=2 pi
 ```
 
 ### Runtime command
 
-- `/pi-ui-working-length <2-40>` — change track length in current session
+- `/pi-ui-working-length <15-400>` — change minimum length in current session
 
 ## Install
 
