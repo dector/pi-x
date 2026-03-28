@@ -15,6 +15,7 @@ This repo currently contains the following extension(s):
 - [`http`](extensions/http/README.md) — Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`.
 - [`interactive-bash`](extensions/interactive-bash/README.md) — Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts).
 - [`tool-zellij`](extensions/tool-zellij/README.md) — Adds a `zellij` bridge tool for controlling zellij/tmux workflows (currently `help` and `version`).
+- [`pi-ui`](extensions/pi-ui/README.md) — UI tweaks extension (currently a colorful configurable working indicator animation).
 
 ## Install policy for pi agents
 
