@@ -616,6 +616,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let projectAllowlistFileExists = false;
 	let configuredDefaultMode: SafeMode | undefined;
 	let configuredDefaultOuterAccess: boolean | undefined;
+	let modeBeforeReaderShortcut: SafeMode | undefined;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
 
@@ -667,6 +668,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const notify = options?.notify ?? true;
 		const changed = nextMode !== mode;
 
+		if (nextMode !== "reader") {
+			modeBeforeReaderShortcut = undefined;
+		}
+
 		mode = nextMode;
 		updateStatus(ctx);
 
@@ -699,6 +704,9 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	function setModeAndOuter(nextMode: SafeMode, nextOuterAccess: boolean, ctx: ExtensionContext): void {
 		const modeChanged = nextMode !== mode;
 		const outerChanged = nextOuterAccess !== outerAccess;
+		if (nextMode !== "reader") {
+			modeBeforeReaderShortcut = undefined;
+		}
 		mode = nextMode;
 		outerAccess = nextOuterAccess;
 		updateStatus(ctx);
@@ -711,6 +719,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function applyResolvedState(ctx: ExtensionContext): void {
+		modeBeforeReaderShortcut = undefined;
 		const persisted = getPersistedStateFromBranch(ctx);
 
 		const modeFlagRaw = pi.getFlag("safe-mode");
@@ -934,6 +943,22 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		description: "Cycle safe mode",
 		handler: async (ctx) => {
 			setMode(cycleSafeMode(mode), ctx);
+		},
+	});
+
+	pi.registerShortcut(Key.ctrl("x"), {
+		description: "Toggle reader mode and restore previous mode",
+		handler: async (ctx) => {
+			if (mode === "reader") {
+				if (!modeBeforeReaderShortcut) return;
+				const restoreMode = modeBeforeReaderShortcut;
+				modeBeforeReaderShortcut = undefined;
+				setMode(restoreMode, ctx);
+				return;
+			}
+
+			modeBeforeReaderShortcut = mode;
+			setMode("reader", ctx);
 		},
 	});
 
