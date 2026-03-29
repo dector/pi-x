@@ -5,9 +5,14 @@ const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
 const GLOBAL_MIN_TRACK_LENGTH_KEY = "__pi_ui_working_min_track_length";
 const GLOBAL_HUE_STEP_KEY = "__pi_ui_working_hue_step_deg";
+const GLOBAL_BELL_ENABLED_KEY = "__pi_ui_bell_enabled";
+const GLOBAL_BELL_DEBOUNCE_MS_KEY = "__pi_ui_bell_debounce_ms";
+const GLOBAL_BELL_LAST_RING_MS_KEY = "__pi_ui_bell_last_ring_ms";
+const UI_INPUT_PATCH_FLAG = "__pi_ui_bell_ui_input_patch_v1";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 
 const RESET_FG = "\x1b[39m";
+const BELL_CHAR = "\x07";
 
 // Thick pipe phases inside a single terminal cell: left, center, right.
 const PIPE_PHASE_CHARS = ["▌", "┃", "▐"] as const;
@@ -19,6 +24,10 @@ const MAX_TRACK_LENGTH = 400;
 // Faster defaults
 const DEFAULT_INTERVAL_MS = 16;
 const DEFAULT_HUE_STEP_DEG = 8;
+const DEFAULT_BELL_ENABLED = true;
+const DEFAULT_BELL_DEBOUNCE_MS = 250;
+const MIN_BELL_DEBOUNCE_MS = 0;
+const MAX_BELL_DEBOUNCE_MS = 5_000;
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
@@ -38,6 +47,16 @@ function parseFloatEnv(name: string, fallback: number): number {
 	const parsed = Number.parseFloat(raw);
 	if (!Number.isFinite(parsed)) return fallback;
 	return parsed;
+}
+
+function parseBooleanEnv(name: string, fallback: boolean): boolean {
+	const value = process.env[name];
+	if (!value) return fallback;
+	const raw = value.trim().toLowerCase();
+	if (raw.length === 0) return fallback;
+	if (["1", "true", "yes", "on", "y"].includes(raw)) return true;
+	if (["0", "false", "no", "off", "n"].includes(raw)) return false;
+	return fallback;
 }
 
 function parseTrackLength(raw: string | undefined): number | undefined {
@@ -67,6 +86,48 @@ function getGlobalHueStep(): number {
 	const value = (globalThis as Record<string, unknown>)[GLOBAL_HUE_STEP_KEY];
 	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_HUE_STEP_DEG;
 	return clamp(value, 0.2, 60);
+}
+
+function setGlobalBellEnabled(enabled: boolean): void {
+	(globalThis as Record<string, unknown>)[GLOBAL_BELL_ENABLED_KEY] = enabled;
+}
+
+function getGlobalBellEnabled(): boolean {
+	const value = (globalThis as Record<string, unknown>)[GLOBAL_BELL_ENABLED_KEY];
+	return typeof value === "boolean" ? value : DEFAULT_BELL_ENABLED;
+}
+
+function setGlobalBellDebounceMs(debounceMs: number): void {
+	(globalThis as Record<string, unknown>)[GLOBAL_BELL_DEBOUNCE_MS_KEY] = debounceMs;
+}
+
+function getGlobalBellDebounceMs(): number {
+	const value = (globalThis as Record<string, unknown>)[GLOBAL_BELL_DEBOUNCE_MS_KEY];
+	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_BELL_DEBOUNCE_MS;
+	return clamp(Math.floor(value), MIN_BELL_DEBOUNCE_MS, MAX_BELL_DEBOUNCE_MS);
+}
+
+function getGlobalLastBellRingMs(): number {
+	const value = (globalThis as Record<string, unknown>)[GLOBAL_BELL_LAST_RING_MS_KEY];
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function setGlobalLastBellRingMs(ms: number): void {
+	(globalThis as Record<string, unknown>)[GLOBAL_BELL_LAST_RING_MS_KEY] = ms;
+}
+
+function ringBell(force = false): void {
+	if (!getGlobalBellEnabled()) return;
+	if (!process.stdout.isTTY) return;
+
+	const now = Date.now();
+	if (!force) {
+		const elapsed = now - getGlobalLastBellRingMs();
+		if (elapsed >= 0 && elapsed < getGlobalBellDebounceMs()) return;
+	}
+
+	setGlobalLastBellRingMs(now);
+	process.stdout.write(BELL_CHAR);
 }
 
 function encodeFrameStep(step: number): string {
@@ -234,6 +295,45 @@ function notify(ctx: ExtensionContext, message: string): void {
 	ctx.ui.notify(message, "info");
 }
 
+type BellPatchableUIContext = ExtensionContext["ui"] & {
+	[UI_INPUT_PATCH_FLAG]?: boolean;
+};
+
+function patchUiInputBell(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+
+	const ui = ctx.ui as BellPatchableUIContext;
+	if (ui[UI_INPUT_PATCH_FLAG]) return;
+
+	const wrapPromptMethod = (methodName: "select" | "confirm" | "input" | "editor" | "custom") => {
+		const original = ui[methodName];
+		ui[methodName] = (async (...args: unknown[]) => {
+			ringBell();
+			return await (original as (...innerArgs: unknown[]) => Promise<unknown>).apply(ui, args);
+		}) as BellPatchableUIContext[typeof methodName];
+	};
+
+	wrapPromptMethod("select");
+	wrapPromptMethod("confirm");
+	wrapPromptMethod("input");
+	wrapPromptMethod("editor");
+	wrapPromptMethod("custom");
+	ui[UI_INPUT_PATCH_FLAG] = true;
+}
+
+function notifyInputExpected(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	patchUiInputBell(ctx);
+	ringBell();
+}
+
+function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	if (!ctx.isIdle()) return;
+	if (ctx.hasPendingMessages()) return;
+	notifyInputExpected(ctx);
+}
+
 export default function piUiExtension(pi: ExtensionAPI): void {
 	patchLoaderWorkingSpinner();
 
@@ -247,9 +347,26 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	const intervalMs = Math.max(5, parseIntEnv("PI_UI_WORKING_INTERVAL_MS", DEFAULT_INTERVAL_MS));
 	setGlobalHueStep(parseFloatEnv("PI_UI_WORKING_HUE_STEP_DEG", DEFAULT_HUE_STEP_DEG));
 
+	let bellEnabled = parseBooleanEnv("PI_UI_BELL", DEFAULT_BELL_ENABLED);
+	setGlobalBellEnabled(bellEnabled);
+	setGlobalBellDebounceMs(
+		clamp(
+			parseIntEnv("PI_UI_BELL_DEBOUNCE_MS", DEFAULT_BELL_DEBOUNCE_MS),
+			MIN_BELL_DEBOUNCE_MS,
+			MAX_BELL_DEBOUNCE_MS,
+		),
+	);
+
 	let frame = 0;
 	let timer: NodeJS.Timeout | undefined;
 	let activeContext: ExtensionContext | undefined;
+	let pendingInteractiveInputSerial = 0;
+	let agentRunning = false;
+
+	const ensureUiBellPatched = (ctx: ExtensionContext) => {
+		if (!ctx.hasUI) return;
+		patchUiInputBell(ctx);
+	};
 
 	const pushFrame = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -286,21 +403,65 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		startAnimation(activeContext);
 	};
 
+	pi.on("session_start", async (_event, ctx) => {
+		ensureUiBellPatched(ctx);
+		notifyInputExpectedIfReady(ctx);
+	});
+
+	pi.on("session_switch", async (_event, ctx) => {
+		ensureUiBellPatched(ctx);
+		notifyInputExpectedIfReady(ctx);
+	});
+
+	pi.on("session_fork", async (_event, ctx) => {
+		ensureUiBellPatched(ctx);
+		notifyInputExpectedIfReady(ctx);
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		ensureUiBellPatched(ctx);
+		notifyInputExpectedIfReady(ctx);
+	});
+
+	pi.on("before_agent_start", async (_event, ctx) => {
+		ensureUiBellPatched(ctx);
+		pendingInteractiveInputSerial = 0;
+	});
+
+	pi.on("input", async (event, ctx) => {
+		ensureUiBellPatched(ctx);
+		if (event.source !== "interactive") return;
+
+		const serial = ++pendingInteractiveInputSerial;
+		setTimeout(() => {
+			if (pendingInteractiveInputSerial !== serial) return;
+			if (agentRunning) return;
+			notifyInputExpectedIfReady(ctx);
+		}, 0);
+	});
+
 	pi.on("agent_start", async (_event, ctx) => {
+		agentRunning = true;
+		pendingInteractiveInputSerial = 0;
 		startAnimation(ctx);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
+		agentRunning = false;
 		stopAnimation(ctx);
+		notifyInputExpectedIfReady(ctx);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		pendingInteractiveInputSerial = 0;
+		agentRunning = false;
 		stopAnimation(ctx);
 	});
 
 	pi.registerCommand("pi-ui-working-length", {
 		description: `Set minimum working indicator length (${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH}) [full-width mode keeps using terminal width]`,
 		handler: async (args, ctx) => {
+			ensureUiBellPatched(ctx);
 			const trimmed = (args ?? "").trim();
 			if (!trimmed) {
 				notify(
@@ -320,6 +481,37 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			setGlobalMinTrackLength(minimumTrackLength);
 			restartIfActive();
 			notify(ctx, `pi-ui minimum working length set to ${minimumTrackLength} (full-width mode active)`);
+		},
+	});
+
+	pi.registerCommand("pi-ui-bell", {
+		description: "Control bell notifications when pi waits for user input: /pi-ui-bell [on|off|toggle|status]",
+		handler: async (args, ctx) => {
+			ensureUiBellPatched(ctx);
+			const trimmed = (args ?? "").trim().toLowerCase();
+
+			if (!trimmed || trimmed === "status") {
+				notify(
+					ctx,
+					`pi-ui bell: ${bellEnabled ? "on" : "off"} (env: PI_UI_BELL, debounce: ${getGlobalBellDebounceMs()}ms via PI_UI_BELL_DEBOUNCE_MS)`,
+				);
+				return;
+			}
+
+			if (trimmed === "on") {
+				bellEnabled = true;
+			} else if (trimmed === "off") {
+				bellEnabled = false;
+			} else if (trimmed === "toggle") {
+				bellEnabled = !bellEnabled;
+			} else {
+				notify(ctx, "Usage: /pi-ui-bell [on|off|toggle|status]");
+				return;
+			}
+
+			setGlobalBellEnabled(bellEnabled);
+			notify(ctx, `pi-ui bell ${bellEnabled ? "enabled" : "disabled"}`);
+			if (bellEnabled) ringBell(true);
 		},
 	});
 }
