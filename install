@@ -80,6 +80,7 @@ extensions=(
   "repo-stats"
   "http"
   "interactive-bash"
+  "pi-ui"
 )
 
 installed_extensions=()
