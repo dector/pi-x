@@ -66,6 +66,7 @@ Context usage (`context-watcher-*` IDs) is now produced internally by `status-ba
 First-line producers (example):
 
 - `repo-stats`
+- `attension-core` (special-case: when active, its bell is prefixed before cwd/branch)
 
 ## Dev helper commands
 

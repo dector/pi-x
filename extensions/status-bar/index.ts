@@ -20,6 +20,7 @@ const CONTEXT_WATCHER_IDS = {
 	model: "context-watcher-model",
 	percent: "context-watcher-percent",
 } as const;
+const ATTENSION_CORE_ID = "attension-core";
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -474,27 +475,27 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return false;
 	};
 
-	const resolveFirstLine = (): string | undefined => {
+	const resolveFirstLine = (): { id: string; content: string } | undefined => {
 		if (firstLineById.size === 0) return undefined;
 
-		let selected: FirstLineEntry | undefined;
-		for (const entry of firstLineById.values()) {
+		let selected: (FirstLineEntry & { id: string }) | undefined;
+		for (const [id, entry] of firstLineById.entries()) {
 			if (!hasVisibleText(entry.content)) continue;
 			if (!selected) {
-				selected = entry;
+				selected = { id, ...entry };
 				continue;
 			}
 			if (entry.priority > selected.priority) {
-				selected = entry;
+				selected = { id, ...entry };
 				continue;
 			}
 			if (entry.priority === selected.priority && entry.order < selected.order) {
-				selected = entry;
+				selected = { id, ...entry };
 			}
 		}
 
 		if (!selected) return undefined;
-		return sanitizeStatusText(selected.content);
+		return { id: selected.id, content: sanitizeStatusText(selected.content) };
 	};
 
 	const requestRender = (): void => {
@@ -534,7 +535,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					const producedFirstLine = resolveFirstLine();
 					const line1 = producedFirstLine
-						? renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine)
+						? producedFirstLine.id === ATTENSION_CORE_ID
+							? truncateToWidth(`${producedFirstLine.content} ${defaultFirstLine}`, width, theme.fg("dim", "..."))
+							: renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine.content)
 						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 
 					const contextOverrides = getContextWatcherOverrides(activeCtx, theme);
