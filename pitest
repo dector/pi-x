@@ -25,4 +25,25 @@ if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
 	exit 1
 fi
 
-exec pi --no-extensions "${EXT_ARGS[@]}" "$@"
+WITH_NVIM=0
+PI_ARGS=()
+for arg in "$@"; do
+	if [[ "$arg" == "--nvim" ]]; then
+		WITH_NVIM=1
+		continue
+	fi
+	PI_ARGS+=("$arg")
+done
+
+if [[ $WITH_NVIM -eq 1 ]]; then
+	NVIM_EXT_DIR="$HOME/.pi/tmp/extensions/pi-nvim"
+	if [[ -f "$NVIM_EXT_DIR/extension.ts" ]]; then
+		EXT_ARGS+=("-e" "$NVIM_EXT_DIR/extension.ts")
+	elif [[ -f "$NVIM_EXT_DIR/index.ts" ]]; then
+		EXT_ARGS+=("-e" "$NVIM_EXT_DIR/index.ts")
+	else
+		echo "Warning: --nvim requested, but no extension entrypoint found in $NVIM_EXT_DIR (expected extension.ts or index.ts)." >&2
+	fi
+fi
+
+exec pi --no-extensions "${EXT_ARGS[@]}" "${PI_ARGS[@]}"
