@@ -7,6 +7,7 @@ import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
+	rawKeyHint,
 	truncateHead,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
@@ -387,6 +388,80 @@ function buildWebSearchCallSummary(input: WebSearchToolParamsInput): string {
 	const pages = Number.isFinite(input.pages) && (input.pages ?? 0) > 0 ? Math.floor(input.pages ?? 1) : DEFAULT_WEB_SEARCH_PAGES;
 	if (pages <= 1) return `"${query}" (page ${startPage})`;
 	return `"${query}" (pages ${startPage}-${startPage + pages - 1})`;
+}
+
+const COLLAPSED_PREVIEW_LINES = 12;
+const COLLAPSED_PREVIEW_BYTES = 1600;
+
+function getToolResultText(result: unknown): string {
+	if (!result || typeof result !== "object") return "";
+	const content = (result as { content?: Array<{ type?: string; text?: string }> }).content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part) => part?.type === "text" && typeof part.text === "string")
+		.map((part) => part.text as string)
+		.join("\n");
+}
+
+function buildCollapsedPreview(
+	text: string,
+	maxLines: number,
+	maxBytes: number,
+): { text: string; truncated: boolean; hiddenLines: number } {
+	const lines = text.split("\n");
+	const byLines = lines.length > maxLines ? lines.slice(0, maxLines).join("\n") : text;
+	const lineTruncated = lines.length > maxLines;
+	const hiddenLines = lineTruncated ? Math.max(0, lines.length - maxLines) : 0;
+
+	const byteLength = Buffer.byteLength(byLines, "utf8");
+	if (byteLength <= maxBytes) {
+		return { text: byLines, truncated: lineTruncated, hiddenLines };
+	}
+
+	let low = 0;
+	let high = byLines.length;
+	while (low < high) {
+		const mid = Math.ceil((low + high) / 2);
+		const candidate = byLines.slice(0, mid);
+		if (Buffer.byteLength(candidate, "utf8") <= maxBytes) {
+			low = mid;
+		} else {
+			high = mid - 1;
+		}
+	}
+
+	const clipped = byLines.slice(0, Math.max(0, low));
+	return {
+		text: `${clipped}\n…`,
+		truncated: true,
+		hiddenLines,
+	};
+}
+
+function renderToolResultPreview(
+	result: unknown,
+	state: { expanded: boolean; isPartial: boolean },
+	theme: { fg: (name: string, text: string) => string },
+): Text {
+	if (state.isPartial) {
+		return new Text(theme.fg("muted", "Running..."), 0, 0);
+	}
+
+	const fullText = getToolResultText(result);
+	if (!fullText) {
+		return new Text(theme.fg("muted", "(no output)"), 0, 0);
+	}
+
+	if (state.expanded) {
+		return new Text(fullText, 0, 0);
+	}
+
+	const preview = buildCollapsedPreview(fullText, COLLAPSED_PREVIEW_LINES, COLLAPSED_PREVIEW_BYTES);
+	let text = preview.text;
+	if (preview.truncated) {
+		text += `\n\n${theme.fg("muted", `… ${preview.hiddenLines} more lines (${rawKeyHint("ctrl+o", "show full output")})`)}`;
+	}
+	return new Text(text, 0, 0);
 }
 
 function buildStructuredRequest(
@@ -1031,6 +1106,9 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			text += theme.fg("muted", summary);
 			return new Text(text, 0, 0);
 		},
+		renderResult(result, state, theme) {
+			return renderToolResultPreview(result, state, theme);
+		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			return await executeHttpTool(params as HttpToolParamsInput, ctx.cwd, signal);
 		},
@@ -1055,6 +1133,9 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			text += theme.fg("muted", summary);
 			return new Text(text, 0, 0);
 		},
+		renderResult(result, state, theme) {
+			return renderToolResultPreview(result, state, theme);
+		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			return await executeHttpMarkdownTool(params as HttpMarkdownToolParamsInput, ctx.cwd, signal);
 		},
@@ -1078,6 +1159,9 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			let text = theme.fg("toolTitle", `${theme.bold("web_search")} `);
 			text += theme.fg("muted", summary);
 			return new Text(text, 0, 0);
+		},
+		renderResult(result, state, theme) {
+			return renderToolResultPreview(result, state, theme);
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 			return await executeWebSearchTool(params as WebSearchToolParamsInput, signal);

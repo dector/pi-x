@@ -106,6 +106,7 @@ Unsupported curl flags fail with explicit errors.
 
 ## Notes
 
+- Tool rows use collapsed preview mode by default (first few lines). Press `Ctrl+O` to expand and view the full tool output inline.
 - Output is truncated to pi defaults (**50KB** / **2000 lines**). If truncated, full output is saved to a temp file and path is returned.
 - `insecure` / `--insecure` is ignored in fetch mode and reported as a warning.
 
