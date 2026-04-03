@@ -1,36 +1,25 @@
 # attension-core (pi extension)
 
-Shows an attention indicator and rings the terminal bell when the agent finishes and user attention is needed.
+Minimal attention extension that emits a terminal bell when the agent run ends.
 
-## Dependency
+## Behavior (MVP)
 
-Requires [`status-bar`](../status-bar/README.md) to be installed and enabled.
+- On `agent_end`, writes terminal BEL (`\u0007`) to stdout.
+- Applies a small cooldown of **1 second** to avoid rapid repeated bells.
+- On `session_shutdown`, clears in-memory state.
 
-## Behavior
+## Optional state reset events
 
-- Publishes a first-line indicator (`🔔`) with high priority.
-- Rings the terminal bell (`BEL`, `\u0007`) when attention flips from off → on.
-- Clears the indicator when user input starts again.
+For stability across session transitions, state is reset on:
 
-## Triggers
-
-Attention turns **on** when agent work appears complete:
-
-- `agent_end` (when no active agents remain)
-- `turn_end` (fallback)
-- `message_end` (fallback)
-
-Attention turns **off** on:
-
-- `input`
-- `turn_start`
-- `agent_start`
-- `message_start`
-- session switches/forks/tree/start
+- `session_start`
+- `session_switch`
+- `session_tree`
+- `session_fork`
 
 ## Command
 
-- `/attension-core-test` — toggles the indicator for quick validation.
+- `/attension-core-test` — rings the terminal bell immediately (bypasses cooldown).
 
 ## Install
 

@@ -16,7 +16,7 @@ This repo currently contains the following extension(s):
 - [`interactive-bash`](extensions/interactive-bash/README.md) — Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts).
 - [`tool-zellij`](extensions/tool-zellij/README.md) — Adds a `zellij` bridge tool for controlling zellij/tmux workflows (currently `help` and `version`).
 - [`pi-ui`](extensions/pi-ui/README.md) — UI tweaks extension (currently a colorful configurable working indicator animation).
-- [`attension-core`](extensions/attension-core/README.md) — Shows a first-line bell indicator and emits terminal bell notifications when agent attention is needed.
+- [`attension-core`](extensions/attension-core/README.md) — Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/attension-core-test` command.
 
 ## Install policy for pi agents
 
