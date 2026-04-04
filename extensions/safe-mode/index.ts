@@ -747,7 +747,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	function toggleReaderModeShortcut(ctx: ExtensionContext): void {
 		if (mode === "reader") {
-			if (!modeBeforeReaderShortcut) return;
+			if (!modeBeforeReaderShortcut) {
+				if (ctx.hasUI) ctx.ui.notify("Safe mode: reader already active (nothing to restore)", "info");
+				return;
+			}
 			const restoreMode = modeBeforeReaderShortcut;
 			modeBeforeReaderShortcut = undefined;
 			setMode(restoreMode, ctx);
@@ -760,7 +763,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	function toggleYoloPlusModeShortcut(ctx: ExtensionContext): void {
 		if (mode === "yolo" && outerAccess) {
-			if (!stateBeforeYoloPlusShortcut) return;
+			if (!stateBeforeYoloPlusShortcut) {
+				if (ctx.hasUI) ctx.ui.notify("Safe mode: yolo+ already active (nothing to restore)", "info");
+				return;
+			}
 			const restoreState = stateBeforeYoloPlusShortcut;
 			stateBeforeYoloPlusShortcut = undefined;
 			setModeAndOuter(restoreState.mode, restoreState.outerAccess, ctx);

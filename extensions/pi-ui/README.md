@@ -34,16 +34,23 @@ Current dialog items:
 - `r - toggle reader mode`
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
-- `Esc to close`
+- `↑/↓ - move selection`
+- `Enter - run selected action`
+- `Esc - close`
 
 Behavior details:
 
 - Pressing `Esc` closes the dialog with no side effects.
+- Pressing `↑/↓` (or `k/j`) moves selection in the action list.
+- Pressing `Enter` executes the currently selected action and closes the dialog.
 - Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `safe-mode:set-yolo-plus` and closes the dialog.
+- Rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
+  - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `safe-mode` is not installed/enabled, these keys simply close the dialog (no listener handles the event).
+- Overlay sizing is responsive (`~62%` width, `minWidth: 40`, centered).
 
 Integration contract (important):
 
@@ -84,6 +91,8 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 ### Shortcut
 
 - `Ctrl+X` — open the `pi-ui` action dialog
+  - `↑/↓` (or `k/j`) — move selection
+  - `Enter` — run selected action
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`

@@ -345,19 +345,120 @@ async function showHiDialog(
 	if (!ctx.hasUI) return;
 
 	await ctx.ui.custom<void>(
-		(_tui, _theme, _kb, done) => {
+		(tui, _theme, _kb, done) => {
 			const { onToggleReader, onToggleOuter, onSetYoloPlus } = handlers;
+			let selectedIndex = 0;
+			type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
+			type DialogAction = {
+				hotkey: string;
+				hotkeyAliases?: string[];
+				label: string;
+				risk?: boolean;
+				isEnabled: (state: DialogState) => boolean;
+				run: () => void;
+			};
+			const getSafeModeUiState = (): DialogState => {
+				type MaybeSafeModeEntry = {
+					type?: string;
+					customType?: string;
+					data?: { mode?: unknown; outerAccess?: unknown };
+				};
+
+				let mode = "smart";
+				let outerAccess = false;
+				for (const entry of ctx.sessionManager.getBranch() as MaybeSafeModeEntry[]) {
+					if (entry.type !== "custom" || entry.customType !== "safe-mode") continue;
+					const nextMode = entry.data?.mode;
+					if (typeof nextMode === "string") mode = nextMode.trim().toLowerCase();
+					const nextOuterAccess = entry.data?.outerAccess;
+					if (typeof nextOuterAccess === "boolean") outerAccess = nextOuterAccess;
+				}
+
+				return {
+					readerOn: mode === "reader",
+					outerOn: mode !== "paranoid" && outerAccess,
+					yoloPlusOn: mode === "yolo" && outerAccess,
+				};
+			};
+
+			const actions: DialogAction[] = [
+				{
+					hotkey: "r",
+					hotkeyAliases: ["R"],
+					label: "Toggle reader mode",
+					isEnabled: (state) => state.readerOn,
+					run: onToggleReader,
+				},
+				{
+					hotkey: "+",
+					label: "Toggle outer mode",
+					isEnabled: (state) => state.outerOn,
+					run: onToggleOuter,
+				},
+				{
+					hotkey: "!",
+					label: "YOLO+ mode",
+					risk: true,
+					isEnabled: (state) => state.yoloPlusOn,
+					run: onSetYoloPlus,
+				},
+			];
+			const actionCount = actions.length;
+
+			const executeAction = (index: number): void => {
+				const action = actions[index];
+				if (!action) return;
+				action.run();
+				done();
+			};
+
+			const matchActionIndexForInput = (data: string): number => {
+				return actions.findIndex((action) => data === action.hotkey || action.hotkeyAliases?.includes(data));
+			};
+
 			return {
 				render(width: number) {
 					if (width <= 2) return [];
 					const innerWidth = Math.max(1, width - 2);
+					const state = getSafeModeUiState();
+					const actionLine = (
+						hotkey: string,
+						label: string,
+						enabled: boolean,
+						isSelected: boolean,
+						options?: { risk?: boolean },
+					): string => {
+						const badgeText = enabled ? "[ON]" : "[OFF]";
+						const badgeColor = enabled
+							? options?.risk
+								? "\x1b[33m"
+								: "\x1b[32m"
+							: "\x1b[90m";
+						const badge = `${badgeColor}${badgeText}${RESET_FG}`;
+						const prefix = isSelected ? "› " : "  ";
+						const left = `${prefix}[${hotkey}] ${label}`;
+						const availableLeft = Math.max(1, innerWidth - visibleWidth(badgeText) - 1);
+						const clippedLeft =
+							visibleWidth(left) > availableLeft ? truncateToWidth(left, availableLeft, "") : left;
+						const gap = Math.max(1, innerWidth - visibleWidth(clippedLeft) - visibleWidth(badgeText));
+						return `${clippedLeft}${" ".repeat(gap)}${badge}`;
+					};
+					const actionLines = actions.map((action, index) =>
+						actionLine(
+							action.hotkey,
+							action.label,
+							action.isEnabled(state),
+							selectedIndex === index,
+							action.risk ? { risk: true } : undefined,
+						),
+					);
 					return [
 						`╔${"═".repeat(innerWidth)}╗`,
-						`║${centerLine(innerWidth, "r - toggle reader mode")}║`,
-						`║${centerLine(innerWidth, "+ - toggle outer mode")}║`,
-						`║${centerLine(innerWidth, "! - YOLO+ mode")}║`,
-						`║${" ".repeat(innerWidth)}║`,
-						`║${centerLine(innerWidth, "Esc to close")}║`,
+						`║${centerLine(innerWidth, "Ctrl+X Actions")}║`,
+						`║${"─".repeat(innerWidth)}║`,
+						...actionLines.map((line) => `║${line}║`),
+						`║${"─".repeat(innerWidth)}║`,
+						`║${centerLine(innerWidth, "↑/↓ move • Enter run • Esc close")}║`,
 						`╚${"═".repeat(innerWidth)}╝`,
 					];
 				},
@@ -367,19 +468,23 @@ async function showHiDialog(
 						done();
 						return;
 					}
-					if (data === "r" || data === "R") {
-						onToggleReader();
-						done();
+					if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+						selectedIndex = (selectedIndex - 1 + actionCount) % actionCount;
+						tui.requestRender();
 						return;
 					}
-					if (data === "+") {
-						onToggleOuter();
-						done();
+					if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+						selectedIndex = (selectedIndex + 1) % actionCount;
+						tui.requestRender();
 						return;
 					}
-					if (data === "!") {
-						onSetYoloPlus();
-						done();
+					if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+						executeAction(selectedIndex);
+						return;
+					}
+					const actionIndex = matchActionIndexForInput(data);
+					if (actionIndex >= 0) {
+						executeAction(actionIndex);
 					}
 				},
 			};
@@ -388,7 +493,9 @@ async function showHiDialog(
 			overlay: true,
 			overlayOptions: {
 				anchor: "center",
-				width: 36,
+				width: "62%",
+				minWidth: 40,
+				maxHeight: "70%",
 				margin: 1,
 			},
 		},
