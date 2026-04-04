@@ -454,7 +454,7 @@ async function showHiDialog(
 					);
 					return [
 						`╔${"═".repeat(innerWidth)}╗`,
-						`║${centerLine(innerWidth, "Ctrl+X Actions")}║`,
+						`║${centerLine(innerWidth, "Ctrl+, Actions")}║`,
 						`║${"─".repeat(innerWidth)}║`,
 						...actionLines.map((line) => `║${line}║`),
 						`║${"─".repeat(innerWidth)}║`,
@@ -684,7 +684,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrl("x"), {
+	pi.registerShortcut(Key.ctrl(","), {
 		description: "Open pi-ui dialog",
 		handler: async (ctx) => {
 			ensureUiBellPatched(ctx);

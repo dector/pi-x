@@ -25,9 +25,9 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 - extension-driven prompts (`select`, `confirm`, `input`, `editor`, `custom`)
 - session transitions that return to input mode (`session_start`, `session_switch`, `session_fork`, `session_tree`)
 
-### 3) Ctrl+X action dialog (extensible command palette shell)
+### 3) Ctrl+, action dialog (extensible command palette shell)
 
-`pi-ui` owns `Ctrl+X` and opens a centered overlay dialog intended as a **future expansion point** for quick actions.
+`pi-ui` owns `Ctrl+,` and opens a centered overlay dialog intended as a **future expansion point** for quick actions.
 
 Current dialog items:
 
@@ -90,7 +90,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 ### Shortcut
 
-- `Ctrl+X` — open the `pi-ui` action dialog
+- `Ctrl+,` — open the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
