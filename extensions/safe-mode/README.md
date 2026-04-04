@@ -92,10 +92,6 @@ Notes:
 
 - `Ctrl+Shift+M`
   - Cycle safe modes.
-- `Ctrl+X`
-  - Quick reader toggle: if current mode is not `reader`, switch to `reader` and remember previous mode.
-  - Press again to restore remembered mode.
-  - If already in `reader` without a remembered previous mode, does nothing.
 - `Ctrl+Alt+Shift+M`
   - Toggle outer access modifier.
 

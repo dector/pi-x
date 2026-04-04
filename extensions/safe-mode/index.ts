@@ -31,6 +31,7 @@ type AllowlistEntry = {
 
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
+const TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
@@ -718,6 +719,19 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function toggleReaderModeShortcut(ctx: ExtensionContext): void {
+		if (mode === "reader") {
+			if (!modeBeforeReaderShortcut) return;
+			const restoreMode = modeBeforeReaderShortcut;
+			modeBeforeReaderShortcut = undefined;
+			setMode(restoreMode, ctx);
+			return;
+		}
+
+		modeBeforeReaderShortcut = mode;
+		setMode("reader", ctx);
+	}
+
 	function applyResolvedState(ctx: ExtensionContext): void {
 		modeBeforeReaderShortcut = undefined;
 		const persisted = getPersistedStateFromBranch(ctx);
@@ -946,27 +960,19 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrl("x"), {
-		description: "Toggle reader mode and restore previous mode",
-		handler: async (ctx) => {
-			if (mode === "reader") {
-				if (!modeBeforeReaderShortcut) return;
-				const restoreMode = modeBeforeReaderShortcut;
-				modeBeforeReaderShortcut = undefined;
-				setMode(restoreMode, ctx);
-				return;
-			}
-
-			modeBeforeReaderShortcut = mode;
-			setMode("reader", ctx);
-		},
-	});
 
 	pi.registerShortcut(Key.ctrlShiftAlt("m"), {
 		description: "Toggle safe mode outer access",
 		handler: async (ctx) => {
 			setOuterAccess(!outerAccess, ctx);
 		},
+	});
+
+	pi.events.on(TOGGLE_READER_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!maybeCtx) return;
+		toggleReaderModeShortcut(maybeCtx);
 	});
 
 	const refreshDefaults = async (ctx: ExtensionContext): Promise<void> => {

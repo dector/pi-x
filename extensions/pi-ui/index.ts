@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Loader, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -10,9 +10,11 @@ const GLOBAL_BELL_DEBOUNCE_MS_KEY = "__pi_ui_bell_debounce_ms";
 const GLOBAL_BELL_LAST_RING_MS_KEY = "__pi_ui_bell_last_ring_ms";
 const UI_INPUT_PATCH_FLAG = "__pi_ui_bell_ui_input_patch_v1";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
+const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
 
 const RESET_FG = "\x1b[39m";
 const BELL_CHAR = "\x07";
+const ESC = "\u001b";
 
 // Thick pipe phases inside a single terminal cell: left, center, right.
 const PIPE_PHASE_CHARS = ["▌", "┃", "▐"] as const;
@@ -334,6 +336,48 @@ function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
 	notifyInputExpected(ctx);
 }
 
+async function showHiDialog(ctx: ExtensionContext, onToggleReader: () => void): Promise<void> {
+	if (!ctx.hasUI) return;
+
+	await ctx.ui.custom<void>(
+		(_tui, _theme, _kb, done) => {
+			return {
+				render(width: number) {
+					if (width <= 2) return [];
+					const innerWidth = Math.max(1, width - 2);
+					return [
+						`╔${"═".repeat(innerWidth)}╗`,
+						`║${centerLine(innerWidth, "r - toggle reader mode")}║`,
+						`║${" ".repeat(innerWidth)}║`,
+						`║${centerLine(innerWidth, "Esc to close")}║`,
+						`╚${"═".repeat(innerWidth)}╝`,
+					];
+				},
+				invalidate() {},
+				handleInput(data: string) {
+					if (matchesKey(data, Key.escape) || data === ESC) {
+						done();
+						return;
+					}
+					if (data === "r" || data === "R") {
+						onToggleReader();
+						done();
+					}
+				},
+			};
+		},
+		{
+			overlay: true,
+			overlayOptions: {
+				anchor: "center",
+				width: 36,
+				margin: 1,
+			},
+		},
+	);
+
+}
+
 export default function piUiExtension(pi: ExtensionAPI): void {
 	patchLoaderWorkingSpinner();
 
@@ -512,6 +556,16 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			setGlobalBellEnabled(bellEnabled);
 			notify(ctx, `pi-ui bell ${bellEnabled ? "enabled" : "disabled"}`);
 			if (bellEnabled) ringBell(true);
+		},
+	});
+
+	pi.registerShortcut(Key.ctrl("x"), {
+		description: "Open pi-ui dialog",
+		handler: async (ctx) => {
+			ensureUiBellPatched(ctx);
+			await showHiDialog(ctx, () => {
+				pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+			});
 		},
 	});
 }
