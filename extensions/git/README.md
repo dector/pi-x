@@ -7,8 +7,11 @@ Extension that registers:
 
 Current support:
 
-- `status` only
-- Output style: porcelain passthrough from `git status --porcelain=v1 -b`
+- `status`
+  - Output style: porcelain passthrough from `git status --porcelain=v1 -b`
+- `log`
+  - Default output: `--oneline --max-count 30`
+  - Supported filters/flags: `-n/--max-count`, `--author`, `--since`, `--until`, `--grep`, `--no-merges`, `--decorate`, `--all`, and optional rev/range arguments
 
 ## Install
 
