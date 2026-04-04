@@ -38,6 +38,7 @@ export const READ_ONLY_BASH_COMMANDS = new Set([
 	"cut",
 	"tr",
 	"nl",
+	"true",
 ]);
 
 export const WRITE_BASH_COMMANDS = new Set([

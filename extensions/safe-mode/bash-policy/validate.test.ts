@@ -21,6 +21,18 @@ test("validateBashCommand: find write-like flags require confirmation", () => {
 	expect(decision.reasons[0]?.code).toBe("find-write-like-flag");
 });
 
+test("validateBashCommand: read-only chain with || true is auto-allowed", () => {
+	const profiles = ["reader", "smart"] as const;
+	for (const profile of profiles) {
+		const decision = validateBashCommand({
+			command: 'ls -la | rg -n "plan.md|PLAN.md" || true',
+			profile,
+		});
+		expect(decision.action).toBe("allow");
+		expect(decision.reasons[0]?.code).toBe("read-only-command");
+	}
+});
+
 test("validateBashCommand: reader and smart profiles currently match", () => {
 	const corpus = [
 		"ls -la",
