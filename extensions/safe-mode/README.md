@@ -38,6 +38,27 @@ Status bar indicator:
 - non-paranoid + `outerAccess=true`: `[SMART!]`, `[READER!]`, `[YOLO!]`
 - paranoid always: `[PARANOID]`
 
+## Read-only `git` tool auto-allow
+
+`safe-mode` applies an explicit read-only allowlist for the `git` tool.
+
+- In `reader`, `smart`, and `yolo`: recognized read-only `git` calls are auto-allowed.
+- In `paranoid`: all `git` calls still require approval.
+- Unknown, malformed, or non-read-only `git` forms require approval (except in `yolo`, which allows any in-scope operation).
+
+Currently auto-allowed read-only `git` subtools:
+
+- `status`, `log`, `diff`, `show`, `blame`, `grep`, `shortlog`
+- `rev-parse`, `rev-list`, `merge-base`, `describe`, `name-rev`, `symbolic-ref`, `show-ref`, `for-each-ref`
+- `ls-files`, `ls-tree`, `cat-file`, `check-ignore`
+- list-only forms of `branch`, `tag`, `remote`, and viewing forms of `reflog`
+- read-only `config` forms (`--get`, `--get-all`, `--list`, optional `--show-origin` / `--show-scope`)
+- `count-objects`, `fsck`, `verify-commit`, `verify-tag`
+
+Notes:
+- allowlisting is conservative and validator-based for ambiguous subtools (`branch`, `tag`, `remote`, `config`, `diff`, `reflog`)
+- default is deny when not explicitly recognized as read-only
+
 ## Auto-approval matrix
 
 Legend: ✅ auto-allow, ❓ asks for approval.

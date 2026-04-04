@@ -27,6 +27,55 @@ export interface BashCommandType {
 	isPlainCommand: boolean;
 }
 
+export interface GitToolClassification {
+	recognized: boolean;
+	readOnly: boolean;
+	subtool?: string;
+	summary: string;
+}
+
+type GitSubtoolValidator = (argv: string[]) => boolean;
+
+const GIT_READ_ONLY_SUBTOOLS: ReadonlySet<string> = new Set([
+	"status",
+	"log",
+	"diff",
+	"show",
+	"blame",
+	"grep",
+	"shortlog",
+	"rev-parse",
+	"rev-list",
+	"merge-base",
+	"describe",
+	"name-rev",
+	"symbolic-ref",
+	"show-ref",
+	"for-each-ref",
+	"ls-files",
+	"ls-tree",
+	"cat-file",
+	"check-ignore",
+	"branch",
+	"tag",
+	"remote",
+	"reflog",
+	"config",
+	"count-objects",
+	"fsck",
+	"verify-commit",
+	"verify-tag",
+]);
+
+const GIT_READ_ONLY_VALIDATORS: Record<string, GitSubtoolValidator> = {
+	branch: isReadOnlyGitBranchArgs,
+	tag: isReadOnlyGitTagArgs,
+	remote: isReadOnlyGitRemoteArgs,
+	config: isReadOnlyGitConfigArgs,
+	diff: isReadOnlyGitDiffArgs,
+	reflog: isReadOnlyGitReflogArgs,
+};
+
 export function isSafeMode(value: unknown): value is SafeMode {
 	return typeof value === "string" && (SAFE_MODES as readonly string[]).includes(value);
 }
@@ -42,10 +91,276 @@ export function cycleSafeMode(current: SafeMode): SafeMode {
 	return SAFE_MODES[(index + 1) % SAFE_MODES.length]!;
 }
 
+export function normalizeGitToolArgs(input: Record<string, unknown>): string[] | undefined {
+	const rawArgs = input.args;
+	if (rawArgs == null) return [];
+	if (!Array.isArray(rawArgs)) return undefined;
+
+	const normalized: string[] = [];
+	for (const arg of rawArgs) {
+		if (typeof arg !== "string") return undefined;
+		const trimmed = arg.trim();
+		if (trimmed.length === 0) return undefined;
+		if (trimmed.includes("\0") || trimmed.includes("\n") || trimmed.includes("\r")) return undefined;
+		normalized.push(trimmed);
+	}
+
+	return normalized;
+}
+
+export function classifyGitToolCall(input: Record<string, unknown>): GitToolClassification {
+	const argv = normalizeGitToolArgs(input);
+	if (!argv) {
+		return {
+			recognized: false,
+			readOnly: false,
+			summary: "git",
+		};
+	}
+
+	if (argv.length === 0) {
+		return {
+			recognized: false,
+			readOnly: false,
+			summary: "git",
+		};
+	}
+
+	const subtool = argv[0]!;
+	const summary = formatGitToolSummary(argv);
+	if (subtool.startsWith("-")) {
+		return {
+			recognized: false,
+			readOnly: false,
+			subtool,
+			summary,
+		};
+	}
+
+	if (!GIT_READ_ONLY_SUBTOOLS.has(subtool)) {
+		return {
+			recognized: false,
+			readOnly: false,
+			subtool,
+			summary,
+		};
+	}
+
+	const validator = GIT_READ_ONLY_VALIDATORS[subtool] ?? (() => true);
+	const readOnly = validator(argv);
+	return {
+		recognized: true,
+		readOnly,
+		subtool,
+		summary: readOnly ? `${summary} (read-only)` : summary,
+	};
+}
+
+function formatGitToolSummary(argv: string[]): string {
+	if (argv.length === 0) return "git";
+	return `git: ${argv.join(" ")}`;
+}
+
+function isReadOnlyGitDiffArgs(argv: string[]): boolean {
+	for (let i = 1; i < argv.length; i += 1) {
+		const token = argv[i]!;
+		if (token === "-o" || token === "--output" || token.startsWith("--output=")) return false;
+	}
+	return true;
+}
+
+function isReadOnlyGitBranchArgs(argv: string[]): boolean {
+	if (argv.length === 1) return true;
+	const disallowed = new Set([
+		"-d",
+		"-D",
+		"--delete",
+		"-m",
+		"-M",
+		"--move",
+		"-c",
+		"-C",
+		"--copy",
+		"--set-upstream-to",
+		"--unset-upstream",
+		"--edit-description",
+		"--create-reflog",
+		"--track",
+		"--no-track",
+		"-u",
+	]);
+	const allowedFlags = new Set([
+		"--list",
+		"-l",
+		"--all",
+		"-a",
+		"--remotes",
+		"-r",
+		"--verbose",
+		"-v",
+		"--column",
+		"--ignore-case",
+	]);
+	const valueFlags = new Set(["--sort", "--contains", "--no-contains", "--merged", "--no-merged", "--format"]);
+	let hasListMode = false;
+	let hasPatternArg = false;
+
+	for (let i = 1; i < argv.length; i += 1) {
+		const token = argv[i]!;
+		if (disallowed.has(token)) return false;
+		if (token === "--list" || token === "-l") hasListMode = true;
+
+		if (valueFlags.has(token)) {
+			const next = argv[i + 1];
+			if (!next || next.startsWith("-")) return false;
+			i += 1;
+			continue;
+		}
+
+		if ([...valueFlags].some((flag) => token.startsWith(`${flag}=`))) continue;
+		if (allowedFlags.has(token)) continue;
+		if (token === "--") {
+			hasPatternArg = i < argv.length - 1;
+			break;
+		}
+		if (token.startsWith("-")) return false;
+		hasPatternArg = true;
+	}
+
+	if (hasPatternArg && !hasListMode) return false;
+	return true;
+}
+
+function isReadOnlyGitTagArgs(argv: string[]): boolean {
+	if (argv.length === 1) return true;
+	const disallowed = new Set([
+		"-d",
+		"--delete",
+		"-a",
+		"--annotate",
+		"-s",
+		"--sign",
+		"-u",
+		"--local-user",
+		"-m",
+		"--message",
+		"-F",
+		"--file",
+		"-f",
+		"--force",
+		"--create-reflog",
+		"--edit",
+	]);
+	const allowedFlags = new Set(["-l", "--list", "-n", "--column", "--ignore-case", "--contains", "--no-contains"]);
+	let hasListMode = false;
+	let hasPatternArg = false;
+
+	for (let i = 1; i < argv.length; i += 1) {
+		const token = argv[i]!;
+		if (disallowed.has(token)) return false;
+		if (token === "-l" || token === "--list") hasListMode = true;
+		if (token === "--") {
+			hasPatternArg = i < argv.length - 1;
+			break;
+		}
+		if (allowedFlags.has(token)) continue;
+		if (token.startsWith("--contains=") || token.startsWith("--no-contains=")) continue;
+		if (token === "-n") {
+			const next = argv[i + 1];
+			if (!next || next.startsWith("-")) return false;
+			i += 1;
+			continue;
+		}
+		if (token.startsWith("-n")) continue;
+		if (token.startsWith("-")) return false;
+		hasPatternArg = true;
+	}
+
+	if (hasPatternArg && !hasListMode) return false;
+	return true;
+}
+
+function isReadOnlyGitRemoteArgs(argv: string[]): boolean {
+	if (argv.length === 1) return true;
+	if (argv.length === 2 && (argv[1] === "-v" || argv[1] === "--verbose")) return true;
+	return false;
+}
+
+function isReadOnlyGitReflogArgs(argv: string[]): boolean {
+	if (argv.length === 1) return true;
+	const disallowedSubtools = new Set(["expire", "delete", "drop", "write"]);
+	for (let i = 1; i < argv.length; i += 1) {
+		const token = argv[i]!;
+		if (disallowedSubtools.has(token)) return false;
+		if (token === "--") break;
+	}
+	return true;
+}
+
+function isReadOnlyGitConfigArgs(argv: string[]): boolean {
+	if (argv.length === 1) return false;
+	const readFlags = new Set(["--get", "--get-all", "--list"]);
+	const optionalFlags = new Set([
+		"--show-origin",
+		"--show-scope",
+		"--name-only",
+		"-z",
+		"--null",
+		"--includes",
+		"--no-includes",
+		"--fixed-value",
+	]);
+	const disallowed = new Set([
+		"--add",
+		"--replace-all",
+		"--unset",
+		"--unset-all",
+		"--remove-section",
+		"--rename-section",
+		"--global",
+		"--system",
+		"--local",
+		"--worktree",
+		"--blob",
+		"--file",
+		"-f",
+		"--edit",
+		"-e",
+	]);
+
+	let hasReadSelector = false;
+	for (let i = 1; i < argv.length; i += 1) {
+		const token = argv[i]!;
+		if (disallowed.has(token)) return false;
+		if (token.startsWith("--blob=") || token.startsWith("--file=")) return false;
+		if (readFlags.has(token)) {
+			hasReadSelector = true;
+			continue;
+		}
+		if (optionalFlags.has(token)) continue;
+		if (token === "--type") {
+			const next = argv[i + 1];
+			if (!next || next.startsWith("-")) return false;
+			i += 1;
+			continue;
+		}
+		if (token.startsWith("--type=")) continue;
+		if (token.startsWith("-")) return false;
+	}
+
+	return hasReadSelector;
+}
+
 export function describeToolCall(toolName: string, input: Record<string, unknown>): string {
 	if (toolName === "bash") {
 		const command = typeof input.command === "string" ? input.command.trim() : "";
 		return command.length > 0 ? `bash: ${command}` : "bash";
+	}
+
+	if (toolName === "git") {
+		const argv = normalizeGitToolArgs(input);
+		if (!argv || argv.length === 0) return "git";
+		return formatGitToolSummary(argv);
 	}
 
 	if (toolName === "read" || toolName === "write" || toolName === "edit" || toolName === "ls") {
@@ -70,7 +385,8 @@ export function decideToolCall(args: {
 	trustedReadRoots?: string[];
 }): ToolDecision {
 	const { mode, toolName, input, projectRoot, outerAccess, trustedReadRoots } = args;
-	const summary = describeToolCall(toolName, input);
+	const gitClassification = toolName === "git" ? classifyGitToolCall(input) : undefined;
+	const summary = gitClassification?.summary ?? describeToolCall(toolName, input);
 
 	if (mode === "paranoid") {
 		return {
@@ -88,6 +404,10 @@ export function decideToolCall(args: {
 				summary,
 			};
 		}
+	}
+
+	if (toolName === "git" && gitClassification?.readOnly) {
+		return { action: "allow", summary };
 	}
 
 	if (mode === "yolo") {
@@ -137,6 +457,7 @@ export function decideToolCall(args: {
 
 function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode: SafeMode): boolean {
 	if (READ_ONLY_TOOLS.has(toolName)) return true;
+	if (toolName === "git") return classifyGitToolCall(input).readOnly;
 	if (toolName !== "bash") return false;
 
 	const command = typeof input.command === "string" ? input.command : "";

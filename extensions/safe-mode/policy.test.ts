@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import {
+	classifyGitToolCall,
 	decideToolCall,
 	describeToolCall,
 	getBashCommandType,
+	normalizeGitToolArgs,
 	type BashCommandType,
 	type SafeMode,
 } from "./policy.ts";
@@ -36,6 +38,88 @@ function decide(
 ) {
 	return decideToolCall({ mode, toolName, input, projectRoot, outerAccess, trustedReadRoots });
 }
+
+test("git classifier: normalize + classify", () => {
+	expect(normalizeGitToolArgs({})).toEqual([]);
+	expect(normalizeGitToolArgs({ args: [" status "] })).toEqual(["status"]);
+	expect(normalizeGitToolArgs({ args: "status" })).toBeUndefined();
+	expect(normalizeGitToolArgs({ args: ["status", ""] })).toBeUndefined();
+	expect(normalizeGitToolArgs({ args: ["status\nlog"] })).toBeUndefined();
+
+	expect(classifyGitToolCall({ args: ["status"] })).toEqual({
+		recognized: true,
+		readOnly: true,
+		subtool: "status",
+		summary: "git: status (read-only)",
+	});
+	expect(classifyGitToolCall({ args: ["branch", "-d", "topic"] }).readOnly).toBe(false);
+	expect(classifyGitToolCall({ args: ["push"] }).recognized).toBe(false);
+	expect(classifyGitToolCall({ args: "status" }).recognized).toBe(false);
+});
+
+test("decideToolCall: git read-only auto-allow matrix", () => {
+	const readOnlyCases: string[][] = [
+		["status"],
+		["log", "--oneline", "-n", "20"],
+		["diff", "--", "src/policy.ts"],
+		["show", "HEAD~1"],
+		["blame", "policy.ts"],
+		["grep", "safe-mode"],
+		["shortlog"],
+		["rev-parse", "HEAD"],
+		["rev-list", "--max-count=5", "HEAD"],
+		["merge-base", "HEAD", "origin/main"],
+		["describe", "--tags"],
+		["name-rev", "HEAD"],
+		["symbolic-ref", "HEAD"],
+		["show-ref"],
+		["for-each-ref", "--format=%(refname)"],
+		["ls-files"],
+		["ls-tree", "HEAD"],
+		["cat-file", "-p", "HEAD^{tree}"],
+		["check-ignore", "README.md"],
+		["branch", "--list", "feature/*"],
+		["tag", "--list", "v*"],
+		["remote", "-v"],
+		["reflog", "show", "HEAD"],
+		["config", "--list", "--show-origin"],
+		["count-objects"],
+		["fsck"],
+		["verify-commit", "HEAD"],
+		["verify-tag", "v1.0.0"],
+	];
+
+	for (const argv of readOnlyCases) {
+		expect(decide("reader", "git", { args: argv }).action).toBe("allow");
+		expect(decide("smart", "git", { args: argv }).action).toBe("allow");
+		expect(decide("yolo", "git", { args: argv }).action).toBe("allow");
+		expect(decide("paranoid", "git", { args: argv }).action).toBe("confirm");
+	}
+});
+
+test("decideToolCall: git malformed/unknown/non-read-only requires confirm", () => {
+	const confirmCases: Array<Record<string, unknown>> = [
+		{ args: ["push"] },
+		{ args: ["commit", "-m", "msg"] },
+		{ args: ["branch", "topic"] },
+		{ args: ["branch", "-d", "topic"] },
+		{ args: ["tag", "v1.2.3"] },
+		{ args: ["remote", "add", "origin", "https://example.com/repo.git"] },
+		{ args: ["config", "user.name"] },
+		{ args: ["diff", "--output=patch.diff"] },
+		{ args: "status" },
+		{ args: ["status", ""] },
+		{ args: ["--version"] },
+	];
+
+	for (const input of confirmCases) {
+		expect(decide("reader", "git", input).action).toBe("confirm");
+		expect(decide("smart", "git", input).action).toBe("confirm");
+	}
+	for (const input of confirmCases) {
+		expect(decide("yolo", "git", input).action).toBe("allow");
+	}
+});
 
 test("getBashCommandType: empty/invalid input", () => {
 	expectBashType("", { hasReads: false, hasWrites: false, isPlainCommand: false });
@@ -243,6 +327,7 @@ test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "bash", { command: "cd .." }).action).toBe("confirm");
 	expect(decide("reader", "bash", { command: "cd .." }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "grep rm README.md" }).action).toBe("allow");
+	expect(decide("reader", "bash", { command: "nl README.md" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git ls-files" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "git shortlog" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "command -v ls" }).action).toBe("allow");
@@ -271,6 +356,7 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "find . -delete" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "ls -la" }).action).toBe("allow");
+	expect(decide("smart", "bash", { command: "nl README.md" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "ls | grep src" }).action).toBe("allow");
 });
 
@@ -327,6 +413,13 @@ test("decideToolCall: paranoid/yolo sanity", () => {
 	expect(decide("yolo", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("allow");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }).action).toBe("confirm");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }, PROJECT_ROOT, true).action).toBe("allow");
+});
+
+test("describeToolCall: git summaries", () => {
+	expect(describeToolCall("git", {})).toBe("git");
+	expect(describeToolCall("git", { args: ["status"] })).toBe("git: status");
+	expect(describeToolCall("git", { args: ["log", "--oneline", "-n", "20"] })).toBe("git: log --oneline -n 20");
+	expect(describeToolCall("git", { args: ["branch", "--list"] })).toBe("git: branch --list");
 });
 
 test("path normalization + project-root boundaries", () => {
