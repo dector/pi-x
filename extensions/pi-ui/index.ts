@@ -11,6 +11,7 @@ const GLOBAL_BELL_LAST_RING_MS_KEY = "__pi_ui_bell_last_ring_ms";
 const UI_INPUT_PATCH_FLAG = "__pi_ui_bell_ui_input_patch_v1";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
+const SAFE_MODE_TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
 const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
 
 const RESET_FG = "\x1b[39m";
@@ -339,13 +340,13 @@ function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
 
 async function showHiDialog(
 	ctx: ExtensionContext,
-	handlers: { onToggleReader: () => void; onSetYoloPlus: () => void },
+	handlers: { onToggleReader: () => void; onToggleOuter: () => void; onSetYoloPlus: () => void },
 ): Promise<void> {
 	if (!ctx.hasUI) return;
 
 	await ctx.ui.custom<void>(
 		(_tui, _theme, _kb, done) => {
-			const { onToggleReader, onSetYoloPlus } = handlers;
+			const { onToggleReader, onToggleOuter, onSetYoloPlus } = handlers;
 			return {
 				render(width: number) {
 					if (width <= 2) return [];
@@ -353,6 +354,7 @@ async function showHiDialog(
 					return [
 						`╔${"═".repeat(innerWidth)}╗`,
 						`║${centerLine(innerWidth, "r - toggle reader mode")}║`,
+						`║${centerLine(innerWidth, "+ - toggle outer mode")}║`,
 						`║${centerLine(innerWidth, "! - YOLO+ mode")}║`,
 						`║${" ".repeat(innerWidth)}║`,
 						`║${centerLine(innerWidth, "Esc to close")}║`,
@@ -367,6 +369,11 @@ async function showHiDialog(
 					}
 					if (data === "r" || data === "R") {
 						onToggleReader();
+						done();
+						return;
+					}
+					if (data === "+") {
+						onToggleOuter();
 						done();
 						return;
 					}
@@ -577,6 +584,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			await showHiDialog(ctx, {
 				onToggleReader: () => {
 					pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+				},
+				onToggleOuter: () => {
+					pi.events.emit(SAFE_MODE_TOGGLE_OUTER_EVENT, { ctx });
 				},
 				onSetYoloPlus: () => {
 					pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });

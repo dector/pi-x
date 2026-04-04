@@ -32,6 +32,7 @@ type AllowlistEntry = {
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
+const TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
 const SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
@@ -1012,6 +1013,13 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
 		if (!maybeCtx) return;
 		toggleReaderModeShortcut(maybeCtx);
+	});
+
+	pi.events.on(TOGGLE_OUTER_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!maybeCtx) return;
+		setOuterAccess(!outerAccess, maybeCtx);
 	});
 
 	pi.events.on(SET_YOLO_PLUS_EVENT, (payload) => {
