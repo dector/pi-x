@@ -16,6 +16,26 @@ import { load as loadHtml } from "cheerio";
 
 const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;
 const WEB_TO_MD_BASE_DIR = "/tmp/pi-http";
+const DEFAULT_SPILL_MODE = "in_memory";
+const MEMORYFS_DEFAULT_READ_OFFSET = 1;
+const MEMORYFS_DEFAULT_READ_LIMIT = 200;
+const MEMORYFS_MAX_READ_LIMIT = 2000;
+const MEMORYFS_MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+const MEMORYFS_ENTRY_TTL_MS = 1000 * 60 * 60;
+
+type SpillMode = "in_memory" | "to_file";
+
+type MemoryFsEntry = {
+	id: string;
+	content: string;
+	bytes: number;
+	createdAt: number;
+	lastAccessedAt: number;
+};
+
+const memoryFsEntries = new Map<string, MemoryFsEntry>();
+let memoryFsTotalBytes = 0;
+let memoryFsCounter = 0;
 
 const HttpToolParams = Type.Object({
 	url: Type.Optional(Type.String({ description: "Request URL (required unless curlArgs contains a URL)." })),
@@ -44,6 +64,7 @@ const HttpToolParams = Type.Object({
 	insecure: Type.Optional(Type.Boolean({ description: "curl-compatible flag. In fetch mode this is not supported." })),
 	failOnHttpError: Type.Optional(Type.Boolean({ description: "If true, returns error result metadata for HTTP >= 400." })),
 	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
+	spillMode: Type.Optional(Type.String({ description: "Where oversized tool output is stored: 'in_memory' (default) or 'to_file'." })),
 	outputFile: Type.Optional(Type.String({ description: "Write response body to file path (relative to cwd allowed)." })),
 	curlArgs: Type.Optional(
 		Type.Array(Type.String({
@@ -79,6 +100,7 @@ const HttpMarkdownToolParams = Type.Object({
 	insecure: Type.Optional(Type.Boolean({ description: "curl-compatible flag. In fetch mode this is not supported." })),
 	failOnHttpError: Type.Optional(Type.Boolean({ description: "If true, returns error result metadata for HTTP >= 400." })),
 	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds." })),
+	spillMode: Type.Optional(Type.String({ description: "Where oversized tool output is stored: 'in_memory' (default) or 'to_file'." })),
 	webToMdMaxBytes: Type.Optional(Type.Number({ description: `Max Markdown bytes to return inline. Default: ${DEFAULT_WEB_TO_MD_MAX_BYTES}.` })),
 	curlArgs: Type.Optional(
 		Type.Array(Type.String({
@@ -100,7 +122,14 @@ const WebSearchToolParams = Type.Object({
 		Type.Number({ description: `Approximate number of results per page. Default: ${DEFAULT_WEB_SEARCH_RESULTS_PER_PAGE}.` }),
 	),
 	timeoutSec: Type.Optional(Type.Number({ description: "Timeout in seconds for each page fetch." })),
+	spillMode: Type.Optional(Type.String({ description: "Where oversized tool output is stored: 'in_memory' (default) or 'to_file'." })),
 	followRedirects: Type.Optional(Type.Boolean({ description: "Follow redirects when requesting DuckDuckGo pages. Default: true." })),
+});
+
+const ReadMemoryFsToolParams = Type.Object({
+	id: Type.String({ description: "MemoryFS entry ID returned by http/http_md/web_search." }),
+	offset: Type.Optional(Type.Number({ description: `Line number to start reading from (1-indexed). Default: ${MEMORYFS_DEFAULT_READ_OFFSET}.` })),
+	limit: Type.Optional(Type.Number({ description: `Maximum lines to read. Default: ${MEMORYFS_DEFAULT_READ_LIMIT}, max ${MEMORYFS_MAX_READ_LIMIT}.` })),
 });
 
 type HttpBaseParamsInput = {
@@ -118,6 +147,7 @@ type HttpBaseParamsInput = {
 	insecure?: boolean;
 	failOnHttpError?: boolean;
 	timeoutSec?: number;
+	spillMode?: string;
 	curlArgs?: string[];
 };
 
@@ -135,7 +165,14 @@ type WebSearchToolParamsInput = {
 	pages?: number;
 	resultsPerPage?: number;
 	timeoutSec?: number;
+	spillMode?: string;
 	followRedirects?: boolean;
+};
+
+type ReadMemoryFsToolParamsInput = {
+	id: string;
+	offset?: number;
+	limit?: number;
 };
 
 type WebSearchResultItem = {
@@ -177,8 +214,10 @@ interface HttpToolDetails {
 	httpError: boolean;
 	commandLike?: string;
 	curlArgs?: string[];
+	spillMode: SpillMode;
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	fullOutputMemoryId?: string;
 }
 
 interface HttpMarkdownToolDetails extends HttpToolDetails {
@@ -186,6 +225,7 @@ interface HttpMarkdownToolDetails extends HttpToolDetails {
 	webToMdMaxBytes: number;
 	webToMdOutputBytes?: number;
 	webToMdFilePath?: string;
+	webToMdMemoryId?: string;
 }
 
 interface WebSearchToolDetails {
@@ -196,9 +236,20 @@ interface WebSearchToolDetails {
 	resultsPerPage: number;
 	timeoutSec?: number;
 	followRedirects: boolean;
+	spillMode: SpillMode;
 	totalResults: number;
 	warnings?: string[];
 	errorsByPage?: Array<{ page: number; error: string }>;
+}
+
+interface ReadMemoryFsToolDetails {
+	id: string;
+	offset: number;
+	limit: number;
+	totalLines: number;
+	totalBytes: number;
+	returnedLines: number;
+	hasMore: boolean;
 }
 
 function shellQuote(arg: string): string {
@@ -254,6 +305,71 @@ function normalizePositiveInt(value: number | undefined, fallback: number, field
 	return Math.floor(value);
 }
 
+function normalizeSpillMode(value?: string): SpillMode {
+	if (value === undefined) return DEFAULT_SPILL_MODE;
+	if (value === "in_memory" || value === "to_file") return value;
+	throw new Error("'spillMode' must be either 'in_memory' or 'to_file'.");
+}
+
+function clearMemoryFs(): void {
+	memoryFsEntries.clear();
+	memoryFsTotalBytes = 0;
+}
+
+function pruneMemoryFs(): void {
+	const now = Date.now();
+	for (const [id, entry] of memoryFsEntries.entries()) {
+		if (now - entry.createdAt > MEMORYFS_ENTRY_TTL_MS) {
+			memoryFsEntries.delete(id);
+			memoryFsTotalBytes -= entry.bytes;
+		}
+	}
+
+	if (memoryFsTotalBytes <= MEMORYFS_MAX_TOTAL_BYTES) return;
+
+	const oldestFirst = [...memoryFsEntries.values()].sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
+	for (const entry of oldestFirst) {
+		if (memoryFsTotalBytes <= MEMORYFS_MAX_TOTAL_BYTES) break;
+		memoryFsEntries.delete(entry.id);
+		memoryFsTotalBytes -= entry.bytes;
+	}
+}
+
+function saveToMemoryFs(content: string): { id: string; bytes: number } {
+	pruneMemoryFs();
+	const bytes = Buffer.byteLength(content, "utf8");
+	const id = `mem-${Date.now().toString(36)}-${(++memoryFsCounter).toString(36)}`;
+	const now = Date.now();
+	memoryFsEntries.set(id, {
+		id,
+		content,
+		bytes,
+		createdAt: now,
+		lastAccessedAt: now,
+	});
+	memoryFsTotalBytes += bytes;
+	return { id, bytes };
+}
+
+function getMemoryFsEntry(id: string): MemoryFsEntry | undefined {
+	pruneMemoryFs();
+	const entry = memoryFsEntries.get(id);
+	if (!entry) return undefined;
+	entry.lastAccessedAt = Date.now();
+	return entry;
+}
+
+function normalizeReadMemoryFsParams(input: ReadMemoryFsToolParamsInput) {
+	const id = (input.id ?? "").trim();
+	if (!id) throw new Error("'id' is required.");
+
+	const offset = normalizePositiveInt(input.offset, MEMORYFS_DEFAULT_READ_OFFSET, "offset");
+	const requestedLimit = normalizePositiveInt(input.limit, MEMORYFS_DEFAULT_READ_LIMIT, "limit");
+	const limit = Math.min(requestedLimit, MEMORYFS_MAX_READ_LIMIT);
+
+	return { id, offset, limit };
+}
+
 function normalizeWebSearchParams(input: WebSearchToolParamsInput) {
 	const query = (input.query ?? "").trim();
 	if (!query) throw new Error("'query' is required.");
@@ -276,6 +392,7 @@ function normalizeWebSearchParams(input: WebSearchToolParamsInput) {
 		pages,
 		resultsPerPage,
 		timeoutSec: input.timeoutSec,
+		spillMode: normalizeSpillMode(input.spillMode),
 		followRedirects: input.followRedirects ?? true,
 	};
 }
@@ -725,15 +842,24 @@ async function convertHtmlToMarkdown(html: string): Promise<string> {
 	});
 }
 
-async function spillMarkdownToFile(markdown: string): Promise<{ filePath: string; bytes: number }> {
+async function spillMarkdown(markdown: string, spillMode: SpillMode): Promise<{ bytes: number; filePath?: string; memoryId?: string }> {
+	const bytes = Buffer.byteLength(markdown, "utf8");
+	if (spillMode === "in_memory") {
+		const stored = saveToMemoryFs(markdown);
+		return { bytes, memoryId: stored.id };
+	}
+
 	await mkdir(WEB_TO_MD_BASE_DIR, { recursive: true });
 	const dir = await mkdtemp(join(WEB_TO_MD_BASE_DIR, "web-to-md-"));
 	const filePath = join(dir, "result.md");
 	await writeFile(filePath, markdown, "utf8");
-	return { filePath, bytes: Buffer.byteLength(markdown, "utf8") };
+	return { bytes, filePath };
 }
 
-async function truncateWithSpill(content: string): Promise<{ text: string; truncation?: TruncationResult; fullOutputPath?: string }> {
+async function truncateWithSpill(
+	content: string,
+	spillMode: SpillMode,
+): Promise<{ text: string; truncation?: TruncationResult; fullOutputPath?: string; fullOutputMemoryId?: string }> {
 	const truncation = truncateHead(content, {
 		maxBytes: DEFAULT_MAX_BYTES,
 		maxLines: DEFAULT_MAX_LINES,
@@ -741,16 +867,27 @@ async function truncateWithSpill(content: string): Promise<{ text: string; trunc
 
 	if (!truncation.truncated) return { text: truncation.content };
 
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-http-"));
-	const fullOutputPath = join(tempDir, "output.txt");
-	await writeFile(fullOutputPath, content, "utf8");
+	let fullOutputPath: string | undefined;
+	let fullOutputMemoryId: string | undefined;
+	if (spillMode === "in_memory") {
+		fullOutputMemoryId = saveToMemoryFs(content).id;
+	} else {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-http-"));
+		fullOutputPath = join(tempDir, "output.txt");
+		await writeFile(fullOutputPath, content, "utf8");
+	}
 
 	let text = truncation.content;
 	text += `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`;
 	text += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
-	text += ` Full output saved to: ${fullOutputPath}]`;
+	if (fullOutputMemoryId) {
+		text += ` Full output saved to memoryfs: ${fullOutputMemoryId} (use read_memoryfs).`;
+	} else if (fullOutputPath) {
+		text += ` Full output saved to: ${fullOutputPath}.`;
+	}
+	text += "]";
 
-	return { text, truncation, fullOutputPath };
+	return { text, truncation, fullOutputPath, fullOutputMemoryId };
 }
 
 function buildCommandLike(request: NormalizedRequest): string {
@@ -873,6 +1010,7 @@ function normalizeRequest(
 }
 
 async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?: AbortSignal) {
+	const spillMode = normalizeSpillMode(input.spillMode);
 	const request = normalizeRequest(input, cwd, { allowOutputFile: true });
 	const result = await executeRequest(request, signal);
 	const httpError = result.statusCode >= 400;
@@ -899,7 +1037,7 @@ async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?:
 		output += "\n\n[failOnHttpError enabled: request returned HTTP error status]";
 	}
 
-	const truncated = await truncateWithSpill(output);
+	const truncated = await truncateWithSpill(output, spillMode);
 	const details: HttpToolDetails = {
 		mode: request.mode,
 		method: request.method,
@@ -916,8 +1054,10 @@ async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?:
 		httpError,
 		commandLike: buildCommandLike(request),
 		curlArgs: request.rawArgs,
+		spillMode,
 		truncation: truncated.truncation,
 		fullOutputPath: truncated.fullOutputPath,
+		fullOutputMemoryId: truncated.fullOutputMemoryId,
 	};
 
 	return {
@@ -927,6 +1067,7 @@ async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?:
 }
 
 async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: string, signal?: AbortSignal) {
+	const spillMode = normalizeSpillMode(input.spillMode);
 	const request = normalizeRequest(input, cwd, { allowOutputFile: false });
 	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
 	await ensurePandocInstalled();
@@ -949,14 +1090,20 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 
 	let webToMdInline: boolean;
 	let webToMdFilePath: string | undefined;
+	let webToMdMemoryId: string | undefined;
 	if (webToMdOutputBytes <= webToMdMaxBytes) {
 		webToMdInline = true;
 		output += `\n${markdown}`;
 	} else {
 		webToMdInline = false;
-		const spilled = await spillMarkdownToFile(markdown);
+		const spilled = await spillMarkdown(markdown, spillMode);
 		webToMdFilePath = spilled.filePath;
-		output += `\n[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
+		webToMdMemoryId = spilled.memoryId;
+		if (spilled.memoryId) {
+			output += `\n[webToMd output saved to memoryfs: ${spilled.memoryId} (${spilled.bytes} bytes, use read_memoryfs)]`;
+		} else if (spilled.filePath) {
+			output += `\n[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
+		}
 	}
 
 	if (request.warnings.length > 0) {
@@ -967,7 +1114,7 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 		output += "\n\n[failOnHttpError enabled: request returned HTTP error status]";
 	}
 
-	const truncated = await truncateWithSpill(output);
+	const truncated = await truncateWithSpill(output, spillMode);
 	const details: HttpMarkdownToolDetails = {
 		mode: request.mode,
 		method: request.method,
@@ -983,12 +1130,15 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 		httpError,
 		commandLike: buildCommandLike(request),
 		curlArgs: request.rawArgs,
+		spillMode,
 		truncation: truncated.truncation,
 		fullOutputPath: truncated.fullOutputPath,
+		fullOutputMemoryId: truncated.fullOutputMemoryId,
 		webToMdInline,
 		webToMdMaxBytes,
 		webToMdOutputBytes,
 		webToMdFilePath,
+		webToMdMemoryId,
 	};
 
 	return {
@@ -1062,7 +1212,7 @@ async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: Ab
 	};
 
 	const output = JSON.stringify(payload, null, 2);
-	const truncated = await truncateWithSpill(output);
+	const truncated = await truncateWithSpill(output, normalized.spillMode);
 	const details: WebSearchToolDetails = {
 		query: normalized.query,
 		page: normalized.page,
@@ -1071,6 +1221,7 @@ async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: Ab
 		resultsPerPage: normalized.resultsPerPage,
 		timeoutSec: normalized.timeoutSec,
 		followRedirects: normalized.followRedirects,
+		spillMode: normalized.spillMode,
 		totalResults: results.length,
 		warnings: warnings.length > 0 ? warnings : undefined,
 		errorsByPage: errorsByPage.length > 0 ? errorsByPage : undefined,
@@ -1082,11 +1233,53 @@ async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: Ab
 			...details,
 			truncation: truncated.truncation,
 			fullOutputPath: truncated.fullOutputPath,
+			fullOutputMemoryId: truncated.fullOutputMemoryId,
 		},
 	};
 }
 
+async function executeReadMemoryFsTool(input: ReadMemoryFsToolParamsInput) {
+	const normalized = normalizeReadMemoryFsParams(input);
+	const entry = getMemoryFsEntry(normalized.id);
+	if (!entry) {
+		throw new Error(`MemoryFS entry not found or expired: ${normalized.id}`);
+	}
+
+	const allLines = entry.content.split("\n");
+	const startIndex = Math.max(0, normalized.offset - 1);
+	const endIndex = Math.min(allLines.length, startIndex + normalized.limit);
+	const selected = allLines.slice(startIndex, endIndex);
+	const hasMore = endIndex < allLines.length;
+
+	let output = selected.join("\n");
+	if (hasMore) {
+		output += `\n\n[read_memoryfs: showing lines ${startIndex + 1}-${endIndex} of ${allLines.length}; use offset=${endIndex + 1} to continue]`;
+	}
+	if (!output) output = "(no output)";
+
+	const details: ReadMemoryFsToolDetails = {
+		id: entry.id,
+		offset: normalized.offset,
+		limit: normalized.limit,
+		totalLines: allLines.length,
+		totalBytes: entry.bytes,
+		returnedLines: selected.length,
+		hasMore,
+	};
+
+	return {
+		content: [{ type: "text" as const, text: output }],
+		details,
+	};
+}
+
 export default function httpExtension(pi: ExtensionAPI): void {
+	pi.on("session_before_switch", async (event) => {
+		if (event.reason === "new") {
+			clearMemoryFs();
+		}
+	});
+
 	pi.registerTool({
 		name: "http",
 		label: "HTTP",
@@ -1096,6 +1289,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use this tool for HTTP requests instead of spawning shell curl commands.",
 			"Use headers/headerLines to pass arbitrary custom headers.",
+			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
 			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
 		],
 		parameters: HttpToolParams,
@@ -1123,6 +1317,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use this tool when webpage-to-Markdown output is needed.",
 			"Use headers/headerLines to pass arbitrary custom headers.",
+			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
 			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
 		],
 		parameters: HttpMarkdownToolParams,
@@ -1151,6 +1346,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			"Use this tool when you need search results, not full webpage content.",
 			"Request more pages with 'pages' when broader coverage is needed.",
 			"Use http/http_md on returned URLs when full content is required.",
+			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
 		],
 		parameters: WebSearchToolParams,
 		renderCall(args, theme) {
@@ -1165,6 +1361,31 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 			return await executeWebSearchTool(params as WebSearchToolParamsInput, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "read_memoryfs",
+		label: "Read MemoryFS",
+		description: "Read overflow content stored in this extension's in-memory cache.",
+		promptSnippet: "Read large outputs saved in memory by http/http_md/web_search.",
+		promptGuidelines: [
+			"Use this tool with IDs returned by http/http_md/web_search when spillMode is 'in_memory'.",
+			"Use offset/limit to page through large content.",
+		],
+		parameters: ReadMemoryFsToolParams,
+		renderCall(args, theme) {
+			const input = args as ReadMemoryFsToolParamsInput;
+			const summary = `${input.id} (offset ${input.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
+			let text = theme.fg("toolTitle", `${theme.bold("read_memoryfs")} `);
+			text += theme.fg("muted", summary);
+			return new Text(text, 0, 0);
+		},
+		renderResult(result, state, theme) {
+			return renderToolResultPreview(result, state, theme);
+		},
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			return await executeReadMemoryFsTool(params as ReadMemoryFsToolParamsInput);
 		},
 	});
 }

@@ -1,10 +1,11 @@
 # http (pi extension)
 
-Adds three tools powered by **Node's native fetch API**:
+Adds four tools powered by **Node's native fetch API**:
 
 - `http` for regular HTTP requests
 - `http_md` for webpage → Markdown conversion (via local `pandoc`)
 - `web_search` for DuckDuckGo HTML search result extraction
+- `read_memoryfs` for reading overflow content saved in-memory
 
 ## Tools
 
@@ -27,6 +28,7 @@ HTTP client with:
 - `includeResponseHeaders` (default `true`)
 - `failOnHttpError`
 - `timeoutSec`
+- `spillMode` (`in_memory` default, or `to_file`)
 - `outputFile`
 - `curlArgs`
 
@@ -40,15 +42,15 @@ Fetches a webpage and converts HTML response to Markdown using:
 
 Same request fields as `http`, except no `outputFile`.
 
-Additional field:
+Additional fields:
 
 - `webToMdMaxBytes` (default `12000`): max Markdown bytes returned inline
+- `spillMode` (`in_memory` default, or `to_file`) for oversized output
 
-If converted Markdown exceeds `webToMdMaxBytes`, output is spilled to:
+If converted Markdown exceeds `webToMdMaxBytes`, output is spilled according to `spillMode`:
 
-- `/tmp/pi-http/web-to-md-*/result.md`
-
-and the tool returns a pointer message with the path.
+- `in_memory`: saved to memoryfs with an ID (read via `read_memoryfs`)
+- `to_file`: saved to `/tmp/pi-http/web-to-md-*/result.md`
 
 ### Validation notes
 
@@ -76,6 +78,7 @@ Returns only:
 - `pages` (default `1`, max `10`) — number of pages to fetch from `page`
 - `resultsPerPage` (default `30`) — used to compute page offsets
 - `timeoutSec` — per-page timeout
+- `spillMode` (`in_memory` default, or `to_file`) for oversized output
 - `followRedirects` (default `true`)
 
 ### Output
@@ -86,6 +89,16 @@ Returns JSON with:
 - merged `results` across requested pages
 - optional `warnings`
 - optional `errorsByPage` for partial failures
+
+## `read_memoryfs`
+
+Reads content previously spilled to in-memory storage.
+
+### Fields
+
+- `id` (required): memoryfs entry ID returned by `http`/`http_md`/`web_search`
+- `offset` (default `1`): line number to start from (1-indexed)
+- `limit` (default `200`, max `2000`): maximum lines returned
 
 ## curl-compatible mode
 
@@ -107,7 +120,12 @@ Unsupported curl flags fail with explicit errors.
 ## Notes
 
 - Tool rows use collapsed preview mode by default (first few lines). Press `Ctrl+O` to expand and view the full tool output inline.
-- Output is truncated to pi defaults (**50KB** / **2000 lines**). If truncated, full output is saved to a temp file and path is returned.
+- Output is truncated to pi defaults (**50KB** / **2000 lines**).
+- Oversized output spill behavior is controlled by `spillMode`:
+  - `in_memory` (default): stores full output in this extension's memoryfs and returns an ID
+  - `to_file`: stores full output in a temp file and returns the path
+- Memoryfs data is process-local and ephemeral (cleared on restart/reload and on `/new`).
+- Memoryfs eviction policy: entries expire after ~1 hour and total cache is capped at ~30MB (oldest entries evicted first).
 - `insecure` / `--insecure` is ignored in fetch mode and reported as a warning.
 
 ## Install
