@@ -32,22 +32,27 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 Current dialog items:
 
 - `r - toggle reader mode`
+- `! - YOLO+ mode`
 - `Esc to close`
 
 Behavior details:
 
 - Pressing `Esc` closes the dialog with no side effects.
 - Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
+- Pressing `!` emits event `safe-mode:set-yolo-plus` and closes the dialog.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `safe-mode` is not installed/enabled, pressing `r` simply closes the dialog (no listener handles the event).
 
 Integration contract (important):
 
-- Event name used by `pi-ui`: `safe-mode:toggle-reader`
+- Event names used by `pi-ui`:
+  - `safe-mode:toggle-reader`
+  - `safe-mode:set-yolo-plus`
 - Expected listener behavior (implemented in `safe-mode`):
   - if mode is not `reader`: switch to `reader` and remember previous mode
   - if mode is `reader` and previous mode exists: restore previous mode
   - if mode is `reader` and no remembered previous mode: no-op
+  - for `safe-mode:set-yolo-plus`: toggle `yolo+` (enter `yolo+` and remember previous state; if already in `yolo+`, restore previous state when available)
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
@@ -76,6 +81,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 - `Ctrl+X` — open the `pi-ui` action dialog
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
+  - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
   - `Esc` — close dialog
 
 ## Install

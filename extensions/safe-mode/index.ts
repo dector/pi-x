@@ -32,6 +32,7 @@ type AllowlistEntry = {
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
 const TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
+const SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
@@ -618,6 +619,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let configuredDefaultMode: SafeMode | undefined;
 	let configuredDefaultOuterAccess: boolean | undefined;
 	let modeBeforeReaderShortcut: SafeMode | undefined;
+	let stateBeforeYoloPlusShortcut: SafeModeState | undefined;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
 
@@ -664,13 +666,20 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
 	}
 
-	function setMode(nextMode: SafeMode, ctx: ExtensionContext, options?: { persist?: boolean; notify?: boolean }): void {
+	function setMode(
+		nextMode: SafeMode,
+		ctx: ExtensionContext,
+		options?: { persist?: boolean; notify?: boolean; preserveYoloPlusToggleState?: boolean },
+	): void {
 		const persist = options?.persist ?? true;
 		const notify = options?.notify ?? true;
 		const changed = nextMode !== mode;
 
 		if (nextMode !== "reader") {
 			modeBeforeReaderShortcut = undefined;
+		}
+		if (!options?.preserveYoloPlusToggleState) {
+			stateBeforeYoloPlusShortcut = undefined;
 		}
 
 		mode = nextMode;
@@ -685,10 +694,18 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	function setOuterAccess(nextOuterAccess: boolean, ctx: ExtensionContext, options?: { persist?: boolean; notify?: boolean }): void {
+	function setOuterAccess(
+		nextOuterAccess: boolean,
+		ctx: ExtensionContext,
+		options?: { persist?: boolean; notify?: boolean; preserveYoloPlusToggleState?: boolean },
+	): void {
 		const persist = options?.persist ?? true;
 		const notify = options?.notify ?? true;
 		const changed = nextOuterAccess !== outerAccess;
+
+		if (!options?.preserveYoloPlusToggleState) {
+			stateBeforeYoloPlusShortcut = undefined;
+		}
 
 		outerAccess = nextOuterAccess;
 		updateStatus(ctx);
@@ -702,11 +719,19 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	function setModeAndOuter(nextMode: SafeMode, nextOuterAccess: boolean, ctx: ExtensionContext): void {
+	function setModeAndOuter(
+		nextMode: SafeMode,
+		nextOuterAccess: boolean,
+		ctx: ExtensionContext,
+		options?: { preserveYoloPlusToggleState?: boolean },
+	): void {
 		const modeChanged = nextMode !== mode;
 		const outerChanged = nextOuterAccess !== outerAccess;
 		if (nextMode !== "reader") {
 			modeBeforeReaderShortcut = undefined;
+		}
+		if (!options?.preserveYoloPlusToggleState) {
+			stateBeforeYoloPlusShortcut = undefined;
 		}
 		mode = nextMode;
 		outerAccess = nextOuterAccess;
@@ -732,8 +757,22 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		setMode("reader", ctx);
 	}
 
+	function toggleYoloPlusModeShortcut(ctx: ExtensionContext): void {
+		if (mode === "yolo" && outerAccess) {
+			if (!stateBeforeYoloPlusShortcut) return;
+			const restoreState = stateBeforeYoloPlusShortcut;
+			stateBeforeYoloPlusShortcut = undefined;
+			setModeAndOuter(restoreState.mode, restoreState.outerAccess, ctx);
+			return;
+		}
+
+		stateBeforeYoloPlusShortcut = { mode, outerAccess };
+		setModeAndOuter("yolo", true, ctx, { preserveYoloPlusToggleState: true });
+	}
+
 	function applyResolvedState(ctx: ExtensionContext): void {
 		modeBeforeReaderShortcut = undefined;
+		stateBeforeYoloPlusShortcut = undefined;
 		const persisted = getPersistedStateFromBranch(ctx);
 
 		const modeFlagRaw = pi.getFlag("safe-mode");
@@ -973,6 +1012,13 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
 		if (!maybeCtx) return;
 		toggleReaderModeShortcut(maybeCtx);
+	});
+
+	pi.events.on(SET_YOLO_PLUS_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!maybeCtx) return;
+		toggleYoloPlusModeShortcut(maybeCtx);
 	});
 
 	const refreshDefaults = async (ctx: ExtensionContext): Promise<void> => {

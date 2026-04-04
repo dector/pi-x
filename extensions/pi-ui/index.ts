@@ -11,6 +11,7 @@ const GLOBAL_BELL_LAST_RING_MS_KEY = "__pi_ui_bell_last_ring_ms";
 const UI_INPUT_PATCH_FLAG = "__pi_ui_bell_ui_input_patch_v1";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
+const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
 
 const RESET_FG = "\x1b[39m";
 const BELL_CHAR = "\x07";
@@ -336,11 +337,15 @@ function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
 	notifyInputExpected(ctx);
 }
 
-async function showHiDialog(ctx: ExtensionContext, onToggleReader: () => void): Promise<void> {
+async function showHiDialog(
+	ctx: ExtensionContext,
+	handlers: { onToggleReader: () => void; onSetYoloPlus: () => void },
+): Promise<void> {
 	if (!ctx.hasUI) return;
 
 	await ctx.ui.custom<void>(
 		(_tui, _theme, _kb, done) => {
+			const { onToggleReader, onSetYoloPlus } = handlers;
 			return {
 				render(width: number) {
 					if (width <= 2) return [];
@@ -348,6 +353,7 @@ async function showHiDialog(ctx: ExtensionContext, onToggleReader: () => void): 
 					return [
 						`╔${"═".repeat(innerWidth)}╗`,
 						`║${centerLine(innerWidth, "r - toggle reader mode")}║`,
+						`║${centerLine(innerWidth, "! - YOLO+ mode")}║`,
 						`║${" ".repeat(innerWidth)}║`,
 						`║${centerLine(innerWidth, "Esc to close")}║`,
 						`╚${"═".repeat(innerWidth)}╝`,
@@ -361,6 +367,11 @@ async function showHiDialog(ctx: ExtensionContext, onToggleReader: () => void): 
 					}
 					if (data === "r" || data === "R") {
 						onToggleReader();
+						done();
+						return;
+					}
+					if (data === "!") {
+						onSetYoloPlus();
 						done();
 					}
 				},
@@ -563,8 +574,13 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		description: "Open pi-ui dialog",
 		handler: async (ctx) => {
 			ensureUiBellPatched(ctx);
-			await showHiDialog(ctx, () => {
-				pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+			await showHiDialog(ctx, {
+				onToggleReader: () => {
+					pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+				},
+				onSetYoloPlus: () => {
+					pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });
+				},
 			});
 		},
 	});
