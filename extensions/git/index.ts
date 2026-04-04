@@ -1,3 +1,5 @@
+import { lstat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
@@ -10,8 +12,22 @@ const GitToolParams = Type.Object({
 	),
 });
 
+const CommitToolParams = Type.Object({
+	files: Type.Array(Type.String(), {
+		description: "Explicit list of files to include in the commit.",
+	}),
+	message: Type.String({
+		description: "Commit message.",
+	}),
+});
+
 type GitToolParamsInput = {
 	args?: string[];
+};
+
+type CommitToolParamsInput = {
+	files: string[];
+	message: string;
 };
 
 type GitRunResult = {
@@ -23,6 +39,13 @@ type GitRunResult = {
 	command: string;
 };
 
+type CommandDetail = {
+	command: string;
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+};
+
 const STATUS_ARGS = ["status", "--porcelain=v1", "-b"] as const;
 const LOG_DEFAULT_MAX_COUNT = 30;
 const LOG_MAX_COUNT_LIMIT = 200;
@@ -30,6 +53,34 @@ const LOG_MAX_COUNT_LIMIT = 200;
 function normalizeArgs(args: string[] | undefined): string[] {
 	if (!Array.isArray(args)) return [];
 	return args.map((part) => String(part).trim()).filter((part) => part.length > 0);
+}
+
+function normalizeCommitMessage(message: unknown): string {
+	if (typeof message !== "string") return "";
+	return message.trim();
+}
+
+function normalizeCommitFiles(files: unknown): string[] {
+	if (!Array.isArray(files)) return [];
+	const deduped = new Set<string>();
+	for (const value of files) {
+		if (typeof value !== "string") continue;
+		const normalized = value.trim().replace(/^@+/, "");
+		if (!normalized) continue;
+		deduped.add(normalized);
+	}
+	return [...deduped];
+}
+
+function quoteForSummary(text: string): string {
+	return text.replace(/"/g, '\\"');
+}
+
+function summarizeCommitCall(input: CommitToolParamsInput | Record<string, unknown>): string {
+	const files = normalizeCommitFiles((input as { files?: unknown }).files);
+	const message = normalizeCommitMessage((input as { message?: unknown }).message);
+	const quoted = quoteForSummary(message || "(empty message)");
+	return `commit: ${files.length} files "${quoted}"`;
 }
 
 function usageText(): string {
@@ -161,7 +212,7 @@ async function runGit(
 	args: string[],
 	signal?: AbortSignal,
 	timeout = 10000,
-) {
+): Promise<GitRunResult> {
 	const result = await pi.exec("git", args, {
 		cwd: ctx.cwd,
 		signal,
@@ -205,6 +256,162 @@ async function runGitLog(
 		};
 	}
 	return runGit(pi, ctx, parsed.args, signal);
+}
+
+function isPathInsideBase(pathValue: string, basePath: string): boolean {
+	const absoluteBasePath = resolve(basePath);
+	const absolutePath = resolve(pathValue);
+	const rel = relative(absoluteBasePath, absolutePath);
+	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+async function normalizeAndValidateCommitInput(
+	ctx: ExtensionContext,
+	input: CommitToolParamsInput,
+): Promise<{ ok: true; files: string[]; message: string } | { ok: false; error: string }> {
+	const files = normalizeCommitFiles(input.files);
+	if (files.length === 0) {
+		return { ok: false, error: "commit: 'files' is required and must contain at least one non-empty path." };
+	}
+
+	const message = normalizeCommitMessage(input.message);
+	if (!message) {
+		return { ok: false, error: "commit: 'message' is required and must be a non-empty string." };
+	}
+
+	const repoRoot = resolve(ctx.cwd);
+	const normalizedFiles: string[] = [];
+
+	for (const file of files) {
+		if (file.includes("\0") || file.includes("\n") || file.includes("\r")) {
+			return { ok: false, error: `commit: invalid file path \`${file}\`.` };
+		}
+
+		const absolute = resolve(repoRoot, file);
+		if (!isPathInsideBase(absolute, repoRoot)) {
+			return { ok: false, error: `commit: path escapes project root: \`${file}\`.` };
+		}
+
+		try {
+			const stats = await lstat(absolute);
+			if (stats.isDirectory()) {
+				return { ok: false, error: `commit: expected a file but received a directory: \`${file}\`.` };
+			}
+		} catch {
+			return { ok: false, error: `commit: file does not exist: \`${file}\`.` };
+		}
+
+		const rel = relative(repoRoot, absolute);
+		normalizedFiles.push(rel || ".");
+	}
+
+	return { ok: true, files: normalizedFiles, message };
+}
+
+function toCommandDetail(result: GitRunResult): CommandDetail {
+	return {
+		command: result.command,
+		exitCode: result.exitCode,
+		stdout: result.stdout,
+		stderr: result.stderr,
+	};
+}
+
+async function executeCommitTool(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	input: CommitToolParamsInput,
+	signal?: AbortSignal,
+): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
+	const validated = await normalizeAndValidateCommitInput(ctx, input);
+	if (!validated.ok) {
+		return {
+			content: [{ type: "text", text: validated.error }],
+			details: {
+				ok: false,
+				reason: "validation_failed",
+			},
+		};
+	}
+
+	const commands: CommandDetail[] = [];
+
+	const repoCheck = await runGit(pi, ctx, ["rev-parse", "--is-inside-work-tree"], signal);
+	commands.push(toCommandDetail(repoCheck));
+	if (!repoCheck.ok || repoCheck.stdout !== "true") {
+		return {
+			content: [{ type: "text", text: "commit: current directory is not a git repository." }],
+			details: {
+				ok: false,
+				reason: "not_a_repo",
+				commands,
+				files: validated.files,
+				message: validated.message,
+			},
+		};
+	}
+
+	const addResult = await runGit(pi, ctx, ["add", "--", ...validated.files], signal);
+	commands.push(toCommandDetail(addResult));
+	if (!addResult.ok) {
+		return {
+			content: [{ type: "text", text: addResult.output }],
+			details: {
+				ok: false,
+				reason: "git_add_failed",
+				commands,
+				files: validated.files,
+				message: validated.message,
+			},
+		};
+	}
+
+	const stagedCheck = await runGit(pi, ctx, ["diff", "--cached", "--name-only", "--", ...validated.files], signal);
+	commands.push(toCommandDetail(stagedCheck));
+	if (!stagedCheck.ok) {
+		return {
+			content: [{ type: "text", text: stagedCheck.output }],
+			details: {
+				ok: false,
+				reason: "staged_check_failed",
+				commands,
+				files: validated.files,
+				message: validated.message,
+			},
+		};
+	}
+
+	if (!stagedCheck.stdout) {
+		return {
+			content: [{ type: "text", text: "No staged changes found for the requested files. Nothing to commit." }],
+			details: {
+				ok: true,
+				noop: true,
+				reason: "nothing_to_commit",
+				commands,
+				files: validated.files,
+				message: validated.message,
+			},
+		};
+	}
+
+	const commitResult = await runGit(pi, ctx, ["commit", "-m", validated.message], signal, 15000);
+	commands.push(toCommandDetail(commitResult));
+
+	return {
+		content: [{ type: "text", text: commitResult.output }],
+		details: {
+			ok: commitResult.ok,
+			noop: false,
+			reason: commitResult.ok ? "committed" : "git_commit_failed",
+			files: validated.files,
+			message: validated.message,
+			commands,
+			exitCode: commitResult.exitCode,
+			stdout: commitResult.stdout,
+			stderr: commitResult.stderr,
+		},
+	};
 }
 
 export default function gitExtension(pi: ExtensionAPI): void {
@@ -271,6 +478,22 @@ export default function gitExtension(pi: ExtensionAPI): void {
 					stderr: runResult.stderr,
 				},
 			};
+		},
+	});
+
+	pi.registerTool({
+		name: "commit",
+		label: "Commit",
+		description: "Stage explicit files and create a git commit.",
+		promptSnippet: "Create a commit from an explicit list of files.",
+		parameters: CommitToolParams,
+		renderCall(args, theme) {
+			const input = args as CommitToolParamsInput;
+			const text = theme.fg("toolTitle", theme.bold(summarizeCommitCall(input)));
+			return new Text(text, 0, 0);
+		},
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return await executeCommitTool(pi, ctx, params as CommitToolParamsInput, signal);
 		},
 	});
 

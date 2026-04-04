@@ -270,6 +270,18 @@ function getToolRequestText(toolName: string, input: Record<string, unknown>): s
 		return command.length > 0 ? command : "(empty command)";
 	}
 
+	if (toolName === "commit") {
+		const files = Array.isArray(input.files)
+			? input.files
+				.filter((value): value is string => typeof value === "string")
+				.map((value) => value.trim())
+				.filter((value) => value.length > 0)
+			: [];
+		const message = typeof input.message === "string" ? input.message.trim() : "";
+		const fileLines = files.length > 0 ? files.map((file) => `- ${file}`).join("\n") : "- (none)";
+		return `message: ${message || "(empty)"}\nfiles:\n${fileLines}`;
+	}
+
 	const summary = describeToolCall(toolName, input);
 	const prefix = `${toolName}: `;
 	if (summary.startsWith(prefix)) {

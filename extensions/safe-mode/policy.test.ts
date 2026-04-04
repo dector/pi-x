@@ -322,6 +322,7 @@ test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "ls", { path: "." }).action).toBe("allow");
 	expect(decide("reader", "grep", { path: "." }).action).toBe("allow");
 	expect(decide("reader", "find", { path: "." }).action).toBe("confirm");
+	expect(decide("reader", "commit", { files: ["a.ts"], message: "feat: add a" }).action).toBe("confirm");
 
 	expect(decide("reader", "bash", { command: "ls -la" }).action).toBe("allow");
 	expect(decide("reader", "bash", { command: "cd .." }).action).toBe("confirm");
@@ -353,6 +354,7 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "write", { path: "../outside.txt" }).action).toBe("confirm");
 	expect(decide("smart", "write", { path: "../outside.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
 	expect(decide("smart", "edit", { path: "" }).action).toBe("confirm");
+	expect(decide("smart", "commit", { files: ["a.ts"], message: "feat: add a" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "find . -name '*.ts'" }).action).toBe("allow");
 	expect(decide("smart", "bash", { command: "find . -delete" }).action).toBe("confirm");
 	expect(decide("smart", "bash", { command: "ls -la" }).action).toBe("allow");
@@ -407,10 +409,16 @@ test("decideToolCall: paranoid/yolo sanity", () => {
 	expect(decide("paranoid", "read", { path: "policy.ts" }).action).toBe("confirm");
 	expect(decide("paranoid", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
 	expect(decide("paranoid", "bash", { command: "ls" }).action).toBe("confirm");
+	expect(decide("paranoid", "commit", { files: ["a.ts"], message: "feat: add a" }).action).toBe("confirm");
 
 	expect(decide("yolo", "read", { path: "policy.ts" }).action).toBe("allow");
 	expect(decide("yolo", "read", { path: "/tmp/outside.txt" }).action).toBe("confirm");
 	expect(decide("yolo", "read", { path: "/tmp/outside.txt" }, PROJECT_ROOT, true).action).toBe("allow");
+	expect(decide("yolo", "commit", { files: ["a.ts"], message: "feat: add a" }).action).toBe("allow");
+	expect(decide("yolo", "commit", { files: ["../outside.ts"], message: "feat: outside" }).action).toBe("confirm");
+	expect(
+		decide("yolo", "commit", { files: ["../outside.ts"], message: "feat: outside" }, PROJECT_ROOT, true).action,
+	).toBe("allow");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }).action).toBe("confirm");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }, PROJECT_ROOT, true).action).toBe("allow");
 });
@@ -420,6 +428,15 @@ test("describeToolCall: git summaries", () => {
 	expect(describeToolCall("git", { args: ["status"] })).toBe("git: status");
 	expect(describeToolCall("git", { args: ["log", "--oneline", "-n", "20"] })).toBe("git: log --oneline -n 20");
 	expect(describeToolCall("git", { args: ["branch", "--list"] })).toBe("git: branch --list");
+});
+
+test("describeToolCall: commit summary", () => {
+	expect(describeToolCall("commit", { files: ["a.ts", "b.ts"], message: "feat: add commit tool" })).toBe(
+		'commit: 2 files "feat: add commit tool"',
+	);
+	expect(describeToolCall("commit", { files: ["a.ts", "a.ts"], message: "" })).toBe(
+		'commit: 1 files "(empty message)"',
+	);
 });
 
 test("path normalization + project-root boundaries", () => {

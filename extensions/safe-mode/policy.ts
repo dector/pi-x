@@ -373,6 +373,11 @@ export function describeToolCall(toolName: string, input: Record<string, unknown
 		if (path) return `${toolName}: ${path}`;
 	}
 
+	if (toolName === "commit") {
+		const summary = summarizeCommitToolCall(input);
+		if (summary) return summary;
+	}
+
 	return toolName;
 }
 
@@ -522,6 +527,18 @@ function hasOnlyTrustedOutsideTargets(
 		return isPathInsideAnyRoot(pathValue, projectRoot, trustedRoots);
 	}
 
+	if (toolName === "commit") {
+		const files = normalizeCommitToolFiles(input);
+		if (!files || files.length === 0) return false;
+		let hasOutside = false;
+		for (const file of files) {
+			if (isPathInsideProject(file, projectRoot)) continue;
+			hasOutside = true;
+			if (!isPathInsideAnyRoot(file, projectRoot, trustedRoots)) return false;
+		}
+		return hasOutside;
+	}
+
 	if (toolName !== "bash") return false;
 	const command = typeof input.command === "string" ? input.command : "";
 	return bashHasOnlyTrustedOutsideTargets(command, projectRoot, trustedRoots);
@@ -557,6 +574,12 @@ function targetsOutsideProject(toolName: string, input: Record<string, unknown>,
 		return !isPathInsideProject(pathValue, projectRoot);
 	}
 
+	if (toolName === "commit") {
+		const files = normalizeCommitToolFiles(input);
+		if (!files || files.length === 0) return false;
+		return files.some((file) => !isPathInsideProject(file, projectRoot));
+	}
+
 	if (toolName !== "bash") return false;
 	const command = typeof input.command === "string" ? input.command : "";
 	return bashTargetsOutsideProject(command, projectRoot);
@@ -589,6 +612,27 @@ function normalizeToolPath(raw: unknown): string | undefined {
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) return undefined;
 	return trimmed.replace(/^@+/, "");
+}
+
+function normalizeCommitToolFiles(input: Record<string, unknown>): string[] | undefined {
+	const raw = input.files;
+	if (!Array.isArray(raw)) return undefined;
+	const deduped = new Set<string>();
+	for (const value of raw) {
+		const normalized = normalizeToolPath(value);
+		if (!normalized) return undefined;
+		deduped.add(normalized);
+	}
+	return [...deduped];
+}
+
+function summarizeCommitToolCall(input: Record<string, unknown>): string | undefined {
+	const files = normalizeCommitToolFiles(input);
+	if (!files) return undefined;
+	const rawMessage = typeof input.message === "string" ? input.message.trim() : "";
+	const message = rawMessage.length > 0 ? rawMessage : "(empty message)";
+	const escapedMessage = message.replace(/"/g, '\\"');
+	return `commit: ${files.length} files "${escapedMessage}"`;
 }
 
 function resolvePathInput(pathValue: string, projectRoot: string): string {
