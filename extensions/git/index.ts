@@ -1,5 +1,6 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 
 const GitToolParams = Type.Object({
 	args: Type.Optional(
@@ -39,6 +40,14 @@ function usageText(): string {
 		"  status",
 		"  log [--oneline] [-n N|--max-count N] [--author NAME] [--since DATE] [--until DATE] [<rev-range> ...]",
 	].join("\n");
+}
+
+function summarizeCall(args: string[] | undefined): string {
+	const argv = normalizeArgs(args);
+	if (argv.length === 0) return "(show usage)";
+	if (argv[0] === "status") return "status";
+	if (argv[0] === "log") return argv.join(" ");
+	return argv.join(" ");
 }
 
 function clampLogCount(value: number): number {
@@ -205,9 +214,16 @@ export default function gitExtension(pi: ExtensionAPI): void {
 		description: "Git helper tool (supports status and log).",
 		promptSnippet: "Use git tool for git operations.",
 		parameters: GitToolParams,
+		renderCall(args, theme) {
+			const input = args as GitToolParamsInput;
+			let text = theme.fg("toolTitle", `${theme.bold("git")} `);
+			text += theme.fg("muted", summarizeCall(input.args));
+			return new Text(text, 0, 0);
+		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const input = params as GitToolParamsInput;
 			const argv = normalizeArgs(input.args);
+
 			if (argv.length === 0) {
 				return {
 					content: [{ type: "text", text: usageText() }],
