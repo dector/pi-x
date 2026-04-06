@@ -52,10 +52,20 @@ function getLatestAssistantResponse(ctx: ExtensionContext): string | undefined {
 	return undefined;
 }
 
+function formatNowForFilename(now = new Date()): string {
+	const year = now.getFullYear();
+	const month = String(now.getMonth() + 1).padStart(2, "0");
+	const day = String(now.getDate()).padStart(2, "0");
+	const hours = String(now.getHours()).padStart(2, "0");
+	const minutes = String(now.getMinutes()).padStart(2, "0");
+	const seconds = String(now.getSeconds()).padStart(2, "0");
+	return `${year}-${month}-${day}-${hours}-${minutes}-${seconds}`;
+}
+
 function resolveOutputFilename(rawArgs: string): string {
 	const args = rawArgs.trim();
 	if (args.length > 0) return args;
-	return "pi-datetime.md";
+	return `pi-${formatNowForFilename()}.md`;
 }
 
 export default function saveExtension(pi: ExtensionAPI): void {

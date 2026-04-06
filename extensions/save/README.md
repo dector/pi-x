@@ -5,7 +5,7 @@ Adds a `/save` command that writes the latest assistant response to a file.
 ## Usage
 
 - `/save`
-  - Saves to default filename: `pi-datetime.md`
+  - Saves to default filename with current local date/time, e.g. `pi-2026-04-06-14-32-10.md`
 - `/save file.md`
   - Saves to the provided path (relative to current cwd, unless absolute)
 
