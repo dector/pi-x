@@ -27,7 +27,7 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 
 ### 3) Ctrl+, action dialog (extensible command palette shell)
 
-`pi-ui` owns `Ctrl+,` and opens a centered overlay dialog intended as a **future expansion point** for quick actions.
+`pi-ui` owns `Ctrl+,` and toggles a centered overlay dialog intended as a **future expansion point** for quick actions.
 
 Current dialog items:
 
@@ -37,10 +37,12 @@ Current dialog items:
 - `↑/↓ - move selection`
 - `Enter - run selected action`
 - `Esc - close`
+- `Ctrl+, - close (toggle)`
 
 Behavior details:
 
 - Pressing `Esc` closes the dialog with no side effects.
+- Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
 - Pressing `Enter` executes the currently selected action and closes the dialog.
 - Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
@@ -90,13 +92,14 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 ### Shortcut
 
-- `Ctrl+,` — open the `pi-ui` action dialog
+- `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
   - `Esc` — close dialog
+  - `Ctrl+,` — close dialog (toggle)
 
 ## Install
 

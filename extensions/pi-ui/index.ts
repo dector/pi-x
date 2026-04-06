@@ -13,6 +13,7 @@ const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
 const SAFE_MODE_TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
 const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
+const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
 const BELL_CHAR = "\x07";
@@ -341,166 +342,196 @@ function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
 async function showHiDialog(
 	ctx: ExtensionContext,
 	handlers: { onToggleReader: () => void; onToggleOuter: () => void; onSetYoloPlus: () => void },
+	dialogLifecycle: {
+		isShown: () => boolean;
+		onShown: (requestClose: () => void) => void;
+		onHidden: () => void;
+	},
 ): Promise<void> {
 	if (!ctx.hasUI) return;
+	if (dialogLifecycle.isShown()) return;
 
-	await ctx.ui.custom<void>(
-		(tui, _theme, _kb, done) => {
-			const { onToggleReader, onToggleOuter, onSetYoloPlus } = handlers;
-			let selectedIndex = 0;
-			type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
-			type DialogAction = {
-				hotkey: string;
-				hotkeyAliases?: string[];
-				label: string;
-				risk?: boolean;
-				isEnabled: (state: DialogState) => boolean;
-				run: () => void;
-			};
-			const getSafeModeUiState = (): DialogState => {
-				type MaybeSafeModeEntry = {
-					type?: string;
-					customType?: string;
-					data?: { mode?: unknown; outerAccess?: unknown };
+	let closeFromInside: (() => void) | undefined;
+	let closeRequestedBeforeInit = false;
+	const requestClose = () => {
+		if (closeFromInside) {
+			closeFromInside();
+			return;
+		}
+		closeRequestedBeforeInit = true;
+	};
+	dialogLifecycle.onShown(requestClose);
+
+	try {
+		await ctx.ui.custom<void>(
+			(tui, _theme, _kb, done) => {
+				const { onToggleReader, onToggleOuter, onSetYoloPlus } = handlers;
+				let selectedIndex = 0;
+				let closed = false;
+				const closeDialog = (): void => {
+					if (closed) return;
+					closed = true;
+					done();
+				};
+				closeFromInside = closeDialog;
+				if (closeRequestedBeforeInit) {
+					closeDialog();
+				}
+				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
+				type DialogAction = {
+					hotkey: string;
+					hotkeyAliases?: string[];
+					label: string;
+					risk?: boolean;
+					isEnabled: (state: DialogState) => boolean;
+					run: () => void;
+				};
+				const getSafeModeUiState = (): DialogState => {
+					type MaybeSafeModeEntry = {
+						type?: string;
+						customType?: string;
+						data?: { mode?: unknown; outerAccess?: unknown };
+					};
+
+					let mode = "smart";
+					let outerAccess = false;
+					for (const entry of ctx.sessionManager.getBranch() as MaybeSafeModeEntry[]) {
+						if (entry.type !== "custom" || entry.customType !== "safe-mode") continue;
+						const nextMode = entry.data?.mode;
+						if (typeof nextMode === "string") mode = nextMode.trim().toLowerCase();
+						const nextOuterAccess = entry.data?.outerAccess;
+						if (typeof nextOuterAccess === "boolean") outerAccess = nextOuterAccess;
+					}
+
+					return {
+						readerOn: mode === "reader",
+						outerOn: mode !== "paranoid" && outerAccess,
+						yoloPlusOn: mode === "yolo" && outerAccess,
+					};
 				};
 
-				let mode = "smart";
-				let outerAccess = false;
-				for (const entry of ctx.sessionManager.getBranch() as MaybeSafeModeEntry[]) {
-					if (entry.type !== "custom" || entry.customType !== "safe-mode") continue;
-					const nextMode = entry.data?.mode;
-					if (typeof nextMode === "string") mode = nextMode.trim().toLowerCase();
-					const nextOuterAccess = entry.data?.outerAccess;
-					if (typeof nextOuterAccess === "boolean") outerAccess = nextOuterAccess;
-				}
+				const actions: DialogAction[] = [
+					{
+						hotkey: "r",
+						hotkeyAliases: ["R"],
+						label: "Toggle reader mode",
+						isEnabled: (state) => state.readerOn,
+						run: onToggleReader,
+					},
+					{
+						hotkey: "+",
+						label: "Toggle outer mode",
+						isEnabled: (state) => state.outerOn,
+						run: onToggleOuter,
+					},
+					{
+						hotkey: "!",
+						label: "YOLO+ mode",
+						risk: true,
+						isEnabled: (state) => state.yoloPlusOn,
+						run: onSetYoloPlus,
+					},
+				];
+				const actionCount = actions.length;
+
+				const executeAction = (index: number): void => {
+					const action = actions[index];
+					if (!action) return;
+					action.run();
+					closeDialog();
+				};
+
+				const matchActionIndexForInput = (data: string): number => {
+					return actions.findIndex((action) => data === action.hotkey || action.hotkeyAliases?.includes(data));
+				};
 
 				return {
-					readerOn: mode === "reader",
-					outerOn: mode !== "paranoid" && outerAccess,
-					yoloPlusOn: mode === "yolo" && outerAccess,
+					render(width: number) {
+						if (width <= 2) return [];
+						const innerWidth = Math.max(1, width - 2);
+						const state = getSafeModeUiState();
+						const actionLine = (
+							hotkey: string,
+							label: string,
+							enabled: boolean,
+							isSelected: boolean,
+							options?: { risk?: boolean },
+						): string => {
+							const badgeText = enabled ? "[ON]" : "[OFF]";
+							const badgeColor = enabled
+								? options?.risk
+									? "\x1b[33m"
+									: "\x1b[32m"
+								: "\x1b[90m";
+							const badge = `${badgeColor}${badgeText}${RESET_FG}`;
+							const prefix = isSelected ? "› " : "  ";
+							const left = `${prefix}[${hotkey}] ${label}`;
+							const availableLeft = Math.max(1, innerWidth - visibleWidth(badgeText) - 1);
+							const clippedLeft =
+								visibleWidth(left) > availableLeft ? truncateToWidth(left, availableLeft, "") : left;
+							const gap = Math.max(1, innerWidth - visibleWidth(clippedLeft) - visibleWidth(badgeText));
+							return `${clippedLeft}${" ".repeat(gap)}${badge}`;
+						};
+						const actionLines = actions.map((action, index) =>
+							actionLine(
+								action.hotkey,
+								action.label,
+								action.isEnabled(state),
+								selectedIndex === index,
+								action.risk ? { risk: true } : undefined,
+							),
+						);
+						return [
+							`╔${"═".repeat(innerWidth)}╗`,
+							`║${centerLine(innerWidth, "Ctrl+, Actions")}║`,
+							`║${"─".repeat(innerWidth)}║`,
+							...actionLines.map((line) => `║${line}║`),
+							`║${"─".repeat(innerWidth)}║`,
+							`║${centerLine(innerWidth, "↑/↓ move • Enter run • Esc/Ctrl+, close")}║`,
+							`╚${"═".repeat(innerWidth)}╝`,
+						];
+					},
+					invalidate() {},
+					handleInput(data: string) {
+						if (matchesKey(data, Key.escape) || data === ESC || matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
+							closeDialog();
+							return;
+						}
+						if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+							selectedIndex = (selectedIndex - 1 + actionCount) % actionCount;
+							tui.requestRender();
+							return;
+						}
+						if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+							selectedIndex = (selectedIndex + 1) % actionCount;
+							tui.requestRender();
+							return;
+						}
+						if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+							executeAction(selectedIndex);
+							return;
+						}
+						const actionIndex = matchActionIndexForInput(data);
+						if (actionIndex >= 0) {
+							executeAction(actionIndex);
+						}
+					},
 				};
-			};
-
-			const actions: DialogAction[] = [
-				{
-					hotkey: "r",
-					hotkeyAliases: ["R"],
-					label: "Toggle reader mode",
-					isEnabled: (state) => state.readerOn,
-					run: onToggleReader,
-				},
-				{
-					hotkey: "+",
-					label: "Toggle outer mode",
-					isEnabled: (state) => state.outerOn,
-					run: onToggleOuter,
-				},
-				{
-					hotkey: "!",
-					label: "YOLO+ mode",
-					risk: true,
-					isEnabled: (state) => state.yoloPlusOn,
-					run: onSetYoloPlus,
-				},
-			];
-			const actionCount = actions.length;
-
-			const executeAction = (index: number): void => {
-				const action = actions[index];
-				if (!action) return;
-				action.run();
-				done();
-			};
-
-			const matchActionIndexForInput = (data: string): number => {
-				return actions.findIndex((action) => data === action.hotkey || action.hotkeyAliases?.includes(data));
-			};
-
-			return {
-				render(width: number) {
-					if (width <= 2) return [];
-					const innerWidth = Math.max(1, width - 2);
-					const state = getSafeModeUiState();
-					const actionLine = (
-						hotkey: string,
-						label: string,
-						enabled: boolean,
-						isSelected: boolean,
-						options?: { risk?: boolean },
-					): string => {
-						const badgeText = enabled ? "[ON]" : "[OFF]";
-						const badgeColor = enabled
-							? options?.risk
-								? "\x1b[33m"
-								: "\x1b[32m"
-							: "\x1b[90m";
-						const badge = `${badgeColor}${badgeText}${RESET_FG}`;
-						const prefix = isSelected ? "› " : "  ";
-						const left = `${prefix}[${hotkey}] ${label}`;
-						const availableLeft = Math.max(1, innerWidth - visibleWidth(badgeText) - 1);
-						const clippedLeft =
-							visibleWidth(left) > availableLeft ? truncateToWidth(left, availableLeft, "") : left;
-						const gap = Math.max(1, innerWidth - visibleWidth(clippedLeft) - visibleWidth(badgeText));
-						return `${clippedLeft}${" ".repeat(gap)}${badge}`;
-					};
-					const actionLines = actions.map((action, index) =>
-						actionLine(
-							action.hotkey,
-							action.label,
-							action.isEnabled(state),
-							selectedIndex === index,
-							action.risk ? { risk: true } : undefined,
-						),
-					);
-					return [
-						`╔${"═".repeat(innerWidth)}╗`,
-						`║${centerLine(innerWidth, "Ctrl+, Actions")}║`,
-						`║${"─".repeat(innerWidth)}║`,
-						...actionLines.map((line) => `║${line}║`),
-						`║${"─".repeat(innerWidth)}║`,
-						`║${centerLine(innerWidth, "↑/↓ move • Enter run • Esc close")}║`,
-						`╚${"═".repeat(innerWidth)}╝`,
-					];
-				},
-				invalidate() {},
-				handleInput(data: string) {
-					if (matchesKey(data, Key.escape) || data === ESC) {
-						done();
-						return;
-					}
-					if (matchesKey(data, Key.up) || data === "k" || data === "K") {
-						selectedIndex = (selectedIndex - 1 + actionCount) % actionCount;
-						tui.requestRender();
-						return;
-					}
-					if (matchesKey(data, Key.down) || data === "j" || data === "J") {
-						selectedIndex = (selectedIndex + 1) % actionCount;
-						tui.requestRender();
-						return;
-					}
-					if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-						executeAction(selectedIndex);
-						return;
-					}
-					const actionIndex = matchActionIndexForInput(data);
-					if (actionIndex >= 0) {
-						executeAction(actionIndex);
-					}
-				},
-			};
-		},
-		{
-			overlay: true,
-			overlayOptions: {
-				anchor: "center",
-				width: "62%",
-				minWidth: 40,
-				maxHeight: "70%",
-				margin: 1,
 			},
-		},
-	);
-
+			{
+				overlay: true,
+				overlayOptions: {
+					anchor: "center",
+					width: "62%",
+					minWidth: 40,
+					maxHeight: "70%",
+					margin: 1,
+				},
+			},
+		);
+	} finally {
+		dialogLifecycle.onHidden();
+	}
 }
 
 export default function piUiExtension(pi: ExtensionAPI): void {
@@ -531,6 +562,8 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let activeContext: ExtensionContext | undefined;
 	let pendingInteractiveInputSerial = 0;
 	let agentRunning = false;
+	let isActionDialogShown = false;
+	let requestActionDialogClose: (() => void) | undefined;
 
 	const ensureUiBellPatched = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -684,21 +717,39 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrl(","), {
-		description: "Open pi-ui dialog",
+	pi.registerShortcut(ACTION_DIALOG_TOGGLE_SHORTCUT, {
+		description: "Toggle pi-ui dialog",
 		handler: async (ctx) => {
 			ensureUiBellPatched(ctx);
-			await showHiDialog(ctx, {
-				onToggleReader: () => {
-					pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+			if (isActionDialogShown) {
+				requestActionDialogClose?.();
+				return;
+			}
+			await showHiDialog(
+				ctx,
+				{
+					onToggleReader: () => {
+						pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
+					},
+					onToggleOuter: () => {
+						pi.events.emit(SAFE_MODE_TOGGLE_OUTER_EVENT, { ctx });
+					},
+					onSetYoloPlus: () => {
+						pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });
+					},
 				},
-				onToggleOuter: () => {
-					pi.events.emit(SAFE_MODE_TOGGLE_OUTER_EVENT, { ctx });
+				{
+					isShown: () => isActionDialogShown,
+					onShown: (requestClose) => {
+						isActionDialogShown = true;
+						requestActionDialogClose = requestClose;
+					},
+					onHidden: () => {
+						isActionDialogShown = false;
+						requestActionDialogClose = undefined;
+					},
 				},
-				onSetYoloPlus: () => {
-					pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });
-				},
-			});
+			);
 		},
 	});
 }
