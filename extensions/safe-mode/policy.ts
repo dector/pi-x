@@ -76,6 +76,164 @@ const GIT_READ_ONLY_VALIDATORS: Record<string, GitSubtoolValidator> = {
 	reflog: isReadOnlyGitReflogArgs,
 };
 
+function normalizeSqliteInputForPolicy(input: Record<string, unknown>): {
+	target: { kind: "memory" } | { kind: "file"; database: string };
+	sql: string;
+} | undefined {
+	const rawSql = typeof input.sql === "string" ? input.sql.trim() : "";
+	if (!rawSql) return undefined;
+
+	const rawDatabase = normalizeToolPath(input.database);
+	const memory = input.memory === true;
+	if ((rawDatabase ? 1 : 0) + (memory ? 1 : 0) !== 1) return undefined;
+
+	if (memory) return { target: { kind: "memory" }, sql: rawSql };
+	return { target: { kind: "file", database: rawDatabase! }, sql: rawSql };
+}
+
+function splitSqlStatementsForPolicy(sql: string): string[] {
+	const statements: string[] = [];
+	let current = "";
+	let i = 0;
+	let inSingle = false;
+	let inDouble = false;
+	let inBracket = false;
+	let inLineComment = false;
+	let inBlockComment = false;
+
+	while (i < sql.length) {
+		const char = sql[i]!;
+		const next = sql[i + 1];
+
+		if (inLineComment) {
+			if (char === "\n") {
+				inLineComment = false;
+				current += char;
+			}
+			i += 1;
+			continue;
+		}
+
+		if (inBlockComment) {
+			if (char === "*" && next === "/") {
+				inBlockComment = false;
+				i += 2;
+				continue;
+			}
+			i += 1;
+			continue;
+		}
+
+		if (!inSingle && !inDouble && !inBracket && char === "-" && next === "-") {
+			inLineComment = true;
+			i += 2;
+			continue;
+		}
+
+		if (!inSingle && !inDouble && !inBracket && char === "/" && next === "*") {
+			inBlockComment = true;
+			i += 2;
+			continue;
+		}
+
+		if (!inDouble && !inBracket && char === "'") {
+			if (inSingle && next === "'") {
+				current += "''";
+				i += 2;
+				continue;
+			}
+			inSingle = !inSingle;
+			current += char;
+			i += 1;
+			continue;
+		}
+
+		if (!inSingle && !inBracket && char === '"') {
+			if (inDouble && next === '"') {
+				current += '""';
+				i += 2;
+				continue;
+			}
+			inDouble = !inDouble;
+			current += char;
+			i += 1;
+			continue;
+		}
+
+		if (!inSingle && !inDouble) {
+			if (char === "[") inBracket = true;
+			if (char === "]" && inBracket) inBracket = false;
+		}
+
+		if (!inSingle && !inDouble && !inBracket && char === ";") {
+			const trimmed = current.trim();
+			if (trimmed.length > 0) statements.push(trimmed);
+			current = "";
+			i += 1;
+			continue;
+		}
+
+		current += char;
+		i += 1;
+	}
+
+	const trailing = current.trim();
+	if (trailing.length > 0) statements.push(trailing);
+	return statements;
+}
+
+function classifySqliteStatementForPolicy(statement: string): "read-only" | "mutating" {
+	const firstKeyword = statement.match(/^\s*([A-Za-z_]+)/)?.[1]?.toUpperCase();
+	if (!firstKeyword) return "mutating";
+
+	if (firstKeyword === "WITH") {
+		if (/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|VACUUM|ATTACH|DETACH|PRAGMA|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|END)\b/i.test(statement)) {
+			return "mutating";
+		}
+		if (/\b(SELECT|VALUES|EXPLAIN)\b/i.test(statement)) {
+			return "read-only";
+		}
+		return "mutating";
+	}
+
+	if (firstKeyword === "PRAGMA") {
+		return /^\s*PRAGMA\b[\s\S]*=/i.test(statement) ? "mutating" : "read-only";
+	}
+
+	if (firstKeyword === "SELECT" || firstKeyword === "EXPLAIN" || firstKeyword === "VALUES") {
+		return "read-only";
+	}
+
+	if (["INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP", "VACUUM", "ATTACH", "DETACH", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "END"].includes(firstKeyword)) {
+		return "mutating";
+	}
+
+	return "mutating";
+}
+
+export function classifySqliteQueryForPolicy(sql: string): "read-only" | "mutating" {
+	const statements = splitSqlStatementsForPolicy(sql);
+	if (statements.length === 0) return "mutating";
+	return statements.some((statement) => classifySqliteStatementForPolicy(statement) === "mutating")
+		? "mutating"
+		: "read-only";
+}
+
+function summarizeSqlSnippetForPolicy(sql: string, maxLength = 100): string {
+	const collapsed = sql.replace(/\s+/g, " ").trim();
+	if (collapsed.length <= maxLength) return collapsed;
+	return `${collapsed.slice(0, Math.max(1, maxLength - 1))}…`;
+}
+
+function summarizeSqliteToolCallForPolicy(input: Record<string, unknown>): string {
+	const normalized = normalizeSqliteInputForPolicy(input);
+	if (!normalized) return "sqlite";
+	const target = normalized.target.kind === "memory" ? "memory" : normalized.target.database;
+	const kind = classifySqliteQueryForPolicy(normalized.sql);
+	const sqlSnippet = summarizeSqlSnippetForPolicy(normalized.sql);
+	return `sqlite: ${target} (${kind}) — ${sqlSnippet}`;
+}
+
 export function isSafeMode(value: unknown): value is SafeMode {
 	return typeof value === "string" && (SAFE_MODES as readonly string[]).includes(value);
 }
@@ -378,6 +536,10 @@ export function describeToolCall(toolName: string, input: Record<string, unknown
 		if (summary) return summary;
 	}
 
+	if (toolName === "sqlite") {
+		return summarizeSqliteToolCallForPolicy(input);
+	}
+
 	return toolName;
 }
 
@@ -463,6 +625,11 @@ export function decideToolCall(args: {
 function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode: SafeMode): boolean {
 	if (READ_ONLY_TOOLS.has(toolName)) return true;
 	if (toolName === "git") return classifyGitToolCall(input).readOnly;
+	if (toolName === "sqlite") {
+		const normalized = normalizeSqliteInputForPolicy(input);
+		if (!normalized) return false;
+		return classifySqliteQueryForPolicy(normalized.sql) === "read-only";
+	}
 	if (toolName !== "bash") return false;
 
 	const command = typeof input.command === "string" ? input.command : "";
@@ -527,6 +694,13 @@ function hasOnlyTrustedOutsideTargets(
 		return isPathInsideAnyRoot(pathValue, projectRoot, trustedRoots);
 	}
 
+	if (toolName === "sqlite") {
+		const normalized = normalizeSqliteInputForPolicy(input);
+		if (!normalized || normalized.target.kind !== "file") return false;
+		if (isPathInsideProject(normalized.target.database, projectRoot)) return false;
+		return isPathInsideAnyRoot(normalized.target.database, projectRoot, trustedRoots);
+	}
+
 	if (toolName === "commit") {
 		const files = normalizeCommitToolFiles(input);
 		if (!files || files.length === 0) return false;
@@ -572,6 +746,12 @@ function targetsOutsideProject(toolName: string, input: Record<string, unknown>,
 		const pathValue = normalizeToolPath(input.path);
 		if (!pathValue) return false;
 		return !isPathInsideProject(pathValue, projectRoot);
+	}
+
+	if (toolName === "sqlite") {
+		const normalized = normalizeSqliteInputForPolicy(input);
+		if (!normalized || normalized.target.kind !== "file") return false;
+		return !isPathInsideProject(normalized.target.database, projectRoot);
 	}
 
 	if (toolName === "commit") {

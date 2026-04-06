@@ -7,6 +7,7 @@ import {
 	normalizeGitToolArgs,
 	type BashCommandType,
 	type SafeMode,
+	classifySqliteQueryForPolicy,
 } from "./policy.ts";
 
 const PROJECT_ROOT = "/tmp/pi-safe-mode-project";
@@ -119,6 +120,43 @@ test("decideToolCall: git malformed/unknown/non-read-only requires confirm", () 
 	for (const input of confirmCases) {
 		expect(decide("yolo", "git", input).action).toBe("allow");
 	}
+});
+
+test("sqlite classifier: read-only vs mutating", () => {
+	expect(classifySqliteQueryForPolicy("select * from users")).toBe("read-only");
+	expect(classifySqliteQueryForPolicy("with x as (select 1) select * from x")).toBe("read-only");
+	expect(classifySqliteQueryForPolicy("pragma table_info(users)")).toBe("read-only");
+	expect(classifySqliteQueryForPolicy("explain query plan select 1")).toBe("read-only");
+	expect(classifySqliteQueryForPolicy("values (1), (2)")).toBe("read-only");
+
+	expect(classifySqliteQueryForPolicy("insert into users(name) values ('a')")).toBe("mutating");
+	expect(classifySqliteQueryForPolicy("pragma journal_mode = wal")).toBe("mutating");
+	expect(classifySqliteQueryForPolicy("begin; select 1;")).toBe("mutating");
+	expect(classifySqliteQueryForPolicy("select 1; update users set name = 'x';")).toBe("mutating");
+	expect(classifySqliteQueryForPolicy("-- comment\nselect 1")).toBe("read-only");
+});
+
+test("decideToolCall: sqlite safe-mode matrix", () => {
+	const inRepoDb = "data/app.db";
+	const outsideDb = "/tmp/app.db";
+
+	expect(decide("reader", "sqlite", { action: "query", database: inRepoDb, sql: "select 1" }).action).toBe("allow");
+	expect(decide("reader", "sqlite", { action: "query", database: inRepoDb, sql: "insert into t values (1)" }).action).toBe("confirm");
+
+	expect(decide("smart", "sqlite", { action: "query", database: inRepoDb, sql: "select 1" }).action).toBe("allow");
+	expect(decide("smart", "sqlite", { action: "query", database: inRepoDb, sql: "update t set x = 1" }).action).toBe("confirm");
+
+	expect(decide("reader", "sqlite", { action: "query", database: outsideDb, sql: "select 1" }).action).toBe("confirm");
+	expect(decide("reader", "sqlite", { action: "query", database: outsideDb, sql: "select 1" }, PROJECT_ROOT, true).action).toBe("allow");
+	expect(decide("reader", "sqlite", { action: "query", database: outsideDb, sql: "insert into t values (1)" }, PROJECT_ROOT, true).action).toBe("confirm");
+
+	expect(decide("yolo", "sqlite", { action: "query", database: outsideDb, sql: "update t set x = 1" }).action).toBe("confirm");
+	expect(decide("yolo", "sqlite", { action: "query", database: outsideDb, sql: "update t set x = 1" }, PROJECT_ROOT, true).action).toBe("allow");
+
+	expect(decide("reader", "sqlite", { action: "query", memory: true, sql: "select 1" }).action).toBe("allow");
+	expect(decide("reader", "sqlite", { action: "query", memory: true, sql: "create table t(x int)" }).action).toBe("confirm");
+
+	expect(describeToolCall("sqlite", { action: "query", memory: true, sql: "select 1" })).toBe("sqlite: memory (read-only) — select 1");
 });
 
 test("getBashCommandType: empty/invalid input", () => {

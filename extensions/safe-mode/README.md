@@ -59,6 +59,17 @@ Notes:
 - allowlisting is conservative and validator-based for ambiguous subtools (`branch`, `tag`, `remote`, `config`, `diff`, `reflog`)
 - default is deny when not explicitly recognized as read-only
 
+## Read-only `sqlite` tool auto-allow
+
+`safe-mode` classifies `sqlite` queries and applies mode rules:
+
+- read-only query (`SELECT`, `WITH ... SELECT`, read `PRAGMA`, `EXPLAIN`, `VALUES`) is treated as a read operation
+- mutating/unknown query (`INSERT`, `UPDATE`, `DELETE`, DDL, transaction control, write `PRAGMA`, etc.) is treated as a write-like operation
+- file-backed DB path is scoped against project root (`ctx.cwd`)
+- in-memory DB (`memory=true`) is treated as in-repo scope
+
+So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to outer-access/path scope), while mutating queries require approval.
+
 ## Auto-approval matrix
 
 Legend: ✅ auto-allow, ❓ asks for approval.
