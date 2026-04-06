@@ -33,6 +33,35 @@ function safeMkdir(dirPath: string): void {
 	}
 }
 
+function pruneStaleDiscoveryArtifacts(): void {
+	let entries: string[] = [];
+	try {
+		entries = fs.readdirSync(SOCKETS_DIR);
+	} catch {
+		return;
+	}
+
+	for (const entry of entries) {
+		if (!entry.endsWith(".sock.info")) continue;
+
+		const infoPath = path.join(SOCKETS_DIR, entry);
+		const sockPath = infoPath.slice(0, -".info".length);
+
+		if (!fs.existsSync(sockPath)) {
+			safeUnlink(infoPath);
+		}
+	}
+
+	try {
+		const latestTarget = fs.readlinkSync(LATEST_LINK);
+		if (!fs.existsSync(latestTarget)) {
+			safeUnlink(LATEST_LINK);
+		}
+	} catch {
+		// ignore
+	}
+}
+
 export default function piNvimExtension(pi: ExtensionAPI): void {
 	let server: net.Server | null = null;
 	let socketPath: string | null = null;
@@ -114,6 +143,7 @@ export default function piNvimExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		cleanup();
 		safeMkdir(SOCKETS_DIR);
+		pruneStaleDiscoveryArtifacts();
 
 		const cwd = ctx.cwd;
 		socketPath = getSocketPath(cwd);
