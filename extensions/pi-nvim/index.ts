@@ -154,17 +154,13 @@ export default function piNvimExtension(pi: ExtensionAPI): void {
 			try {
 				fs.writeFileSync(
 					`${socketPath}.info`,
-					JSON.stringify(
-						{
-							protocolVersion: PROTOCOL_VERSION,
-							cwd,
-							pid: process.pid,
-							startedAt: new Date().toISOString(),
-							socketPath,
-						},
-						null,
-						2,
-					),
+					JSON.stringify({
+						protocolVersion: PROTOCOL_VERSION,
+						cwd,
+						pid: process.pid,
+						startedAt: new Date().toISOString(),
+						socketPath,
+					}),
 				);
 			} catch {
 				// ignore

@@ -2,6 +2,11 @@
 
 Unix-socket bridge for sending prompts into a running pi session.
 
+## Compatibility and inspiration
+
+- Inspired by the upstream `pi-nvim` extension/plugin project: https://github.com/carderne/pi-nvim
+- This extension is wire-compatible with that Neovim plugin (commands like `:PiPing`, `:PiSend`, `:PiSessions`).
+
 ## Protocol (newline-delimited JSON)
 
 Supported requests:
@@ -21,7 +26,7 @@ Responses:
 - Latest symlink: `/tmp/pi-nvim-latest.sock`
 - Session metadata: `<socket>.info`
 
-`.info` contains:
+`.info` is single-line JSON and contains:
 
 - `protocolVersion`
 - `cwd`
@@ -29,7 +34,16 @@ Responses:
 - `startedAt`
 - `socketPath`
 
-## Quick test
+## Session discovery behavior (for Neovim clients)
+
+Recommended selection order:
+
+1. Scan `/tmp/pi-nvim-sockets/*.info`
+2. Prefer live socket whose `.info.cwd` matches current Neovim `cwd`
+3. If none match, pick newest live socket
+4. Fallback to `/tmp/pi-nvim-latest.sock`
+
+## Quick test (CLI)
 
 ```bash
 # Ping latest session
@@ -42,3 +56,15 @@ printf '{"type":"prompt","message":"hello from nvim bridge"}\n' | socat - UNIX-C
 In pi:
 
 - `/pi-nvim-info` shows active socket path.
+
+## Compatibility test matrix (Neovim)
+
+Run these with your compatible plugin (e.g. `carderne/pi-nvim`):
+
+1. `:PiPing`
+   - Expected: success notification (`pong`/alive)
+2. `:PiSend`
+   - Expected: prompt arrives in active pi session
+3. `:PiSessions`
+   - Expected: lists live sessions
+   - Expected routing: cwd-matching session preferred, newest live session fallback
