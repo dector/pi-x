@@ -84,6 +84,8 @@ extensions=(
   "pi-ui"
   "sqlite"
   "save"
+  "git"
+  "pi-nvim"
 )
 
 installed_extensions=()

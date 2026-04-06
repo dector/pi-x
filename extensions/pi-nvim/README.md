@@ -53,6 +53,24 @@ printf '{"type":"ping"}\n' | socat - UNIX-CONNECT:/tmp/pi-nvim-latest.sock
 printf '{"type":"prompt","message":"hello from nvim bridge"}\n' | socat - UNIX-CONNECT:/tmp/pi-nvim-latest.sock
 ```
 
+### Smoke test script (repo)
+
+From repo root, run:
+
+```bash
+scripts/pi-nvim-smoke.sh
+```
+
+Optional args/env:
+
+```bash
+# Custom prompt text
+scripts/pi-nvim-smoke.sh "hello from smoke test"
+
+# Override socket path
+PI_NVIM_SOCKET_PATH=/tmp/pi-nvim-latest.sock scripts/pi-nvim-smoke.sh
+```
+
 In pi:
 
 - `/pi-nvim-info` shows active socket path.
