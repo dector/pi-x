@@ -82,6 +82,7 @@ extensions=(
   "interactive-bash"
   "tool-zellij"
   "pi-ui"
+  "sqlite"
 )
 
 installed_extensions=()
