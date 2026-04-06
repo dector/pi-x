@@ -34,6 +34,7 @@ Current dialog items:
 - `r - toggle reader mode`
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
+- `p - preview prompts` (opens a second dialog)
 - `↑/↓ - move selection`
 - `Enter - run selected action`
 - `Esc - close`
@@ -48,11 +49,16 @@ Behavior details:
 - Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `safe-mode:set-yolo-plus` and closes the dialog.
-- Rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
+- Pressing `p` (or `P`) opens a second overlay dialog showing prompt previews:
+  - first user prompt in current branch history (top 10 lines)
+  - latest user prompt in current branch history (top 10 lines)
+  - preview dialog uses max-width overlay and closes via `Esc`, `Enter`, `q`, or `Ctrl+,`.
+- Safe-mode rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
   - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `safe-mode` is not installed/enabled, these keys simply close the dialog (no listener handles the event).
-- Overlay sizing is responsive (`~62%` width, `minWidth: 40`, centered).
+- Main action dialog sizing is responsive (`~62%` width, `minWidth: 40`, centered).
+- Prompt preview dialog uses centered max-width overlay (`width: 100%`, `minWidth: 40`).
 
 Integration contract (important):
 
@@ -98,6 +104,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
+  - `p` — open preview prompts dialog (first/latest user prompt, top 10 lines each)
   - `Esc` — close dialog
   - `Ctrl+,` — close dialog (toggle)
 

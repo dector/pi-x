@@ -16,6 +16,10 @@ const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
+const ANSI_BOLD = "\x1b[1m";
+const ANSI_BOLD_OFF = "\x1b[22m";
+const ANSI_ITALIC = "\x1b[3m";
+const ANSI_ITALIC_OFF = "\x1b[23m";
 const BELL_CHAR = "\x07";
 const ESC = "\u001b";
 
@@ -229,6 +233,14 @@ function centerLine(width: number, text: string): string {
 	return `${" ".repeat(leftPad)}${finalText}${" ".repeat(rightPad)}`;
 }
 
+function padToVisibleWidth(text: string, width: number): string {
+	if (width <= 0) return "";
+	const finalText = visibleWidth(text) > width ? truncateToWidth(text, width, "") : text;
+	const textWidth = visibleWidth(finalText);
+	if (textWidth >= width) return finalText;
+	return `${finalText}${" ".repeat(width - textWidth)}`;
+}
+
 function patchLoaderWorkingSpinner(): void {
 	const globalAny = globalThis as Record<string, unknown>;
 	if (globalAny[PATCH_FLAG]) return;
@@ -339,9 +351,206 @@ function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
 	notifyInputExpected(ctx);
 }
 
+type SessionEntry = {
+	type?: string;
+	message?: {
+		role?: string;
+		content?: unknown;
+	};
+};
+
+type ContentBlock = {
+	type?: string;
+	text?: string;
+};
+
+function extractTextParts(content: unknown): string[] {
+	if (typeof content === "string") {
+		return content.trim() ? [content] : [];
+	}
+
+	if (!Array.isArray(content)) {
+		return [];
+	}
+
+	const parts: string[] = [];
+	for (const block of content) {
+		if (!block || typeof block !== "object") continue;
+		const maybeText = block as ContentBlock;
+		if (maybeText.type !== "text") continue;
+		if (typeof maybeText.text !== "string") continue;
+		if (!maybeText.text.trim()) continue;
+		parts.push(maybeText.text);
+	}
+
+	return parts;
+}
+
+function getUserPrompts(ctx: ExtensionContext): string[] {
+	const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+	const prompts: string[] = [];
+
+	for (const entry of branch) {
+		if (entry?.type !== "message") continue;
+		if (entry.message?.role !== "user") continue;
+		const text = extractTextParts(entry.message.content).join("\n").trim();
+		if (!text) continue;
+		prompts.push(text);
+	}
+
+	return prompts;
+}
+
+function sanitizePreviewText(input: string): string {
+	// Strip ANSI escape sequences and control chars that can break layout width.
+	const withoutAnsi = input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1B[@-_]/g, "");
+	return withoutAnsi.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function wrapLineSoft(line: string, width: number): string[] {
+	const safeWidth = Math.max(1, width);
+	const input = sanitizePreviewText(line).replace(/\t/g, "  ");
+	if (input.length === 0) return [""];
+
+	const out: string[] = [];
+	let current = "";
+	let currentWidth = 0;
+
+	for (const ch of input) {
+		const chWidth = Math.max(0, visibleWidth(ch));
+		if (currentWidth + chWidth > safeWidth && current.length > 0) {
+			out.push(current);
+			current = "";
+			currentWidth = 0;
+		}
+		current += ch;
+		currentWidth += chWidth;
+	}
+
+	if (current.length > 0 || out.length === 0) out.push(current);
+	return out;
+}
+
+function previewLinesSoftWrapped(text: string | undefined, maxLines: number, lineWidth: number): string[] {
+	if (!text) return ["(none)"];
+
+	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const sourceLines = normalized.split("\n");
+	const wrapped: string[] = [];
+
+	for (const sourceLine of sourceLines) {
+		if (wrapped.length >= maxLines) break;
+		for (const chunk of wrapLineSoft(sourceLine, lineWidth)) {
+			if (wrapped.length >= maxLines) break;
+			wrapped.push(chunk);
+		}
+	}
+
+	return wrapped.length > 0 ? wrapped : ["(empty)"];
+}
+
+async function showPromptPreviewDialog(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) return;
+
+	const prompts = getUserPrompts(ctx);
+	const firstPrompt = prompts[0];
+	const latestPrompt = prompts[prompts.length - 1];
+
+	await ctx.ui.custom<void>(
+		(tui, _theme, _kb, done) => {
+			let closed = false;
+			const closeDialog = (): void => {
+				if (closed) return;
+				closed = true;
+				done();
+			};
+
+			type PreviewLine = { text: string; style?: "bold" | "italic" };
+			const renderSection = (innerWidth: number, title: string, lines: string[]): PreviewLine[] => {
+				const centeredTitle = centerLine(innerWidth, truncateToWidth(title, innerWidth, ""));
+				const output: PreviewLine[] = [{ text: centeredTitle, style: "bold" }];
+				for (const line of lines) {
+					output.push({ text: `  ${line}`, style: "italic" });
+				}
+				return output;
+			};
+
+			return {
+				render(width: number) {
+					if (width <= 2) return [];
+					const innerWidth = Math.max(1, width - 2);
+					const promptLineWidth = Math.max(1, innerWidth - 4);
+					const firstLines = previewLinesSoftWrapped(firstPrompt, 10, promptLineWidth);
+					const latestLines = previewLinesSoftWrapped(latestPrompt, 10, promptLineWidth);
+					const body: PreviewLine[] = [
+						...renderSection(innerWidth, "FIRST prompt:", firstLines),
+						{ text: "" },
+						{ text: "---" },
+						{ text: "" },
+						...renderSection(innerWidth, "LATEST prompt:", latestLines),
+					];
+					return [
+						`╔${"═".repeat(innerWidth)}╗`,
+						`║${centerLine(innerWidth, "Prompt Previews")}║`,
+						`║${"─".repeat(innerWidth)}║`,
+						...body.map((line) => {
+							const clipped = truncateToWidth(line.text, innerWidth, "");
+							const padded = padToVisibleWidth(clipped, innerWidth);
+							const styled =
+								line.style === "bold"
+									? `${ANSI_BOLD}${padded}${ANSI_BOLD_OFF}`
+									: line.style === "italic"
+										? `${ANSI_ITALIC}${padded}${ANSI_ITALIC_OFF}`
+										: padded;
+							return `║${styled}║`;
+						}),
+						`║${"─".repeat(innerWidth)}║`,
+						`║${centerLine(innerWidth, "Esc/Enter/q close")}║`,
+						`╚${"═".repeat(innerWidth)}╝`,
+					];
+				},
+				invalidate() { },
+				handleInput(data: string) {
+					if (
+						matchesKey(data, Key.escape) ||
+						data === ESC ||
+						matchesKey(data, Key.enter) ||
+						matchesKey(data, Key.return) ||
+						data === "q" ||
+						data === "Q"
+					) {
+						closeDialog();
+						return;
+					}
+					if (matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
+						closeDialog();
+						return;
+					}
+					tui.requestRender();
+				},
+			};
+		},
+		{
+			overlay: true,
+			overlayOptions: {
+				anchor: "center",
+				width: "100%",
+				minWidth: 40,
+				maxHeight: "80%",
+				margin: 1,
+			},
+		},
+	);
+}
+
 async function showHiDialog(
 	ctx: ExtensionContext,
-	handlers: { onToggleReader: () => void; onToggleOuter: () => void; onSetYoloPlus: () => void },
+	handlers: {
+		onToggleReader: () => void;
+		onToggleOuter: () => void;
+		onSetYoloPlus: () => void;
+		onShowPromptPreviews: () => Promise<void>;
+	},
 	dialogLifecycle: {
 		isShown: () => boolean;
 		onShown: (requestClose: () => void) => void;
@@ -365,7 +574,7 @@ async function showHiDialog(
 	try {
 		await ctx.ui.custom<void>(
 			(tui, _theme, _kb, done) => {
-				const { onToggleReader, onToggleOuter, onSetYoloPlus } = handlers;
+				const { onToggleReader, onToggleOuter, onSetYoloPlus, onShowPromptPreviews } = handlers;
 				let selectedIndex = 0;
 				let closed = false;
 				const closeDialog = (): void => {
@@ -383,8 +592,10 @@ async function showHiDialog(
 					hotkeyAliases?: string[];
 					label: string;
 					risk?: boolean;
+					showStatusBadge?: boolean;
 					isEnabled: (state: DialogState) => boolean;
-					run: () => void;
+					run: () => void | Promise<void>;
+					closeAfterRun?: boolean;
 				};
 				const getSafeModeUiState = (): DialogState => {
 					type MaybeSafeModeEntry = {
@@ -431,14 +642,33 @@ async function showHiDialog(
 						isEnabled: (state) => state.yoloPlusOn,
 						run: onSetYoloPlus,
 					},
+					{
+						hotkey: "p",
+						hotkeyAliases: ["P"],
+						label: "Preview prompts",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: async () => {
+							closeDialog();
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							await onShowPromptPreviews();
+						},
+					},
 				];
 				const actionCount = actions.length;
 
 				const executeAction = (index: number): void => {
 					const action = actions[index];
 					if (!action) return;
-					action.run();
-					closeDialog();
+					void (async () => {
+						try {
+							await action.run();
+						} finally {
+							if (action.closeAfterRun === false) return;
+							closeDialog();
+						}
+					})();
 				};
 
 				const matchActionIndexForInput = (data: string): number => {
@@ -455,31 +685,30 @@ async function showHiDialog(
 							label: string,
 							enabled: boolean,
 							isSelected: boolean,
-							options?: { risk?: boolean },
+							options?: { risk?: boolean; showStatusBadge?: boolean },
 						): string => {
-							const badgeText = enabled ? "[ON]" : "[OFF]";
+							const showStatusBadge = options?.showStatusBadge !== false;
+							const badgeText = showStatusBadge ? (enabled ? "[ON]" : "[OFF]") : "";
 							const badgeColor = enabled
 								? options?.risk
 									? "\x1b[33m"
 									: "\x1b[32m"
 								: "\x1b[90m";
-							const badge = `${badgeColor}${badgeText}${RESET_FG}`;
+							const badge = showStatusBadge ? `${badgeColor}${badgeText}${RESET_FG}` : "";
+							const badgeWidth = showStatusBadge ? visibleWidth(badgeText) : 0;
 							const prefix = isSelected ? "› " : "  ";
 							const left = `${prefix}[${hotkey}] ${label}`;
-							const availableLeft = Math.max(1, innerWidth - visibleWidth(badgeText) - 1);
+							const availableLeft = Math.max(1, innerWidth - badgeWidth - (showStatusBadge ? 1 : 0));
 							const clippedLeft =
 								visibleWidth(left) > availableLeft ? truncateToWidth(left, availableLeft, "") : left;
-							const gap = Math.max(1, innerWidth - visibleWidth(clippedLeft) - visibleWidth(badgeText));
+							const gap = Math.max(0, innerWidth - visibleWidth(clippedLeft) - badgeWidth);
 							return `${clippedLeft}${" ".repeat(gap)}${badge}`;
 						};
 						const actionLines = actions.map((action, index) =>
-							actionLine(
-								action.hotkey,
-								action.label,
-								action.isEnabled(state),
-								selectedIndex === index,
-								action.risk ? { risk: true } : undefined,
-							),
+							actionLine(action.hotkey, action.label, action.isEnabled(state), selectedIndex === index, {
+								risk: action.risk,
+								showStatusBadge: action.showStatusBadge,
+							}),
 						);
 						return [
 							`╔${"═".repeat(innerWidth)}╗`,
@@ -491,7 +720,7 @@ async function showHiDialog(
 							`╚${"═".repeat(innerWidth)}╝`,
 						];
 					},
-					invalidate() {},
+					invalidate() { },
 					handleInput(data: string) {
 						if (matchesKey(data, Key.escape) || data === ESC || matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
 							closeDialog();
@@ -736,6 +965,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onSetYoloPlus: () => {
 						pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });
+					},
+					onShowPromptPreviews: async () => {
+						await showPromptPreviewDialog(ctx);
 					},
 				},
 				{
