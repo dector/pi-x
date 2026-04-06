@@ -19,6 +19,7 @@ This repo currently contains the following extension(s):
 - [`git`](extensions/git/README.md) — Adds a `git` tool and `/git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support.
 - [`pi-ui`](extensions/pi-ui/README.md) — UI tweaks extension (currently a colorful configurable working indicator animation).
 - [`attension-core`](extensions/attension-core/README.md) — Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/attension-core-test` command.
+- [`save`](extensions/save/README.md) — Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/save file.md`).
 
 ## Install policy for pi agents
 
