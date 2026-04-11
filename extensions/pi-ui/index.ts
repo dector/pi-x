@@ -764,7 +764,8 @@ async function showHiDialog(
 }
 
 export default function piUiExtension(pi: ExtensionAPI): void {
-	patchLoaderWorkingSpinner();
+	// Disabled: use pi's default busy indicator instead of pi-ui custom loader.
+	// patchLoaderWorkingSpinner();
 
 	let minimumTrackLength = clamp(
 		parseIntEnv("PI_UI_WORKING_LENGTH", DEFAULT_MIN_TRACK_LENGTH),
@@ -874,19 +875,22 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	pi.on("agent_start", async (_event, ctx) => {
 		agentRunning = true;
 		pendingInteractiveInputSerial = 0;
-		startAnimation(ctx);
+		// Disabled: keep pi default busy indicator.
+		// startAnimation(ctx);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
 		agentRunning = false;
-		stopAnimation(ctx);
+		// Disabled: keep pi default busy indicator.
+		// stopAnimation(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		pendingInteractiveInputSerial = 0;
 		agentRunning = false;
-		stopAnimation(ctx);
+		// Disabled: keep pi default busy indicator.
+		// stopAnimation(ctx);
 	});
 
 	pi.registerCommand("pi-ui-working-length", {
