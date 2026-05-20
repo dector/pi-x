@@ -1075,13 +1075,6 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		await loadProjectApprovals(ctx);
 	});
 
-	pi.on("session_fork", async (_event, ctx) => {
-		resetSessionApprovals();
-		await refreshDefaults(ctx);
-		applyResolvedState(ctx);
-		await loadProjectApprovals(ctx);
-	});
-
 	pi.on("tool_call", async (event, ctx) => {
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		const exactBashCommand = event.toolName === "bash" ? getExactBashCommand(input) : undefined;

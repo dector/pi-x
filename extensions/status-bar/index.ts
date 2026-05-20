@@ -582,15 +582,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		bindContextAndRender(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		bindContextAndRender(ctx);
-	});
-
 	pi.on("session_tree", async (_event, ctx) => {
-		bindContextAndRender(ctx);
-	});
-
-	pi.on("session_fork", async (_event, ctx) => {
 		bindContextAndRender(ctx);
 	});
 

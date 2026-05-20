@@ -226,7 +226,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		notify(ctx, `No favorite thinking modes are available on this model. Favorites file: ${GLOBAL_STATE_PATH}`, "warning");
 	});
 
-	const bindStatusRefresh = (eventName: "turn_start" | "turn_end" | "agent_start" | "agent_end" | "message_start" | "message_update" | "message_end" | "session_switch" | "session_fork" | "session_tree" | "input" | "user_bash") => {
+	const bindStatusRefresh = (eventName: "turn_start" | "turn_end" | "agent_start" | "agent_end" | "message_start" | "message_update" | "message_end" | "session_tree" | "input" | "user_bash") => {
 		pi.on(eventName, async (_event, ctx) => {
 			refreshStatusIfModeChanged(ctx);
 		});
@@ -239,8 +239,6 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 	bindStatusRefresh("message_start");
 	bindStatusRefresh("message_update");
 	bindStatusRefresh("message_end");
-	bindStatusRefresh("session_switch");
-	bindStatusRefresh("session_fork");
 	bindStatusRefresh("session_tree");
 	bindStatusRefresh("input");
 	bindStatusRefresh("user_bash");

@@ -840,16 +840,6 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		notifyInputExpectedIfReady(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		ensureUiBellPatched(ctx);
-		notifyInputExpectedIfReady(ctx);
-	});
-
-	pi.on("session_fork", async (_event, ctx) => {
-		ensureUiBellPatched(ctx);
-		notifyInputExpectedIfReady(ctx);
-	});
-
 	pi.on("session_tree", async (_event, ctx) => {
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);

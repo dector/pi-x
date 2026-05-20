@@ -28,15 +28,7 @@ export default function attensionCoreExtension(pi: ExtensionAPI): void {
 		lastBellAt = 0;
 	});
 
-	pi.on("session_switch", async () => {
-		lastBellAt = 0;
-	});
-
 	pi.on("session_tree", async () => {
-		lastBellAt = 0;
-	});
-
-	pi.on("session_fork", async () => {
 		lastBellAt = 0;
 	});
 

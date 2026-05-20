@@ -262,9 +262,7 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 	const bindRefresh = (
 		eventName:
 			| "session_start"
-			| "session_switch"
 			| "session_tree"
-			| "session_fork"
 			| "turn_start"
 			| "turn_end"
 			| "input"
@@ -276,9 +274,7 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 	};
 
 	bindRefresh("session_start");
-	bindRefresh("session_switch");
 	bindRefresh("session_tree");
-	bindRefresh("session_fork");
 	bindRefresh("turn_start");
 	bindRefresh("turn_end");
 	bindRefresh("input");
