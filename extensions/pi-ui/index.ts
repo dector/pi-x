@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";

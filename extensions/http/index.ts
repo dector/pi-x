@@ -2,16 +2,16 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, TruncationResult } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, TruncationResult } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
 	rawKeyHint,
 	truncateHead,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
-import { Text } from "@mariozechner/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import { load as loadHtml } from "cheerio";
 
 const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;

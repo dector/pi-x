@@ -6,8 +6,8 @@ import {
 	truncateHead,
 	type TruncationResult,
 	type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
 import { classifySqliteQuery, normalizeSqliteToolInput, summarizeSqliteToolCall, type SqliteScalar } from "./sql";
 

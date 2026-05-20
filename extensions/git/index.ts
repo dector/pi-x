@@ -1,8 +1,8 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 const GitToolParams = Type.Object({
 	args: Type.Optional(

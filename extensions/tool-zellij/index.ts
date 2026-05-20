@@ -1,5 +1,5 @@
 import { StringEnum, Type } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const ZELLIJ_ACTIONS = ["help", "version"] as const;
 

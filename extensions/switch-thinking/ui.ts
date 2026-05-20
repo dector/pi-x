@@ -1,6 +1,6 @@
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 import type { ThinkingMode } from "./state";
 
 interface ThinkingPickerOptions {

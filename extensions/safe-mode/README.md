@@ -86,7 +86,7 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 Notes:
 - `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.
 - For `reader`/`smart`, non-read-only operations still ask for approval.
-- For `reader`/`smart` with `outerAccess=false`, installed pi docs are a narrow read-only exception (`README.md`, `docs/`, `examples/` under the resolved `@mariozechner/pi-coding-agent` package).
+- For `reader`/`smart` with `outerAccess=false`, installed pi docs are a narrow read-only exception (`README.md`, `docs/`, `examples/` under the resolved `@earendil-works/pi-coding-agent` package).
 - For `yolo`, `outerAccess=false` still gates outside-repo targets; `YOLO!` allows those too.
 
 ## Commands

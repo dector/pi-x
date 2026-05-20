@@ -1,5 +1,5 @@
-import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -44,7 +44,7 @@ function collectInstalledPiPackageRoots(): string[] {
 	const roots = new Set<string>();
 
 	try {
-		const packageJsonPath = requireForResolve.resolve("@mariozechner/pi-coding-agent/package.json");
+		const packageJsonPath = requireForResolve.resolve("@earendil-works/pi-coding-agent/package.json");
 		roots.add(resolve(dirname(packageJsonPath)));
 	} catch {
 		// ignore: extension-local module resolution can fail when pi is installed globally

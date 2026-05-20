@@ -44,7 +44,7 @@ The footer renders two lines:
 
 ## Alignment and width behavior
 
-- Uses ANSI-aware helpers from `@mariozechner/pi-tui`:
+- Uses ANSI-aware helpers from `@earendil-works/pi-tui`:
   - `visibleWidth(...)`
   - `truncateToWidth(...)`
 - Placement priority for the status line:
