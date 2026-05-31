@@ -49,6 +49,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 	let pickerOpen = false;
 	let detachTerminalInput: (() => void) | undefined;
 	let deferredRefreshScheduled = false;
+	let activeCtx: ExtensionContext | undefined;
 
 	const persistFavorites = (ctx: ExtensionContext): boolean => {
 		const result = saveGlobalState({ version: 1, favorites });
@@ -112,7 +113,8 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		deferredRefreshScheduled = true;
 		setTimeout(() => {
 			deferredRefreshScheduled = false;
-			refreshStatusIfModeChanged(ctx);
+			if (!activeCtx) return;
+			refreshStatusIfModeChanged(activeCtx);
 		}, 0);
 	};
 
@@ -202,6 +204,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		activeCtx = ctx;
 		const loaded = loadGlobalState();
 		favorites = uniqueModes(loaded.state.favorites);
 		if (loaded.error) {
@@ -210,8 +213,9 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 
 		if (ctx.hasUI && !detachTerminalInput) {
 			detachTerminalInput = ctx.ui.onTerminalInput(() => {
-				refreshStatusIfModeChanged(ctx);
-				scheduleDeferredStatusRefresh(ctx);
+				if (!activeCtx) return undefined;
+				refreshStatusIfModeChanged(activeCtx);
+				scheduleDeferredStatusRefresh(activeCtx);
 				return undefined;
 			});
 		}
@@ -228,6 +232,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 
 	const bindStatusRefresh = (eventName: "turn_start" | "turn_end" | "agent_start" | "agent_end" | "message_start" | "message_update" | "message_end" | "session_tree" | "input" | "user_bash") => {
 		pi.on(eventName, async (_event, ctx) => {
+			activeCtx = ctx;
 			refreshStatusIfModeChanged(ctx);
 		});
 	};
@@ -244,6 +249,7 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 	bindStatusRefresh("user_bash");
 
 	pi.on("session_shutdown", async () => {
+		activeCtx = undefined;
 		detachTerminalInput?.();
 		detachTerminalInput = undefined;
 		deferredRefreshScheduled = false;
