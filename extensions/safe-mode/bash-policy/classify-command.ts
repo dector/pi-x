@@ -9,6 +9,7 @@ import { builtinCommandMatcher } from "./matchers/command/builtin-command";
 import { writeCommandMatcher } from "./matchers/command/write-command";
 import { gitCommandMatcher } from "./matchers/command/git";
 import { packageManagerCommandMatcher } from "./matchers/command/package-manager";
+import { sedCommandMatcher } from "./matchers/command/sed";
 import { readOnlyCommandMatcher } from "./matchers/command/read-only-command";
 
 const COMMAND_MATCHERS: readonly BashCommandMatcher[] = [
@@ -17,6 +18,7 @@ const COMMAND_MATCHERS: readonly BashCommandMatcher[] = [
 	writeCommandMatcher,
 	gitCommandMatcher,
 	packageManagerCommandMatcher,
+	sedCommandMatcher,
 	readOnlyCommandMatcher,
 ];
 

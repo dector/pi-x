@@ -33,6 +33,18 @@ test("validateBashCommand: read-only chain with || true is auto-allowed", () => 
 	}
 });
 
+test("validateBashCommand: read-only file listing pipeline is auto-allowed", () => {
+	const profiles = ["reader", "smart"] as const;
+	for (const profile of profiles) {
+		const decision = validateBashCommand({
+			command: "pwd; find . -maxdepth 3 -type f | sed 's#^./##' | sort | head -300",
+			profile,
+		});
+		expect(decision.action).toBe("allow");
+		expect(decision.reasons[0]?.code).toBe("read-only-command");
+	}
+});
+
 test("validateBashCommand: reader and smart profiles currently match", () => {
 	const corpus = [
 		"ls -la",
@@ -188,7 +200,9 @@ test("validateBashCommand: sed safety coverage is conservative", () => {
 
 	const unsafeWriteCapableSed = [
 		"sed -i 's/a/b/' file",
+		"sed -i.bak 's/a/b/' file",
 		"sed --in-place 's/a/b/' file",
+		"sed --in-place=.bak 's/a/b/' file",
 		"git diff -- file | sed -i 's/a/b/'",
 	] as const;
 
@@ -204,12 +218,8 @@ test("validateBashCommand: sed safety coverage is conservative", () => {
 	for (const profile of profiles) {
 		for (const command of readIntentSed) {
 			const decision = validateBashCommand({ command, profile });
-			if (decision.action === "allow") {
-				expect(decision.reasons[0]?.code).toBe("read-only-command");
-			} else {
-				expect(decision.action).toBe("confirm");
-				expect(decision.reasons[0]?.code).toBe("unknown-command");
-			}
+			expect(decision.action).toBe("allow");
+			expect(decision.reasons[0]?.code).toBe("read-only-command");
 		}
 	}
 
