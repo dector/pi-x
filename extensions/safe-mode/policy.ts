@@ -7,8 +7,9 @@ export type SafeMode = (typeof SAFE_MODES)[number];
 
 export const DEFAULT_SAFE_MODE: SafeMode = "smart";
 
-const READ_ONLY_TOOLS = new Set(["read", "ls", "grep"]);
+const READ_ONLY_TOOLS = new Set(["read", "ls", "grep", "read_memoryfs"]);
 const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
+const READ_ONLY_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export type ToolCallLike = {
 	toolName: string;
@@ -563,6 +564,11 @@ export function decideToolCall(args: {
 		};
 	}
 
+	const httpConfirmationReason = getHttpConfirmationReason(toolName, input, mode, projectRoot);
+	if (httpConfirmationReason) {
+		return { action: "confirm", reason: httpConfirmationReason, summary };
+	}
+
 	if (!outerAccess && targetsOutsideProject(toolName, input, projectRoot)) {
 		if (!isTrustedOutsideReadAllowed({ mode, toolName, input, projectRoot, trustedReadRoots })) {
 			return {
@@ -624,6 +630,7 @@ export function decideToolCall(args: {
 
 function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode: SafeMode): boolean {
 	if (READ_ONLY_TOOLS.has(toolName)) return true;
+	if (isReadOnlyHttpToolCall(toolName, input)) return true;
 	if (toolName === "git") return classifyGitToolCall(input).readOnly;
 	if (toolName === "sqlite") {
 		const normalized = normalizeSqliteInputForPolicy(input);
@@ -650,6 +657,95 @@ export function getBashCommandType(command: string): BashCommandType {
 		hasWrites: classification.anyWriteLike || analysis.structure.hasOutputRedirection,
 		isPlainCommand: analysis.structure.isPlainCommand,
 	};
+}
+
+function getHttpConfirmationReason(
+	toolName: string,
+	input: Record<string, unknown>,
+	mode: SafeMode,
+	projectRoot: string,
+): string | undefined {
+	if (toolName === "http_md" && input.spillMode === "to_file") {
+		return "HTTP Markdown to-file output requires approval.";
+	}
+
+	if (toolName === "http") {
+		const outputFile = getHttpOutputFile(input);
+		if (outputFile) {
+			if (mode === "yolo" && isPathInsideProject(outputFile, projectRoot)) return undefined;
+			return mode === "yolo"
+				? `HTTP output file targets outside project root (${projectRoot}).`
+				: "HTTP file output requires approval.";
+		}
+	}
+
+	if ((toolName === "http" || toolName === "http_md") && mode !== "yolo" && !isReadOnlyHttpMethod(input)) {
+		return "HTTP auto-approval is limited to GET, HEAD, and OPTIONS.";
+	}
+
+	return undefined;
+}
+
+function isReadOnlyHttpToolCall(toolName: string, input: Record<string, unknown>): boolean {
+	return (toolName === "http" || toolName === "http_md") && isReadOnlyHttpMethod(input);
+}
+
+function isReadOnlyHttpMethod(input: Record<string, unknown>): boolean {
+	const method = getHttpMethod(input);
+	return READ_ONLY_HTTP_METHODS.has(method);
+}
+
+function getHttpMethod(input: Record<string, unknown>): string {
+	const structuredMethod = typeof input.method === "string" ? input.method.trim() : "";
+	const curlMethod = getCurlRequestMethod(input);
+	return (curlMethod || structuredMethod || "GET").toUpperCase();
+}
+
+function getCurlRequestMethod(input: Record<string, unknown>): string | undefined {
+	const curlArgs = getCurlArgs(input);
+	if (!curlArgs) return undefined;
+
+	let hasDataBody = false;
+	for (let i = 0; i < curlArgs.length; i += 1) {
+		const arg = curlArgs[i]!;
+		if (arg === "-X" || arg === "--request") return curlArgs[i + 1]?.trim();
+		if (arg.startsWith("-X") && arg.length > 2) return arg.slice(2).trim();
+		if (arg.startsWith("--request=")) return arg.slice("--request=".length).trim();
+		if (arg === "-d" || arg === "--data" || arg === "--data-raw" || arg === "--data-binary") hasDataBody = true;
+	}
+
+	return hasDataBody ? "POST" : undefined;
+}
+
+function getHttpOutputFile(input: Record<string, unknown>): string | undefined {
+	const outputFile = normalizeToolPath(input.outputFile);
+	if (outputFile) return outputFile;
+	return getCurlOutputFile(input);
+}
+
+function getCurlOutputFile(input: Record<string, unknown>): string | undefined {
+	const curlArgs = getCurlArgs(input);
+	if (!curlArgs) return undefined;
+
+	for (let i = 0; i < curlArgs.length; i += 1) {
+		const arg = curlArgs[i]!;
+		if (arg === "-o" || arg === "--output") return normalizeToolPath(curlArgs[i + 1]);
+		if (arg.startsWith("-o") && arg.length > 2) return normalizeToolPath(arg.slice(2));
+		if (arg.startsWith("--output=")) return normalizeToolPath(arg.slice("--output=".length));
+	}
+
+	return undefined;
+}
+
+function getCurlArgs(input: Record<string, unknown>): string[] | undefined {
+	const raw = input.curlArgs;
+	if (!Array.isArray(raw)) return undefined;
+	const args: string[] = [];
+	for (const value of raw) {
+		if (typeof value !== "string") return undefined;
+		args.push(value.trim());
+	}
+	return args;
 }
 
 function isTrustedOutsideReadAllowed(args: {

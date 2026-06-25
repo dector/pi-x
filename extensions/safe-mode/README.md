@@ -70,6 +70,15 @@ Notes:
 
 So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to outer-access/path scope), while mutating queries require approval.
 
+## HTTP and memoryfs auto-allow
+
+- `read_memoryfs` is auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
+- `http` and `http_md` are auto-allowed in `reader`/`smart` only for `GET`, `HEAD`, and `OPTIONS` requests.
+- Other HTTP methods require approval in `reader`/`smart`; `yolo` keeps its normal allow behavior.
+- `http_md` with `spillMode: "to_file"` requires approval.
+- `http` file output (`outputFile`, `curlArgs` `-o`, or `curlArgs` `--output`) requires approval in `reader`/`smart`.
+- In `yolo`, `http` file output is allowed only inside the project root; outside-project output still requires approval, including in `YOLO!`.
+
 ## Auto-approval matrix
 
 Legend: ✅ auto-allow, ❓ asks for approval.
@@ -82,6 +91,9 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 | `edit`/`write` **outside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ |
 | read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | read-only `bash` targeting **outside repo** | ❓ | ❓ | ✅ | ❓ | ✅ | ❓ | ✅ |
+| `http`/`http_md` `GET`/`HEAD`/`OPTIONS` without file output | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `read_memoryfs` | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `http_md` `spillMode: "to_file"` | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ |
 
 Notes:
 - `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.

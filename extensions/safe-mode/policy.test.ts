@@ -385,6 +385,39 @@ test("decideToolCall: reader mode integration", () => {
 	expect(decide("reader", "bash", { command: "python -c 'print(1)'" }).action).toBe("confirm");
 });
 
+test("decideToolCall: http and memoryfs safe-mode matrix", () => {
+	expect(decide("paranoid", "http", { url: "https://example.com" }).action).toBe("confirm");
+	expect(decide("paranoid", "http_md", { url: "https://example.com" }).action).toBe("confirm");
+	expect(decide("paranoid", "read_memoryfs", { id: "mem-1" }).action).toBe("confirm");
+
+	for (const mode of ["reader", "smart", "yolo"] as const) {
+		expect(decide(mode, "http", { url: "https://example.com" }).action).toBe("allow");
+		expect(decide(mode, "http", { url: "https://example.com", method: "GET" }).action).toBe("allow");
+		expect(decide(mode, "http", { url: "https://example.com", method: "head" }).action).toBe("allow");
+		expect(decide(mode, "http", { url: "https://example.com", method: "OPTIONS" }).action).toBe("allow");
+		expect(decide(mode, "http_md", { url: "https://example.com", method: "GET" }).action).toBe("allow");
+		expect(decide(mode, "read_memoryfs", { id: "mem-1" }).action).toBe("allow");
+	}
+
+	for (const mode of ["reader", "smart"] as const) {
+		expect(decide(mode, "http", { url: "https://example.com", method: "POST" }).action).toBe("confirm");
+		expect(decide(mode, "http_md", { url: "https://example.com", method: "DELETE" }).action).toBe("confirm");
+		expect(decide(mode, "http_md", { url: "https://example.com", spillMode: "to_file" }).action).toBe("confirm");
+		expect(decide(mode, "http", { url: "https://example.com", outputFile: "download.txt" }).action).toBe("confirm");
+		expect(decide(mode, "http", { curlArgs: ["-X", "POST", "https://example.com"] }).action).toBe("confirm");
+		expect(decide(mode, "http", { curlArgs: ["-d", "name=value", "https://example.com"] }).action).toBe("confirm");
+		expect(decide(mode, "http", { curlArgs: ["-o", "download.txt", "https://example.com"] }).action).toBe("confirm");
+		expect(decide(mode, "http", { curlArgs: ["--output=/tmp/download.txt", "https://example.com"] }).action).toBe("confirm");
+	}
+
+	expect(decide("yolo", "http", { url: "https://example.com", method: "POST" }).action).toBe("allow");
+	expect(decide("yolo", "http", { url: "https://example.com", outputFile: "download.txt" }).action).toBe("allow");
+	expect(decide("yolo", "http", { url: "https://example.com", outputFile: "/tmp/download.txt" }).action).toBe("confirm");
+	expect(decide("yolo", "http", { url: "https://example.com", outputFile: "/tmp/download.txt" }, PROJECT_ROOT, true).action).toBe("confirm");
+	expect(decide("yolo", "http", { curlArgs: ["-o", "/tmp/download.txt", "https://example.com"] }, PROJECT_ROOT, true).action).toBe("confirm");
+	expect(decide("yolo", "http_md", { url: "https://example.com", spillMode: "to_file" }).action).toBe("confirm");
+});
+
 test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "read", { path: "policy.ts" }).action).toBe("allow");
 	expect(decide("smart", "edit", { path: "policy.ts" }).action).toBe("allow");
