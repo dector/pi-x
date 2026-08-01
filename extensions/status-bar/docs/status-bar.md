@@ -28,8 +28,13 @@ Producers publish content to the shared event bus:
   - payload: `{ id: string, content: string }`
 - `status-bar:clear`
   - payload: `{ id: string }`
+- `status-bar:first-line:set`
+  - payload: `{ id: string, content: string, section?: "left" | "center" | "right", priority?: number }`
+  - omitted `section` defaults to `left`
+- `status-bar:first-line:clear`
+  - payload: `{ id: string }`
 
-`id` is the producer ID (for example `safe-mode`, `switch-thinking`).
+`id` is the producer ID (for example `safe-mode`, `switch-thinking`, `repo-stats`).
 
 ## Rendering path
 
@@ -37,12 +42,12 @@ Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), no
 
 Footer lines:
 
-1. cwd + git branch + optional session name (pi default first line)
+1. first-line sections (left/center/right), or cwd + git branch + optional session name when there are no first-line producers
 2. status-bar line (left/center/right)
 
 ## Status-line rendering rules
 
-Status-bar stores latest content per producer (`id -> content`) and resolves section values by `DEFAULT_STATUS_BAR_LAYOUT`.
+Status-bar stores latest content per producer (`id -> content`) and resolves second-line section values by `DEFAULT_STATUS_BAR_LAYOUT`.
 
 For `context-watcher-*` IDs, status-bar now computes values internally from the active context/session.
 
@@ -82,5 +87,5 @@ Placement priority:
 ### Status-bar extension
 
 - Own layout, joining, alignment, and truncation.
-- Resolve first-line priority arbitration.
+- Resolve first-line left/center/right sections, ordered by priority descending then stable registration order.
 - Compute built-in context watcher values (`context-watcher-*`) from active session/model/context usage.

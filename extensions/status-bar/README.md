@@ -23,15 +23,18 @@ Install and enable it first so producer extensions can render their status outpu
 - Item delimiter inside a section: ` · `
 - Section delimiter: two spaces (`  `)
 
-### First line provider (new)
+### First line sections
 
+- Sections: `left`, `center`, `right`
 - Events:
-  - `status-bar:first-line:set` with `{ id, content, priority? }`
+  - `status-bar:first-line:set` with `{ id, content, section?, priority? }`
   - `status-bar:first-line:clear` with `{ id }`
-- Resolution:
-  - highest `priority` wins (default `0`)
+- Compatibility: omitted `section` defaults to `left`.
+- Resolution inside each section:
+  - highest `priority` first (default `0`)
   - tie-breaker: stable first-registration order
-  - if no provider exists, fallback to built-in cwd/branch/session line
+  - item delimiter: ` · `
+- If no first-line producer exists, fallback to the built-in cwd/branch/session line.
 
 ## Implementation
 
@@ -39,7 +42,7 @@ Install and enable it first so producer extensions can render their status outpu
 
 The footer renders two lines:
 
-1. First line from first-line provider events (or fallback to cwd + git branch + optional session name)
+1. First line from first-line section events (or fallback to cwd + git branch + optional session name)
 2. status-bar line with true left/center/right alignment
 
 ## Alignment and width behavior
@@ -66,7 +69,7 @@ Context usage (`context-watcher-*` IDs) is now produced internally by `status-ba
 First-line producers (example):
 
 - `repo-stats`
-- `attension-core` (special-case: when active, its bell is prefixed before cwd/branch)
+- `attension-core` (special-case: when active, its content is still prefixed before cwd/branch)
 
 ## Dev helper commands
 

@@ -25,6 +25,7 @@ export interface StatusBarClearPayload {
 export interface StatusBarFirstLineSetPayload {
 	id: string;
 	content: string;
+	section?: StatusBarSection;
 	priority?: number;
 }
 

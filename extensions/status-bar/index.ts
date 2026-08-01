@@ -7,6 +7,7 @@ import {
 	type StatusBarClearPayload,
 	type StatusBarFirstLineClearPayload,
 	type StatusBarFirstLineSetPayload,
+	type StatusBarSection,
 	type StatusBarSetPayload,
 } from "./contract";
 
@@ -91,6 +92,7 @@ function getContextWatcherOverrides(
 
 interface FirstLineEntry {
 	content: string;
+	section: StatusBarSection;
 	priority: number;
 	order: number;
 }
@@ -112,6 +114,9 @@ function isFirstLineSetPayload(value: unknown): value is StatusBarFirstLineSetPa
 	const maybe = value as Partial<StatusBarFirstLineSetPayload>;
 	if (typeof maybe.id !== "string") return false;
 	if (typeof maybe.content !== "string") return false;
+	if (maybe.section !== undefined && maybe.section !== "left" && maybe.section !== "center" && maybe.section !== "right") {
+		return false;
+	}
 	if (maybe.priority !== undefined && typeof maybe.priority !== "number") return false;
 	return true;
 }
@@ -300,7 +305,7 @@ async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
 			id: "event-first-line-set",
 			label: "Event: first line set",
 			value: STATUS_BAR_EVENTS.firstLineSet,
-			description: "Sets first-line content (e.g. repo summary) with optional priority.",
+			description: "Sets first-line content with optional section (left/center/right) and priority.",
 		},
 		{
 			id: "event-first-line-clear",
@@ -475,27 +480,31 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return false;
 	};
 
-	const resolveFirstLine = (): { id: string; content: string } | undefined => {
-		if (firstLineById.size === 0) return undefined;
+	const renderFirstLineSection = (
+		section: StatusBarSection,
+		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
+		attensionCoreSuffix?: string,
+	): string | undefined => {
+		const items = [...firstLineById.entries()]
+			.filter(([, entry]) => entry.section === section && hasVisibleText(entry.content))
+			.sort(([, a], [, b]) => b.priority - a.priority || a.order - b.order)
+			.map(([id, entry]) => {
+				const content = sanitizeStatusText(entry.content);
+				if (id === ATTENSION_CORE_ID && hasVisibleText(attensionCoreSuffix)) {
+					return `${content} ${sanitizeStatusText(attensionCoreSuffix)}`;
+				}
+				return content;
+			});
 
-		let selected: (FirstLineEntry & { id: string }) | undefined;
-		for (const [id, entry] of firstLineById.entries()) {
-			if (!hasVisibleText(entry.content)) continue;
-			if (!selected) {
-				selected = { id, ...entry };
-				continue;
-			}
-			if (entry.priority > selected.priority) {
-				selected = { id, ...entry };
-				continue;
-			}
-			if (entry.priority === selected.priority && entry.order < selected.order) {
-				selected = { id, ...entry };
-			}
+		if (items.length === 0) return undefined;
+		return items.join(joinSeparator);
+	};
+
+	const hasFirstLineContent = (): boolean => {
+		for (const entry of firstLineById.values()) {
+			if (hasVisibleText(entry.content)) return true;
 		}
-
-		if (!selected) return undefined;
-		return { id: selected.id, content: sanitizeStatusText(selected.content) };
+		return false;
 	};
 
 	const requestRender = (): void => {
@@ -533,12 +542,19 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					if (sessionName) pwd = `${pwd} • ${sessionName}`;
 					const defaultFirstLine = theme.fg("dim", pwd);
 
-					const producedFirstLine = resolveFirstLine();
-					const line1 = producedFirstLine
-						? producedFirstLine.id === ATTENSION_CORE_ID
-							? truncateToWidth(`${producedFirstLine.content} ${defaultFirstLine}`, width, theme.fg("dim", "..."))
-							: renderThreeSectionLine(width, defaultFirstLine, undefined, producedFirstLine.content)
-						: truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
+					let line1: string;
+					if (hasFirstLineContent()) {
+						const firstLineJoinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
+						const attensionCoreSuffix = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content)
+							? defaultFirstLine
+							: undefined;
+						const left = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
+						const center = renderFirstLineSection("center", firstLineJoinSeparator, attensionCoreSuffix);
+						const right = renderFirstLineSection("right", firstLineJoinSeparator, attensionCoreSuffix);
+						line1 = renderThreeSectionLine(width, left, center, right);
+					} else {
+						line1 = truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
+					}
 
 					const contextOverrides = getContextWatcherOverrides(activeCtx, theme);
 
@@ -649,6 +665,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		const order = existing?.order ?? firstLineOrderCounter++;
 		firstLineById.set(payload.id, {
 			content: payload.content,
+			section: payload.section ?? "left",
 			priority: Number.isFinite(payload.priority) ? payload.priority ?? 0 : 0,
 			order,
 		});
