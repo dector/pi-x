@@ -58,18 +58,38 @@ function collectInstalledPiPackageRoots(): string[] {
 		"/usr/lib/node_modules",
 	];
 
+	const knownScopedPackageNames = [
+		join("@earendil-works", "pi-coding-agent"),
+		join("@mariozechner", "pi-coding-agent"),
+	];
+
 	for (const parent of knownInstallParents) {
 		if (!existsSync(parent)) continue;
 
-		const directPackageRoot = join(parent, "@mariozechner", "pi-coding-agent");
-		if (existsSync(join(directPackageRoot, "package.json"))) {
-			roots.add(resolve(directPackageRoot));
+		for (const scopedPackageName of knownScopedPackageNames) {
+			const directPackageRoot = join(parent, scopedPackageName);
+			if (existsSync(join(directPackageRoot, "package.json"))) {
+				roots.add(resolve(directPackageRoot));
+			}
 		}
 
 		if (!parent.endsWith("npm-mariozechner-pi-coding-agent")) continue;
 		for (const entry of readdirSync(parent, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
-			const candidate = join(parent, entry.name, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
+			for (const scopedPackageName of knownScopedPackageNames) {
+				const candidate = join(parent, entry.name, "lib", "node_modules", scopedPackageName);
+				if (existsSync(join(candidate, "package.json"))) {
+					roots.add(resolve(candidate));
+				}
+			}
+		}
+	}
+
+	const misePiInstallsRoot = join(home, ".local", "share", "mise", "installs", "pi");
+	if (existsSync(misePiInstallsRoot)) {
+		for (const entry of readdirSync(misePiInstallsRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const candidate = join(misePiInstallsRoot, entry.name, "pi");
 			if (existsSync(join(candidate, "package.json"))) {
 				roots.add(resolve(candidate));
 			}
