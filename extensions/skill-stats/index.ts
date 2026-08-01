@@ -32,6 +32,12 @@ function getLoadedSkillCount(systemPromptOptions: unknown): number {
 	return Array.isArray(skills) ? skills.length : 0;
 }
 
+function getContextLoadedSkillCount(ctx: ExtensionContext): number {
+	const maybe = ctx as ExtensionContext & { getSystemPromptOptions?: () => unknown };
+	if (typeof maybe.getSystemPromptOptions !== "function") return 0;
+	return getLoadedSkillCount(maybe.getSystemPromptOptions());
+}
+
 export default function skillStatsExtension(pi: ExtensionAPI): void {
 	const readSkillPaths = new Set<string>();
 	let loadedSkillCount = 0;
@@ -83,6 +89,7 @@ export default function skillStatsExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionState(ctx);
+		loadedSkillCount = getContextLoadedSkillCount(ctx);
 		publish();
 		warningTimer = setTimeout(warnMissingStatusBar, STATUS_BAR_WARNING_DELAY_MS);
 		pi.events.emit(STATUS_BAR_PING_EVENT, { id: EXTENSION_ID });

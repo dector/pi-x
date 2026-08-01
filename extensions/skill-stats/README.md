@@ -7,7 +7,7 @@ SKILLS: n/m
 ```
 
 - `n` is the number of unique successfully-read `SKILL.md` files in the current session.
-- `m` is the number of loaded/known skills reported by pi before each agent run.
+- `m` is the number of loaded/known skills reported by pi for the current session and refreshed before each agent run.
 
 Requires [`status-bar`](../status-bar/README.md). If `status-bar` does not answer the extension availability ping, `skill-stats` warns once per session.
 
