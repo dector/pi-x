@@ -25,6 +25,8 @@ This repo currently contains the following extension(s):
 | [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/attension-core-test` command. | |
 | [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/save file.md`). | |
 
+also check the [skills repo](https://github.com/dector/skills).
+
 ## Install policy for pi agents
 
 When installing extensions from this repository, pi agents should use the standard pi extension layout:
