@@ -7,6 +7,7 @@ import {
 	type StatusBarClearPayload,
 	type StatusBarFirstLineClearPayload,
 	type StatusBarFirstLineSetPayload,
+	type StatusBarPingPayload,
 	type StatusBarSection,
 	type StatusBarSetPayload,
 } from "./contract";
@@ -124,6 +125,12 @@ function isFirstLineSetPayload(value: unknown): value is StatusBarFirstLineSetPa
 function isFirstLineClearPayload(value: unknown): value is StatusBarFirstLineClearPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarFirstLineClearPayload>;
+	return typeof maybe.id === "string";
+}
+
+function isPingPayload(value: unknown): value is StatusBarPingPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarPingPayload>;
 	return typeof maybe.id === "string";
 }
 
@@ -312,6 +319,18 @@ async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
 			label: "Event: first line clear",
 			value: STATUS_BAR_EVENTS.firstLineClear,
 			description: "Clears first-line producer content by id.",
+		},
+		{
+			id: "event-ping",
+			label: "Event: ping",
+			value: STATUS_BAR_EVENTS.ping,
+			description: "Availability probe; status-bar replies with pong echoing the same id.",
+		},
+		{
+			id: "event-pong",
+			label: "Event: pong",
+			value: STATUS_BAR_EVENTS.pong,
+			description: "Availability response emitted after a valid ping payload.",
 		},
 		{
 			id: "item-join",
@@ -676,6 +695,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		if (!isFirstLineClearPayload(payload)) return;
 		firstLineById.delete(payload.id);
 		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.ping, (payload) => {
+		if (!isPingPayload(payload)) return;
+		pi.events.emit(STATUS_BAR_EVENTS.pong, { id: payload.id });
 	});
 
 	pi.registerCommand("status-bar-contract", {

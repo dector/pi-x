@@ -9,6 +9,13 @@ Install and enable it first so producer extensions can render their status outpu
 
 ## Contract
 
+### Availability
+
+- `status-bar:ping` with `{ id }`
+- `status-bar:pong` with `{ id }`
+
+When `status-bar` receives a valid ping payload, it emits a pong payload echoing the same `id`.
+
 ### Second line sections (unchanged)
 
 - Sections: `left`, `center`, `right`
@@ -74,7 +81,7 @@ First-line producers (example):
 ## Dev helper commands
 
 - `/status-bar-contract`
-  - Opens a read-only settings-style view with contract and renderer details.
+  - Opens a read-only settings-style view with contract, ping/pong availability events, and renderer details.
 - `/status-bar-set <id> <content>`
   - Sets test content for a second-line ID and re-renders.
 - `/status-bar-clear <id>`

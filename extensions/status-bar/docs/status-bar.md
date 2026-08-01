@@ -33,6 +33,12 @@ Producers publish content to the shared event bus:
   - omitted `section` defaults to `left`
 - `status-bar:first-line:clear`
   - payload: `{ id: string }`
+- `status-bar:ping`
+  - payload: `{ id: string }`
+- `status-bar:pong`
+  - payload: `{ id: string }`
+
+When `status-bar` receives a valid `status-bar:ping`, it emits `status-bar:pong` echoing the same `id`.
 
 `id` is the producer ID (for example `safe-mode`, `switch-thinking`, `repo-stats`).
 

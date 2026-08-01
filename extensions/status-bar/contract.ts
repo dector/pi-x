@@ -3,6 +3,8 @@ export const STATUS_BAR_EVENTS = {
 	clear: "status-bar:clear",
 	firstLineSet: "status-bar:first-line:set",
 	firstLineClear: "status-bar:first-line:clear",
+	ping: "status-bar:ping",
+	pong: "status-bar:pong",
 } as const;
 
 export type StatusBarSection = "left" | "center" | "right";
@@ -30,6 +32,14 @@ export interface StatusBarFirstLineSetPayload {
 }
 
 export interface StatusBarFirstLineClearPayload {
+	id: string;
+}
+
+export interface StatusBarPingPayload {
+	id: string;
+}
+
+export interface StatusBarPongPayload {
 	id: string;
 }
 
