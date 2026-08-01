@@ -7,6 +7,8 @@ const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
 const STATUS_BAR_PING_EVENT = "status-bar:ping";
 const STATUS_BAR_PONG_EVENT = "status-bar:pong";
 const STATUS_BAR_WARNING_DELAY_MS = 500;
+const ANSI_RESET = "\u001b[0m";
+const ANSI_GRAY = "\u001b[90m";
 
 interface StatusBarPongPayload {
 	id?: unknown;
@@ -46,7 +48,10 @@ export default function skillStatsExtension(pi: ExtensionAPI): void {
 	let warningTimer: ReturnType<typeof setTimeout> | undefined;
 	let activeSessionContext: ExtensionContext | undefined;
 
-	const content = (): string => `SKILLS: ${readSkillPaths.size}/${loadedSkillCount}`;
+	const content = (): string => {
+		const text = `SKILLS: ${readSkillPaths.size}/${loadedSkillCount}`;
+		return activeSessionContext?.hasUI ? `${ANSI_GRAY}${text}${ANSI_RESET}` : text;
+	};
 
 	const publish = (): void => {
 		pi.events.emit(STATUS_BAR_FIRST_LINE_SET_EVENT, {
