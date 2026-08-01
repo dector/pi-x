@@ -20,8 +20,11 @@ pi.events.emit("status-bar:first-line:set", {
   id: "skill-stats",
   content: "SKILLS: 0/0",
   section: "right",
+  priority: -100,
 });
 ```
+
+The low priority keeps repo/change stats ahead of skill stats in the same right-side section.
 
 On shutdown it clears the same id with `status-bar:first-line:clear`.
 

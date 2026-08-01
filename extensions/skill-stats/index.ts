@@ -7,6 +7,7 @@ const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
 const STATUS_BAR_PING_EVENT = "status-bar:ping";
 const STATUS_BAR_PONG_EVENT = "status-bar:pong";
 const STATUS_BAR_WARNING_DELAY_MS = 500;
+const FIRST_LINE_PRIORITY = -100;
 const ANSI_RESET = "\u001b[0m";
 const ANSI_GRAY = "\u001b[90m";
 
@@ -58,6 +59,7 @@ export default function skillStatsExtension(pi: ExtensionAPI): void {
 			id: EXTENSION_ID,
 			content: content(),
 			section: "right",
+			priority: FIRST_LINE_PRIORITY,
 		});
 	};
 
