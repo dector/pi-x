@@ -9,6 +9,7 @@ for [shittycodingagent.ai](https://shittycodingagent.ai/).
 This repo currently contains the following extension(s):
 
 - [`status-bar`](extensions/status-bar/README.md) — **Required shared dependency** for other status-producing extensions in this repo. Install this first.
+- [`no-reflection`](extensions/no-reflection/README.md) — Removes pi's built-in documentation reference block from the agent system prompt without dumping the prompt anywhere. Disable with `PI_NO_REFLECTION=false`, `no`, `n`, or `0`.
 - [`switch-thinking`](extensions/switch-thinking/README.md) — Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. Depends on `status-bar` for status rendering.
 - [`safe-mode`](extensions/safe-mode/README.md) — Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. Depends on `status-bar` for status rendering.
 - [`repo-stats`](extensions/repo-stats/README.md) — Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. Depends on `status-bar`.
