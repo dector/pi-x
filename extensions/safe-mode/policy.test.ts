@@ -390,7 +390,7 @@ test("decideToolCall: reader mode integration", () => {
 test("decideToolCall: http and memoryfs safe-mode matrix", () => {
 	expect(decide("paranoid", "http", { url: "https://example.com" }).action).toBe("confirm");
 	expect(decide("paranoid", "http_md", { url: "https://example.com" }).action).toBe("confirm");
-	expect(decide("paranoid", "read_memoryfs", { id: "mem-1" }).action).toBe("confirm");
+	expect(decide("paranoid", "http", { memfs: { id: "mem-1" } }).action).toBe("confirm");
 
 	for (const mode of ["reader", "smart", "yolo"] as const) {
 		expect(decide(mode, "http", { url: "https://example.com" }).action).toBe("allow");
@@ -398,7 +398,9 @@ test("decideToolCall: http and memoryfs safe-mode matrix", () => {
 		expect(decide(mode, "http", { url: "https://example.com", method: "head" }).action).toBe("allow");
 		expect(decide(mode, "http", { url: "https://example.com", method: "OPTIONS" }).action).toBe("allow");
 		expect(decide(mode, "http_md", { url: "https://example.com", method: "GET" }).action).toBe("allow");
-		expect(decide(mode, "read_memoryfs", { id: "mem-1" }).action).toBe("allow");
+		expect(decide(mode, "http", { memfs: { id: "mem-1" } }).action).toBe("allow");
+		expect(decide(mode, "http_md", { memfs: { id: "mem-1", offset: 2, limit: 10 } }).action).toBe("allow");
+		expect(decide(mode, "web_search", { memfs: { id: "mem-1" } }).action).toBe("allow");
 	}
 
 	for (const mode of ["reader", "smart"] as const) {

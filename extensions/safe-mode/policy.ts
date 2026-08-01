@@ -7,7 +7,7 @@ export type SafeMode = (typeof SAFE_MODES)[number];
 
 export const DEFAULT_SAFE_MODE: SafeMode = "smart";
 
-const READ_ONLY_TOOLS = new Set(["read", "ls", "grep", "read_memoryfs"]);
+const READ_ONLY_TOOLS = new Set(["read", "ls", "grep"]);
 const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
 const READ_ONLY_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -630,6 +630,7 @@ export function decideToolCall(args: {
 
 function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode: SafeMode): boolean {
 	if (READ_ONLY_TOOLS.has(toolName)) return true;
+	if (isMemoryFsReadToolCall(toolName, input)) return true;
 	if (isReadOnlyHttpToolCall(toolName, input)) return true;
 	if (toolName === "git") return classifyGitToolCall(input).readOnly;
 	if (toolName === "sqlite") {
@@ -665,6 +666,8 @@ function getHttpConfirmationReason(
 	mode: SafeMode,
 	projectRoot: string,
 ): string | undefined {
+	if (isMemoryFsReadToolCall(toolName, input)) return undefined;
+
 	if (toolName === "http_md" && input.spillMode === "to_file") {
 		return "HTTP Markdown to-file output requires approval.";
 	}
@@ -688,6 +691,12 @@ function getHttpConfirmationReason(
 
 function isReadOnlyHttpToolCall(toolName: string, input: Record<string, unknown>): boolean {
 	return (toolName === "http" || toolName === "http_md") && isReadOnlyHttpMethod(input);
+}
+
+function isMemoryFsReadToolCall(toolName: string, input: Record<string, unknown>): boolean {
+	if (toolName !== "http" && toolName !== "http_md" && toolName !== "web_search") return false;
+	if (!input.memfs || typeof input.memfs !== "object") return false;
+	return Object.entries(input).every(([key, value]) => key === "memfs" || value === undefined);
 }
 
 function isReadOnlyHttpMethod(input: Record<string, unknown>): boolean {

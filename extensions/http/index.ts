@@ -37,7 +37,14 @@ const memoryFsEntries = new Map<string, MemoryFsEntry>();
 let memoryFsTotalBytes = 0;
 let memoryFsCounter = 0;
 
+const MemoryFsReadParams = Type.Object({
+	id: Type.String({ description: "MemoryFS entry ID returned by http/http_md/web_search." }),
+	offset: Type.Optional(Type.Number({ description: `Line number to start reading from (1-indexed). Default: ${MEMORYFS_DEFAULT_READ_OFFSET}.` })),
+	limit: Type.Optional(Type.Number({ description: `Maximum lines to read. Default: ${MEMORYFS_DEFAULT_READ_LIMIT}, max ${MEMORYFS_MAX_READ_LIMIT}.` })),
+});
+
 const HttpToolParams = Type.Object({
+	memfs: Type.Optional(MemoryFsReadParams),
 	url: Type.Optional(Type.String({ description: "Request URL (required unless curlArgs contains a URL)." })),
 	method: Type.Optional(Type.String({ description: "HTTP method (GET, POST, PUT, PATCH, DELETE, ...)." })),
 	headers: Type.Optional(
@@ -74,6 +81,7 @@ const HttpToolParams = Type.Object({
 });
 
 const HttpMarkdownToolParams = Type.Object({
+	memfs: Type.Optional(MemoryFsReadParams),
 	url: Type.Optional(Type.String({ description: "Request URL (required unless curlArgs contains a URL)." })),
 	method: Type.Optional(Type.String({ description: "HTTP method (GET, POST, PUT, PATCH, DELETE, ...)." })),
 	headers: Type.Optional(
@@ -115,7 +123,8 @@ const DEFAULT_WEB_SEARCH_RESULTS_PER_PAGE = 30;
 const MAX_WEB_SEARCH_PAGES = 10;
 
 const WebSearchToolParams = Type.Object({
-	query: Type.String({ description: "Search query string." }),
+	memfs: Type.Optional(MemoryFsReadParams),
+	query: Type.Optional(Type.String({ description: "Search query string." })),
 	page: Type.Optional(Type.Number({ description: `Start page number (1-indexed). Default: ${DEFAULT_WEB_SEARCH_PAGE}.` })),
 	pages: Type.Optional(Type.Number({ description: `How many pages to fetch, starting from 'page'. Default: ${DEFAULT_WEB_SEARCH_PAGES}. Max: ${MAX_WEB_SEARCH_PAGES}.` })),
 	resultsPerPage: Type.Optional(
@@ -126,13 +135,14 @@ const WebSearchToolParams = Type.Object({
 	followRedirects: Type.Optional(Type.Boolean({ description: "Follow redirects when requesting DuckDuckGo pages. Default: true." })),
 });
 
-const ReadMemoryFsToolParams = Type.Object({
-	id: Type.String({ description: "MemoryFS entry ID returned by http/http_md/web_search." }),
-	offset: Type.Optional(Type.Number({ description: `Line number to start reading from (1-indexed). Default: ${MEMORYFS_DEFAULT_READ_OFFSET}.` })),
-	limit: Type.Optional(Type.Number({ description: `Maximum lines to read. Default: ${MEMORYFS_DEFAULT_READ_LIMIT}, max ${MEMORYFS_MAX_READ_LIMIT}.` })),
-});
+type MemoryFsReadParamsInput = {
+	id: string;
+	offset?: number;
+	limit?: number;
+};
 
 type HttpBaseParamsInput = {
+	memfs?: MemoryFsReadParamsInput;
 	url?: string;
 	method?: string;
 	headers?: Record<string, string>;
@@ -160,19 +170,14 @@ type HttpMarkdownToolParamsInput = HttpBaseParamsInput & {
 };
 
 type WebSearchToolParamsInput = {
-	query: string;
+	memfs?: MemoryFsReadParamsInput;
+	query?: string;
 	page?: number;
 	pages?: number;
 	resultsPerPage?: number;
 	timeoutSec?: number;
 	spillMode?: string;
 	followRedirects?: boolean;
-};
-
-type ReadMemoryFsToolParamsInput = {
-	id: string;
-	offset?: number;
-	limit?: number;
 };
 
 type WebSearchResultItem = {
@@ -242,7 +247,7 @@ interface WebSearchToolDetails {
 	errorsByPage?: Array<{ page: number; error: string }>;
 }
 
-interface ReadMemoryFsToolDetails {
+interface MemoryFsReadToolDetails {
 	id: string;
 	offset: number;
 	limit: number;
@@ -359,7 +364,7 @@ function getMemoryFsEntry(id: string): MemoryFsEntry | undefined {
 	return entry;
 }
 
-function normalizeReadMemoryFsParams(input: ReadMemoryFsToolParamsInput) {
+function normalizeMemoryFsReadParams(input: MemoryFsReadParamsInput) {
 	const id = (input.id ?? "").trim();
 	if (!id) throw new Error("'id' is required.");
 
@@ -368,6 +373,16 @@ function normalizeReadMemoryFsParams(input: ReadMemoryFsToolParamsInput) {
 	const limit = Math.min(requestedLimit, MEMORYFS_MAX_READ_LIMIT);
 
 	return { id, offset, limit };
+}
+
+function assertMemfsExclusive(input: Record<string, unknown>): void {
+	if (input.memfs === undefined) return;
+	const extraFields = Object.entries(input)
+		.filter(([key, value]) => key !== "memfs" && value !== undefined)
+		.map(([key]) => key);
+	if (extraFields.length > 0) {
+		throw new Error(`'memfs' cannot be combined with other fields: ${extraFields.join(", ")}.`);
+	}
 }
 
 function normalizeWebSearchParams(input: WebSearchToolParamsInput) {
@@ -493,6 +508,9 @@ function extractUrlFromCurlArgs(curlArgs?: string[]): string | undefined {
 }
 
 function buildCallSummary(input: HttpBaseParamsInput): string {
+	if (input.memfs) {
+		return `memoryfs ${input.memfs.id} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
+	}
 	const method = (input.method?.trim() || "GET").toUpperCase();
 	const url = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
 	if (!url) return method;
@@ -500,6 +518,9 @@ function buildCallSummary(input: HttpBaseParamsInput): string {
 }
 
 function buildWebSearchCallSummary(input: WebSearchToolParamsInput): string {
+	if (input.memfs) {
+		return `memoryfs ${input.memfs.id} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
+	}
 	const query = shortenForDisplay((input.query ?? "").trim() || "(empty query)");
 	const startPage = Number.isFinite(input.page) && (input.page ?? 0) > 0 ? Math.floor(input.page ?? 1) : DEFAULT_WEB_SEARCH_PAGE;
 	const pages = Number.isFinite(input.pages) && (input.pages ?? 0) > 0 ? Math.floor(input.pages ?? 1) : DEFAULT_WEB_SEARCH_PAGES;
@@ -881,7 +902,7 @@ async function truncateWithSpill(
 	text += `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`;
 	text += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
 	if (fullOutputMemoryId) {
-		text += ` Full output saved to memoryfs: ${fullOutputMemoryId} (use read_memoryfs).`;
+		text += ` Full output saved to memoryfs: ${fullOutputMemoryId} (use this tool with memfs.id).`;
 	} else if (fullOutputPath) {
 		text += ` Full output saved to: ${fullOutputPath}.`;
 	}
@@ -1010,6 +1031,11 @@ function normalizeRequest(
 }
 
 async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?: AbortSignal) {
+	if (input.memfs) {
+		assertMemfsExclusive(input as Record<string, unknown>);
+		return await executeMemoryFsRead(input.memfs);
+	}
+
 	const spillMode = normalizeSpillMode(input.spillMode);
 	const request = normalizeRequest(input, cwd, { allowOutputFile: true });
 	const result = await executeRequest(request, signal);
@@ -1067,6 +1093,11 @@ async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?:
 }
 
 async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: string, signal?: AbortSignal) {
+	if (input.memfs) {
+		assertMemfsExclusive(input as Record<string, unknown>);
+		return await executeMemoryFsRead(input.memfs);
+	}
+
 	const spillMode = normalizeSpillMode(input.spillMode);
 	const request = normalizeRequest(input, cwd, { allowOutputFile: false });
 	const webToMdMaxBytes = normalizeWebToMdMaxBytes(input.webToMdMaxBytes);
@@ -1100,7 +1131,7 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 		webToMdFilePath = spilled.filePath;
 		webToMdMemoryId = spilled.memoryId;
 		if (spilled.memoryId) {
-			output += `\n[webToMd output saved to memoryfs: ${spilled.memoryId} (${spilled.bytes} bytes, use read_memoryfs)]`;
+			output += `\n[webToMd output saved to memoryfs: ${spilled.memoryId} (${spilled.bytes} bytes, use http_md with memfs.id)]`;
 		} else if (spilled.filePath) {
 			output += `\n[webToMd output saved to ${spilled.filePath} (${spilled.bytes} bytes)]`;
 		}
@@ -1148,6 +1179,11 @@ async function executeHttpMarkdownTool(input: HttpMarkdownToolParamsInput, cwd: 
 }
 
 async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: AbortSignal) {
+	if (input.memfs) {
+		assertMemfsExclusive(input as Record<string, unknown>);
+		return await executeMemoryFsRead(input.memfs);
+	}
+
 	const normalized = normalizeWebSearchParams(input);
 	const results: WebSearchResultItem[] = [];
 	const warnings: string[] = [];
@@ -1238,8 +1274,8 @@ async function executeWebSearchTool(input: WebSearchToolParamsInput, signal?: Ab
 	};
 }
 
-async function executeReadMemoryFsTool(input: ReadMemoryFsToolParamsInput) {
-	const normalized = normalizeReadMemoryFsParams(input);
+async function executeMemoryFsRead(input: MemoryFsReadParamsInput) {
+	const normalized = normalizeMemoryFsReadParams(input);
 	const entry = getMemoryFsEntry(normalized.id);
 	if (!entry) {
 		throw new Error(`MemoryFS entry not found or expired: ${normalized.id}`);
@@ -1253,11 +1289,11 @@ async function executeReadMemoryFsTool(input: ReadMemoryFsToolParamsInput) {
 
 	let output = selected.join("\n");
 	if (hasMore) {
-		output += `\n\n[read_memoryfs: showing lines ${startIndex + 1}-${endIndex} of ${allLines.length}; use offset=${endIndex + 1} to continue]`;
+		output += `\n\n[memoryfs: showing lines ${startIndex + 1}-${endIndex} of ${allLines.length}; use memfs.offset=${endIndex + 1} to continue]`;
 	}
 	if (!output) output = "(no output)";
 
-	const details: ReadMemoryFsToolDetails = {
+	const details: MemoryFsReadToolDetails = {
 		id: entry.id,
 		offset: normalized.offset,
 		limit: normalized.limit,
@@ -1289,7 +1325,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use this tool for HTTP requests instead of spawning shell curl commands.",
 			"Use headers/headerLines to pass arbitrary custom headers.",
-			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
+			"Use spillMode='in_memory' (default) and this tool's memfs field for oversized output when needed.",
 			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
 		],
 		parameters: HttpToolParams,
@@ -1317,7 +1353,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use this tool when webpage-to-Markdown output is needed.",
 			"Use headers/headerLines to pass arbitrary custom headers.",
-			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
+			"Use spillMode='in_memory' (default) and this tool's memfs field for oversized output when needed.",
 			"Use curlArgs for curl-style requests (unsupported curl flags will return an explicit error).",
 		],
 		parameters: HttpMarkdownToolParams,
@@ -1346,7 +1382,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			"Use this tool when you need search results, not full webpage content.",
 			"Request more pages with 'pages' when broader coverage is needed.",
 			"Use http/http_md on returned URLs when full content is required.",
-			"Use spillMode='in_memory' (default) and read_memoryfs for oversized output when needed.",
+			"Use spillMode='in_memory' (default) and this tool's memfs field for oversized output when needed.",
 		],
 		parameters: WebSearchToolParams,
 		renderCall(args, theme) {
@@ -1364,28 +1400,4 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool({
-		name: "read_memoryfs",
-		label: "Read MemoryFS",
-		description: "Read overflow content stored in this extension's in-memory cache.",
-		promptSnippet: "Read large outputs saved in memory by http/http_md/web_search.",
-		promptGuidelines: [
-			"Use this tool with IDs returned by http/http_md/web_search when spillMode is 'in_memory'.",
-			"Use offset/limit to page through large content.",
-		],
-		parameters: ReadMemoryFsToolParams,
-		renderCall(args, theme) {
-			const input = args as ReadMemoryFsToolParamsInput;
-			const summary = `${input.id} (offset ${input.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
-			let text = theme.fg("toolTitle", `${theme.bold("read_memoryfs")} `);
-			text += theme.fg("muted", summary);
-			return new Text(text, 0, 0);
-		},
-		renderResult(result, state, theme) {
-			return renderToolResultPreview(result, state, theme);
-		},
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			return await executeReadMemoryFsTool(params as ReadMemoryFsToolParamsInput);
-		},
-	});
 }

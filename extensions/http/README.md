@@ -1,11 +1,12 @@
 # http (pi extension)
 
-Adds four tools powered by **Node's native fetch API**:
+Adds three tools powered by **Node's native fetch API**:
 
 - `http` for regular HTTP requests
 - `http_md` for webpage → Markdown conversion (via local `pandoc`)
 - `web_search` for DuckDuckGo HTML search result extraction
-- `read_memoryfs` for reading overflow content saved in-memory
+
+Each tool can also read overflow content saved in-memory via its `memfs` field.
 
 ## Tools
 
@@ -31,6 +32,7 @@ HTTP client with:
 - `spillMode` (`in_memory` default, or `to_file`)
 - `outputFile`
 - `curlArgs`
+- `memfs` (`{ id, offset?, limit? }`) to read in-memory spilled output instead of making a request
 
 ## `http_md`
 
@@ -40,7 +42,7 @@ Fetches a webpage and converts HTML response to Markdown using:
 
 ### Structured fields
 
-Same request fields as `http`, except no `outputFile`.
+Same request fields as `http`, except no `outputFile`. It also supports `memfs` (`{ id, offset?, limit? }`) to read in-memory spilled output instead of making a request.
 
 Additional fields:
 
@@ -49,7 +51,7 @@ Additional fields:
 
 If converted Markdown exceeds `webToMdMaxBytes`, output is spilled according to `spillMode`:
 
-- `in_memory`: saved to memoryfs with an ID (read via `read_memoryfs`)
+- `in_memory`: saved to memoryfs with an ID (read via `http_md` with `memfs: { id }`)
 - `to_file`: saved to `/tmp/pi-http/web-to-md-*/result.md`
 
 ### Validation notes
@@ -73,13 +75,14 @@ Returns only:
 
 ### Fields
 
-- `query` (required)
+- `query` (required unless `memfs` is present)
 - `page` (default `1`) — start page, 1-indexed
 - `pages` (default `1`, max `10`) — number of pages to fetch from `page`
 - `resultsPerPage` (default `30`) — used to compute page offsets
 - `timeoutSec` — per-page timeout
 - `spillMode` (`in_memory` default, or `to_file`) for oversized output
 - `followRedirects` (default `true`)
+- `memfs` (`{ id, offset?, limit? }`) to read in-memory spilled output instead of making a search request
 
 ### Output
 
@@ -90,15 +93,27 @@ Returns JSON with:
 - optional `warnings`
 - optional `errorsByPage` for partial failures
 
-## `read_memoryfs`
+## Memoryfs reads
 
-Reads content previously spilled to in-memory storage.
+Reads content previously spilled to in-memory storage through the tool that needs it:
 
-### Fields
+```json
+{
+  "memfs": {
+    "id": "mem-...",
+    "offset": 1,
+    "limit": 200
+  }
+}
+```
+
+Fields:
 
 - `id` (required): memoryfs entry ID returned by `http`/`http_md`/`web_search`
 - `offset` (default `1`): line number to start from (1-indexed)
 - `limit` (default `200`, max `2000`): maximum lines returned
+
+When `memfs` is present, it cannot be combined with request/search fields.
 
 ## curl-compatible mode
 
