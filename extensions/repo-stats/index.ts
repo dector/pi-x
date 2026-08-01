@@ -245,6 +245,7 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 		pi.events.emit(STATUS_BAR_FIRST_LINE_SET_EVENT, {
 			id: STATUS_BAR_ID,
 			content,
+			section: "right",
 			priority: FIRST_LINE_PRIORITY,
 		});
 	};

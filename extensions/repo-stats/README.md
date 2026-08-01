@@ -23,16 +23,17 @@ Examples:
 
 `repo-stats` emits first-line events consumed by `status-bar` (displayed on the right side of first row):
 
-- `status-bar:first-line:set` with `{ id, content, priority }`
+- `status-bar:first-line:set` with `{ id, content, section: "right", priority }`
 - `status-bar:first-line:clear` with `{ id }`
 
 Producer id:
 
 - `repo-stats`
 
-Priority used:
+Section and priority used:
 
-- `100` (so this line wins over lower-priority first-line producers)
+- `right`
+- `100` (so this item appears before lower-priority first-line right-section producers)
 
 ## Dirty totals
 
