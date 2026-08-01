@@ -80,7 +80,6 @@ extensions=(
   "repo-stats"
   "http"
   "interactive-bash"
-  "tool-zellij"
   "pi-ui"
   "sqlite"
   "save"

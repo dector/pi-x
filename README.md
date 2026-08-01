@@ -15,7 +15,6 @@ This repo currently contains the following extension(s):
 - [`http`](extensions/http/README.md) — Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`.
 - [`sqlite`](extensions/sqlite/README.md) — Adds a `sqlite` query tool for file-backed and in-memory databases, with read-only/mutating SQL classification for safe-mode integration.
 - [`interactive-bash`](extensions/interactive-bash/README.md) — Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts).
-- [`tool-zellij`](extensions/tool-zellij/README.md) — Adds a `zellij` bridge tool for controlling zellij/tmux workflows (currently `help` and `version`).
 - [`git`](extensions/git/README.md) — Adds a `git` tool and `/git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support.
 - [`pi-ui`](extensions/pi-ui/README.md) — UI tweaks extension (currently a colorful configurable working indicator animation).
 - [`attension-core`](extensions/attension-core/README.md) — Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/attension-core-test` command.
