@@ -79,6 +79,7 @@ extensions=(
   "switch-thinking"
   "safe-mode"
   "repo-stats"
+  "skill-stats"
   "http"
   "interactive-bash"
   "pi-ui"
