@@ -398,6 +398,8 @@ test("decideToolCall: http and memoryfs safe-mode matrix", () => {
 		expect(decide(mode, "http", { url: "https://example.com", method: "head" }).action).toBe("allow");
 		expect(decide(mode, "http", { url: "https://example.com", method: "OPTIONS" }).action).toBe("allow");
 		expect(decide(mode, "http_md", { url: "https://example.com", method: "GET" }).action).toBe("allow");
+		expect(decide(mode, "web_search", { query: "pi coding agent" }).action).toBe("allow");
+		expect(decide(mode, "web_search", { query: "pi coding agent", pages: 2, resultsPerPage: 10 }).action).toBe("allow");
 		expect(decide(mode, "http", { memfs: { id: "mem-1" } }).action).toBe("allow");
 		expect(decide(mode, "http_md", { memfs: { id: "mem-1", offset: 2, limit: 10 } }).action).toBe("allow");
 		expect(decide(mode, "web_search", { memfs: { id: "mem-1" } }).action).toBe("allow");

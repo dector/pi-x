@@ -73,6 +73,7 @@ So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to oute
 ## HTTP and memoryfs auto-allow
 
 - Memoryfs reads through `http`, `http_md`, and `web_search` (`memfs: { id, offset?, limit? }`) are auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
+- `web_search` queries are auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
 - `http` and `http_md` are auto-allowed in `reader`/`smart` only for `GET`, `HEAD`, and `OPTIONS` requests.
 - Other HTTP methods require approval in `reader`/`smart`; `yolo` keeps its normal allow behavior.
 - `http_md` with `spillMode: "to_file"` requires approval.
@@ -92,6 +93,7 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 | read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | read-only `bash` targeting **outside repo** | ❓ | ❓* | ✅ | ❓* | ✅ | ❓ | ✅ |
 | `http`/`http_md` `GET`/`HEAD`/`OPTIONS` without file output | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `web_search` query | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `http`/`http_md`/`web_search` memoryfs read | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `http_md` `spillMode: "to_file"` | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ |
 

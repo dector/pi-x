@@ -632,6 +632,7 @@ function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode:
 	if (READ_ONLY_TOOLS.has(toolName)) return true;
 	if (isMemoryFsReadToolCall(toolName, input)) return true;
 	if (isReadOnlyHttpToolCall(toolName, input)) return true;
+	if (isReadOnlyWebSearchToolCall(toolName, input)) return true;
 	if (toolName === "git") return classifyGitToolCall(input).readOnly;
 	if (toolName === "sqlite") {
 		const normalized = normalizeSqliteInputForPolicy(input);
@@ -691,6 +692,12 @@ function getHttpConfirmationReason(
 
 function isReadOnlyHttpToolCall(toolName: string, input: Record<string, unknown>): boolean {
 	return (toolName === "http" || toolName === "http_md") && isReadOnlyHttpMethod(input);
+}
+
+function isReadOnlyWebSearchToolCall(toolName: string, input: Record<string, unknown>): boolean {
+	if (toolName !== "web_search") return false;
+	if (input.query !== undefined && typeof input.query !== "string") return false;
+	return true;
 }
 
 function isMemoryFsReadToolCall(toolName: string, input: Record<string, unknown>): boolean {
