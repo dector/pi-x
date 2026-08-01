@@ -46,4 +46,9 @@ if [[ $WITH_NVIM -eq 1 ]]; then
 	fi
 fi
 
+# Keep pi's built-in documentation reference block visible during pitest runs by
+# disabling the no-reflection extension unless the caller explicitly overrides it.
+: "${PI_NO_REFLECTION:=false}"
+export PI_NO_REFLECTION
+
 exec pi --no-extensions "${EXT_ARGS[@]}" "${PI_ARGS[@]}"
