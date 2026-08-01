@@ -17,6 +17,8 @@ const TRUSTED_PI_DOC_ROOTS = [
 	`${PI_PACKAGE_ROOT}/docs`,
 	`${PI_PACKAGE_ROOT}/examples`,
 ];
+const SKILL_ROOT = "/home/user/.pi/agent/skills/askme";
+const SKILL_FILE = `${SKILL_ROOT}/SKILL.md`;
 
 type BashExpectation = Partial<BashCommandType>;
 
@@ -433,27 +435,37 @@ test("decideToolCall: smart mode integration", () => {
 	expect(decide("smart", "bash", { command: "ls | grep src" }).action).toBe("allow");
 });
 
-test("decideToolCall: trusted pi docs outside project", () => {
+test("decideToolCall: trusted read roots outside project", () => {
 	const docsFile = `${PI_PACKAGE_ROOT}/docs/extensions.md`;
 	const readmeFile = `${PI_PACKAGE_ROOT}/README.md`;
+	const skillReferenceFile = `${SKILL_ROOT}/references/foo.md`;
 	const outsideFile = "/tmp/outside.txt";
+	const trustedReadRoots = [...TRUSTED_PI_DOC_ROOTS, SKILL_ROOT];
 
 	expect(decide("reader", "read", { path: docsFile }).action).toBe("confirm");
-	expect(decide("reader", "read", { path: docsFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("allow");
-	expect(decide("smart", "read", { path: readmeFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("allow");
+	expect(decide("reader", "read", { path: docsFile }, PROJECT_ROOT, false, trustedReadRoots).action).toBe("allow");
+	expect(decide("smart", "read", { path: readmeFile }, PROJECT_ROOT, false, trustedReadRoots).action).toBe("allow");
 
-	expect(decide("reader", "read", { path: outsideFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("confirm");
-	expect(decide("smart", "write", { path: docsFile }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action).toBe("confirm");
+	expect(decide("reader", "read", { path: SKILL_FILE }, PROJECT_ROOT, false, [SKILL_ROOT]).action).toBe("allow");
+	expect(decide("smart", "read", { path: SKILL_FILE }, PROJECT_ROOT, false, [SKILL_ROOT]).action).toBe("allow");
+	expect(decide("paranoid", "read", { path: SKILL_FILE }, PROJECT_ROOT, false, [SKILL_ROOT]).action).toBe("confirm");
+	expect(decide("reader", "read", { path: skillReferenceFile }, PROJECT_ROOT, false, [SKILL_ROOT]).action).toBe("allow");
+
+	expect(decide("reader", "read", { path: outsideFile }, PROJECT_ROOT, false, trustedReadRoots).action).toBe("confirm");
+	expect(decide("smart", "write", { path: SKILL_FILE }, PROJECT_ROOT, false, [SKILL_ROOT]).action).toBe("confirm");
 
 	expect(
-		decide("reader", "bash", { command: `cat ${docsFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action,
+		decide("reader", "bash", { command: `cat ${docsFile}` }, PROJECT_ROOT, false, trustedReadRoots).action,
 	).toBe("allow");
 	expect(
-		decide("reader", "bash", { command: `cat ${docsFile} ${outsideFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS)
+		decide("reader", "bash", { command: `cat ${SKILL_FILE}` }, PROJECT_ROOT, false, [SKILL_ROOT]).action,
+	).toBe("allow");
+	expect(
+		decide("reader", "bash", { command: `cat ${SKILL_FILE} ${outsideFile}` }, PROJECT_ROOT, false, [SKILL_ROOT])
 			.action,
 	).toBe("confirm");
 	expect(
-		decide("reader", "bash", { command: `cat ${outsideFile}` }, PROJECT_ROOT, false, TRUSTED_PI_DOC_ROOTS).action,
+		decide("reader", "bash", { command: `cat ${outsideFile}` }, PROJECT_ROOT, false, trustedReadRoots).action,
 	).toBe("confirm");
 });
 

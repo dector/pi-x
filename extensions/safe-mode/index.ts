@@ -98,7 +98,60 @@ function resolveTrustedPiDocumentationRoots(): string[] {
 	return [...deduped];
 }
 
-const TRUSTED_PI_DOCUMENTATION_ROOTS = resolveTrustedPiDocumentationRoots();
+const STATIC_TRUSTED_READ_ROOTS = resolveTrustedPiDocumentationRoots();
+const trustedSkillReadRoots = new Set<string>();
+
+type SkillLike = {
+	filePath?: unknown;
+	baseDir?: unknown;
+	sourceInfo?: { path?: unknown };
+};
+
+type CommandLike = {
+	source?: unknown;
+	sourceInfo?: { path?: unknown };
+};
+
+function addTrustedSkillReadRootsFromSkills(skills: unknown): void {
+	if (!Array.isArray(skills)) return;
+	for (const skill of skills as SkillLike[]) {
+		if (typeof skill.baseDir === "string" && skill.baseDir.trim()) {
+			trustedSkillReadRoots.add(resolve(skill.baseDir));
+		}
+		if (typeof skill.filePath === "string" && skill.filePath.trim()) {
+			trustedSkillReadRoots.add(resolve(skill.filePath));
+		}
+		if (typeof skill.sourceInfo?.path === "string" && skill.sourceInfo.path.trim()) {
+			trustedSkillReadRoots.add(resolve(skill.sourceInfo.path));
+		}
+	}
+}
+
+function refreshTrustedSkillReadRootsFromSkills(skills: unknown): void {
+	trustedSkillReadRoots.clear();
+	addTrustedSkillReadRootsFromSkills(skills);
+}
+
+function addTrustedSkillReadRootsFromCommands(commands: unknown): void {
+	if (!Array.isArray(commands)) return;
+	for (const command of commands as CommandLike[]) {
+		if (command.source !== "skill") continue;
+		if (typeof command.sourceInfo?.path === "string" && command.sourceInfo.path.trim()) {
+			trustedSkillReadRoots.add(resolve(command.sourceInfo.path));
+		}
+	}
+}
+
+function refreshTrustedSkillReadRootsFromCommands(pi: ExtensionAPI): void {
+	trustedSkillReadRoots.clear();
+	const maybeGetCommands = (pi as ExtensionAPI & { getCommands?: () => unknown }).getCommands;
+	if (typeof maybeGetCommands !== "function") return;
+	addTrustedSkillReadRootsFromCommands(maybeGetCommands.call(pi));
+}
+
+function getTrustedReadRoots(): string[] {
+	return [...STATIC_TRUSTED_READ_ROOTS, ...trustedSkillReadRoots];
+}
 
 interface SafeModeDefaults {
 	mode?: SafeMode;
@@ -1063,6 +1116,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionApprovals();
+		refreshTrustedSkillReadRootsFromCommands(pi);
 		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
@@ -1070,9 +1124,15 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		resetSessionApprovals();
+		refreshTrustedSkillReadRootsFromCommands(pi);
 		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
+	});
+
+	pi.on("before_agent_start", async (event) => {
+		const skills = (event as { systemPromptOptions?: { skills?: unknown } }).systemPromptOptions?.skills;
+		refreshTrustedSkillReadRootsFromSkills(skills);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -1093,7 +1153,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			input,
 			projectRoot: ctx.cwd,
 			outerAccess,
-			trustedReadRoots: TRUSTED_PI_DOCUMENTATION_ROOTS,
+			trustedReadRoots: getTrustedReadRoots(),
 		});
 
 		if (decision.action === "allow") return;

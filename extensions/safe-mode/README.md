@@ -27,8 +27,8 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
 - `outerAccess=false` (default)
   - Mode auto-approvals apply inside project root (`ctx.cwd`) only.
   - If an operation clearly targets paths outside the project root, approval is required.
-  - Exception: in `reader`/`smart`, read-only access to installed **pi documentation paths** is auto-allowed (package `README.md`, `docs/`, and `examples/`).
-  - This auto-discovery is most reliable when pi is installed via **mise** (other install layouts are best-effort).
+  - Exception: in `reader`/`smart`, read-only access to trusted read roots is auto-allowed (installed pi docs and loaded skills).
+  - Pi docs auto-discovery is most reliable when pi is installed via **mise** (other install layouts are best-effort).
 - `outerAccess=true`
   - `reader`/`yolo`: mode rules also apply to outside paths.
   - `smart`: read rules apply outside paths, but `edit`/`write` remain inside-project only.
@@ -86,11 +86,11 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 | Operation | PARANOID | READER | READER! | SMART | SMART! | YOLO | YOLO! |
 |---|---|---|---|---|---|---|---|
 | `read`/`ls`/`grep` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `read`/`ls`/`grep` **outside repo** | ❓ | ❓ | ✅ | ❓ | ✅ | ❓ | ✅ |
+| `read`/`ls`/`grep` **outside repo** | ❓ | ❓* | ✅ | ❓* | ✅ | ❓ | ✅ |
 | `edit`/`write` **inside repo** | ❓ | ❓ | ❓ | ✅ | ✅ | ✅ | ✅ |
 | `edit`/`write` **outside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ |
 | read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| read-only `bash` targeting **outside repo** | ❓ | ❓ | ✅ | ❓ | ✅ | ❓ | ✅ |
+| read-only `bash` targeting **outside repo** | ❓ | ❓* | ✅ | ❓* | ✅ | ❓ | ✅ |
 | `http`/`http_md` `GET`/`HEAD`/`OPTIONS` without file output | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `read_memoryfs` | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `http_md` `spillMode: "to_file"` | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ |
@@ -98,8 +98,17 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 Notes:
 - `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.
 - For `reader`/`smart`, non-read-only operations still ask for approval.
-- For `reader`/`smart` with `outerAccess=false`, installed pi docs are a narrow read-only exception (`README.md`, `docs/`, `examples/` under the resolved `@earendil-works/pi-coding-agent` package).
+- `*` For `reader`/`smart` with `outerAccess=false`, trusted read roots are a narrow read-only exception.
 - For `yolo`, `outerAccess=false` still gates outside-repo targets; `YOLO!` allows those too.
+
+## Trusted read roots
+
+When `outerAccess=false`, `reader`/`smart` can still auto-allow read-only operations against trusted read roots outside the project:
+
+- installed pi package documentation roots: package `README.md`, `docs/`, and `examples/`
+- loaded skill roots: skill `baseDir` when available, with `filePath` / `sourceInfo.path` as fallback
+
+This covers normal skill loading via `read` of `SKILL.md` plus sibling/reference files under a loaded skill directory. It does not permit writes, execution, mutating bash commands, or any operation in `paranoid`.
 
 ## Commands
 
