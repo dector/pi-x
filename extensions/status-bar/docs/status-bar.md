@@ -48,7 +48,7 @@ Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), no
 
 Footer lines:
 
-1. first-line sections (left/center/right), or cwd + git branch + optional session name when there are no first-line producers
+1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section
 2. status-bar line (left/center/right)
 
 ## Status-line rendering rules

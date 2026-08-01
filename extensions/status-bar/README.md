@@ -42,6 +42,7 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - tie-breaker: stable first-registration order
   - item delimiter: ` · `
 - If no first-line producer exists, fallback to the built-in cwd/branch/session line.
+- If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
 
 ## Implementation
 
@@ -49,7 +50,7 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 
 The footer renders two lines:
 
-1. First line from first-line section events (or fallback to cwd + git branch + optional session name)
+1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section
 2. status-bar line with true left/center/right alignment
 
 ## Alignment and width behavior

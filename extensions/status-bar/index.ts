@@ -564,10 +564,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					let line1: string;
 					if (hasFirstLineContent()) {
 						const firstLineJoinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
-						const attensionCoreSuffix = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content)
-							? defaultFirstLine
-							: undefined;
-						const left = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
+						const hasAttensionCore = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content);
+						const attensionCoreSuffix = hasAttensionCore ? defaultFirstLine : undefined;
+						const producerLeft = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
+						const left = producerLeft ?? (hasAttensionCore ? undefined : defaultFirstLine);
 						const center = renderFirstLineSection("center", firstLineJoinSeparator, attensionCoreSuffix);
 						const right = renderFirstLineSection("right", firstLineJoinSeparator, attensionCoreSuffix);
 						line1 = renderThreeSectionLine(width, left, center, right);
