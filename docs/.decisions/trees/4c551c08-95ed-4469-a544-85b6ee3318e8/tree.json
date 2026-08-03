@@ -2,7 +2,7 @@
 	"version": 1,
 	"id": "4c551c08-95ed-4469-a544-85b6ee3318e8",
 	"title": "prompt-stash extension plan",
-	"status": "open",
+	"status": "resolved",
 	"history": {
 		"capture": null
 	},
@@ -11,7 +11,7 @@
 		"type": "group",
 		"priority": "important",
 		"title": "",
-		"status": "open",
+		"status": "resolved",
 		"notes": [
 			{
 				"id": "7706cdba-085a-442d-bbf1-eedc629d8c67",
@@ -26,6 +26,13 @@
 				"source": "tool",
 				"content": "Relevant pi extension APIs: registerCommand, registerShortcut, ctx.ui.getEditorText(), ctx.ui.setEditorText(), ctx.ui.pasteToEditor(), ctx.ui.notify. Extensions can live in ~/.pi/agent/extensions or project-local .pi/extensions.",
 				"deleted_at": null
+			},
+			{
+				"id": "3356920c-18a0-4499-a1be-58a930603e6b",
+				"timestamp": "2026-08-03T14:41:55.442Z",
+				"source": "tool",
+				"content": "prompt-stash extension implementation is complete. All planned decisions are accepted and resolved.",
+				"deleted_at": null
 			}
 		],
 		"raw_refs": [],
@@ -35,8 +42,16 @@
 				"type": "group",
 				"priority": "major",
 				"title": "Edge cases and safety",
-				"status": "open",
-				"notes": [],
+				"status": "resolved",
+				"notes": [
+					{
+						"id": "cbae50d2-9483-4415-be0d-936754444d0a",
+						"timestamp": "2026-08-03T14:41:47.645Z",
+						"source": "tool",
+						"content": "Implementation completed; all edge-case decisions have been accepted and reflected in the extension.",
+						"deleted_at": null
+					}
+				],
 				"raw_refs": [],
 				"children": [
 					{
@@ -87,15 +102,23 @@
 					}
 				],
 				"created_at": "2026-08-03T13:39:50.081Z",
-				"updated_at": "2026-08-03T13:59:46.907Z"
+				"updated_at": "2026-08-03T14:41:47.645Z"
 			},
 			{
 				"id": "cee6ccd3-4432-4f48-8678-b51d0fa17ecb",
 				"type": "group",
 				"priority": "critical",
 				"title": "Core stash/restore workflow",
-				"status": "open",
-				"notes": [],
+				"status": "resolved",
+				"notes": [
+					{
+						"id": "f0d57dc3-3537-4dd6-95e1-1d8b962ceb3c",
+						"timestamp": "2026-08-03T14:42:09.461Z",
+						"source": "tool",
+						"content": "Implementation completed; core stash/restore workflow is implemented.",
+						"deleted_at": null
+					}
+				],
 				"raw_refs": [],
 				"children": [
 					{
@@ -192,15 +215,23 @@
 					}
 				],
 				"created_at": "2026-08-03T13:41:07.260Z",
-				"updated_at": "2026-08-03T13:44:02.261Z"
+				"updated_at": "2026-08-03T14:42:09.461Z"
 			},
 			{
 				"id": "a7eaedf1-d21a-4ae9-be73-0f805956acdf",
 				"type": "group",
 				"priority": "important",
 				"title": "Storage model and persistence",
-				"status": "open",
-				"notes": [],
+				"status": "resolved",
+				"notes": [
+					{
+						"id": "1f493564-b70f-4251-a29a-690c63e181c5",
+						"timestamp": "2026-08-03T14:45:34.819Z",
+						"source": "tool",
+						"content": "Implementation completed; storage/persistence decisions are implemented.",
+						"deleted_at": null
+					}
+				],
 				"raw_refs": [],
 				"children": [
 					{
@@ -251,15 +282,23 @@
 					}
 				],
 				"created_at": "2026-08-03T13:41:11.970Z",
-				"updated_at": "2026-08-03T13:49:20.566Z"
+				"updated_at": "2026-08-03T14:45:34.819Z"
 			},
 			{
 				"id": "d2fef51e-06e2-4d6c-b8e2-960b203ac06a",
 				"type": "group",
 				"priority": "important",
 				"title": "User interface and keybindings",
-				"status": "open",
-				"notes": [],
+				"status": "resolved",
+				"notes": [
+					{
+						"id": "2233c541-9766-4300-a5a4-e5bbdad10524",
+						"timestamp": "2026-08-03T14:45:41.417Z",
+						"source": "tool",
+						"content": "Implementation completed; commands and shortcuts are implemented.",
+						"deleted_at": null
+					}
+				],
 				"raw_refs": [],
 				"children": [
 					{
@@ -332,15 +371,23 @@
 					}
 				],
 				"created_at": "2026-08-03T13:41:16.834Z",
-				"updated_at": "2026-08-03T13:54:07.396Z"
+				"updated_at": "2026-08-03T14:45:41.417Z"
 			},
 			{
 				"id": "e4d384d3-54fc-47f2-8e84-427c1868e0f5",
 				"type": "group",
 				"priority": "major",
 				"title": "Scope, packaging, and installation",
-				"status": "open",
-				"notes": [],
+				"status": "resolved",
+				"notes": [
+					{
+						"id": "52c10990-e181-49c2-9668-e26b6e4d5ff5",
+						"timestamp": "2026-08-03T14:45:46.631Z",
+						"source": "tool",
+						"content": "Implementation completed; extension is packaged in this repository and installable with the existing install flow.",
+						"deleted_at": null
+					}
+				],
 				"raw_refs": [],
 				"children": [
 					{
@@ -368,12 +415,12 @@
 					}
 				],
 				"created_at": "2026-08-03T13:41:20.372Z",
-				"updated_at": "2026-08-03T13:53:01.574Z"
+				"updated_at": "2026-08-03T14:45:46.631Z"
 			}
 		],
 		"created_at": "2026-08-03T13:39:16.228Z",
-		"updated_at": "2026-08-03T13:41:20.372Z"
+		"updated_at": "2026-08-03T14:41:55.442Z"
 	},
 	"created_at": "2026-08-03T13:39:16.228Z",
-	"updated_at": "2026-08-03T14:00:10.224Z"
+	"updated_at": "2026-08-03T14:45:46.631Z"
 }
