@@ -5,4 +5,5 @@ export * from "./types";
 export * from "./validation";
 export * from "./traversal";
 export * from "./overview";
+export * from "./markdown";
 export * from "./service";

@@ -63,6 +63,7 @@ The extension does not silently edit your repository root `.gitignore`.
 - `dt_list_trees`
 - `dt_select_tree`
 - `dt_get_tree`
+- `dt_as_markdown`
 - `dt_get_item`
 - `dt_create_item`
 - `dt_update_item`
@@ -113,10 +114,13 @@ A concise agent workflow:
 6. Read an overview. Leaf decisions are counted, not expanded.
    dt_get_tree { "mode": "overview" }
 
-7. Find user-attention items
+7. Render the tree as Markdown.
+   dt_as_markdown {}
+
+8. Find user-attention items
    dt_next_unresolved { "strategy": "ranked", "limit": 5 }
 
-8. Select an active item explicitly
+9. Select an active item explicitly
    dt_set_active_item { "item_id": "<item-uuid>" }
 ```
 
@@ -145,6 +149,21 @@ Human commands are minimal wrappers:
 - `full`: returns full structured tree data, excluding raw history and deleted notes by default.
 
 Use `dt_get_item` for focused reads of one item and optional child depth.
+
+Use `dt_as_markdown` to render a tree as simple structured Markdown:
+
+```markdown
+# Tree title
+
+## Group title
+
+### Decision title or question
+
+Q: Question text
+A: Answer text
+Notes:
+- user: Note text
+```
 
 ## v1 limitations
 

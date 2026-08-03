@@ -39,6 +39,12 @@ export const DtGetTreeParams = Type.Object({
 	include_deleted_notes: Type.Optional(Type.Boolean({ description: "Include deleted notes in full mode." })),
 });
 
+export const DtAsMarkdownParams = Type.Object({
+	...ResponseOptions,
+	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
+	include_deleted_notes: Type.Optional(Type.Boolean({ description: "Include deleted notes. Defaults to false." })),
+});
+
 export const DtGetItemParams = Type.Object({
 	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),

@@ -3,6 +3,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { createDecisionTreePiContext } from "./context";
 import { errorResult, okResult, shortId } from "./format";
 import {
+	DtAsMarkdownParams,
 	DtCreateItemParams,
 	DtCreateTreeParams,
 	DtGetItemParams,
@@ -110,6 +111,22 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 				const result = await ctx.service.getTree(ctx.projectRoot, params as { tree_id?: string; mode?: "overview" | "full"; include_deleted_notes?: boolean });
 				const title = "title" in result.tree ? result.tree.title : undefined;
 				return okResult(`Decision tree ${result.mode}.`, base(ctx, { ok: true, mode: result.mode, resolved: resolvedWithTitle(result.resolved, title), tree: result.tree }), responseOptions(params));
+			} catch (error) { return errorResult(error, base(ctx)); }
+		},
+	});
+
+	register(pi, {
+		name: "dt_as_markdown",
+		label: "Decision Tree As Markdown",
+		description: "Render a decision tree as simple structured Markdown.",
+		promptSnippet: "Render the active decision tree as Markdown.",
+		parameters: DtAsMarkdownParams,
+		execute: async (params, cwd) => {
+			const ctx = await createDecisionTreePiContext(cwd);
+			try {
+				const result = await ctx.service.asMarkdown(ctx.projectRoot, params as { tree_id?: string; include_deleted_notes?: boolean });
+				const details = base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) });
+				return { content: [{ type: "text", text: result.markdown }], details: responseOptions(params).returnJson ? details : {} };
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});

@@ -5,6 +5,7 @@ import type { AnswerStage, DecisionItem, GroupItem, Note, NoteSource, Priority, 
 import { assertValidTreeDoc, cloneTree, withoutDeletedNotes } from "./validation";
 import { findItem, itemPath, walkItems } from "./traversal";
 import { treeOverview } from "./overview";
+import { treeAsMarkdown } from "./markdown";
 import type { DecisionTreePersistence } from "../persistence/types";
 
 export class DecisionTreeServiceError extends Error {
@@ -78,6 +79,11 @@ export class DecisionTreeService {
 			return { mode: "full" as const, tree: full, resolved: { tree_id: tree.id, used_active_tree: usedActive, used_active_item: false } satisfies ResolvedContext };
 		}
 		return { mode: "overview" as const, tree: treeOverview(tree), resolved: { tree_id: tree.id, used_active_tree: usedActive, used_active_item: false } satisfies ResolvedContext };
+	}
+
+	async asMarkdown(projectRoot: string, options: { tree_id?: string; include_deleted_notes?: boolean } = {}) {
+		const { tree, usedActive } = await this.resolveTree(projectRoot, options.tree_id);
+		return { markdown: treeAsMarkdown(tree, { include_deleted_notes: options.include_deleted_notes }), resolved: { tree_id: tree.id, used_active_tree: usedActive, used_active_item: false } satisfies ResolvedContext };
 	}
 
 	async getItem(projectRoot: string, options: { tree_id?: string; item_id?: string; include_path?: boolean; children_depth?: number; include_deleted_notes?: boolean } = {}) {
