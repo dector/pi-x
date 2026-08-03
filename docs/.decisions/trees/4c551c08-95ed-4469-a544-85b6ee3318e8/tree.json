@@ -1,0 +1,379 @@
+{
+	"version": 1,
+	"id": "4c551c08-95ed-4469-a544-85b6ee3318e8",
+	"title": "prompt-stash extension plan",
+	"status": "open",
+	"history": {
+		"capture": null
+	},
+	"root": {
+		"id": "b9299ca2-5fdb-4d23-a46e-8c7adc74bba4",
+		"type": "group",
+		"priority": "important",
+		"title": "",
+		"status": "open",
+		"notes": [
+			{
+				"id": "7706cdba-085a-442d-bbf1-eedc629d8c67",
+				"timestamp": "2026-08-03T13:39:32.530Z",
+				"source": "user",
+				"content": "User wants to create a pi extension named prompt-stash that allows stashing the current unfinished prompt and extracting/restoring it later.",
+				"deleted_at": null
+			},
+			{
+				"id": "943fbeae-c09f-473d-9d4c-a920ad888235",
+				"timestamp": "2026-08-03T13:39:32.530Z",
+				"source": "tool",
+				"content": "Relevant pi extension APIs: registerCommand, registerShortcut, ctx.ui.getEditorText(), ctx.ui.setEditorText(), ctx.ui.pasteToEditor(), ctx.ui.notify. Extensions can live in ~/.pi/agent/extensions or project-local .pi/extensions.",
+				"deleted_at": null
+			}
+		],
+		"raw_refs": [],
+		"children": [
+			{
+				"id": "89e6a92c-f176-4a1e-84b3-af9b407e8065",
+				"type": "group",
+				"priority": "major",
+				"title": "Edge cases and safety",
+				"status": "open",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "e46a3287-acfa-401e-b176-9d0f82eec5c1",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "4bb53404-85b5-4ee3-96d5-cfce3c188067",
+								"timestamp": "2026-08-03T13:59:42.795Z",
+								"source": "user",
+								"content": "Approved allowing duplicate stashes.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:54:11.830Z",
+						"updated_at": "2026-08-03T13:59:42.795Z",
+						"question": "Should stashing duplicate prompt text be allowed?",
+						"answer": "Allow duplicate stashes. The same draft may be intentionally saved more than once at different times. Avoid clever deduplication in v1 because it can surprise users and make stack behavior harder to reason about.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "43f142dc-ce56-4fef-81a9-ac3fa42e724b",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "fcc41065-3eaf-4697-8166-7f679bd456db",
+								"timestamp": "2026-08-03T14:00:10.224Z",
+								"source": "user",
+								"content": "Approved no maximum stack size in v1.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:59:46.907Z",
+						"updated_at": "2026-08-03T14:00:10.224Z",
+						"question": "Should prompt-stash enforce a maximum stack size?",
+						"answer": "Do not enforce a maximum stack size in v1. Stashes are explicit user drafts and clear-all exists for cleanup. Add a cap later only if real session bloat becomes a problem.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-08-03T13:39:50.081Z",
+				"updated_at": "2026-08-03T13:59:46.907Z"
+			},
+			{
+				"id": "cee6ccd3-4432-4f48-8678-b51d0fa17ecb",
+				"type": "group",
+				"priority": "critical",
+				"title": "Core stash/restore workflow",
+				"status": "open",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "08aa37b7-720a-4a67-a910-3ee955706f21",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "3ce962fb-9827-45a5-8ae9-39c2e53d51a2",
+								"timestamp": "2026-08-03T13:42:26.262Z",
+								"source": "user",
+								"content": "Approved stack/list behavior.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:41:28.744Z",
+						"updated_at": "2026-08-03T13:42:26.262Z",
+						"question": "Should prompt-stash behave as a single-slot stash or a stack/list of multiple stashed prompts?",
+						"answer": "Use a stack/list of multiple stashed prompts, with a fast default restore of the most recent stash. This preserves simple usage while avoiding accidental loss when the user stashes more than one unfinished prompt.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "9fa535d8-5104-4b51-9a69-01418728494a",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "8bcc09a8-3270-488f-9d80-b01349fc2422",
+								"timestamp": "2026-08-03T13:43:03.512Z",
+								"source": "user",
+								"content": "Approved clearing the editor after stashing.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:42:30.364Z",
+						"updated_at": "2026-08-03T13:43:03.512Z",
+						"question": "When stashing the current prompt, should the extension clear the editor immediately?",
+						"answer": "Yes. Stash should save the current editor text, then clear the editor. That matches the main goal: put an unfinished prompt away so the user can type something else. If the editor is empty, do nothing and notify the user.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "02bf2a84-0424-4192-a6be-531d1b207a19",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "23932db8-8283-4d41-a229-1b78f4f0c580",
+								"timestamp": "2026-08-03T13:43:57.161Z",
+								"source": "user",
+								"content": "Approved protecting non-empty editor during restore, with option to stash current text first.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:43:07.469Z",
+						"updated_at": "2026-08-03T13:43:57.161Z",
+						"question": "When restoring a stash while the editor already has text, should the extension replace, append, or protect the current editor text?",
+						"answer": "Protect the current editor text. If the editor is non-empty, ask for confirmation before replacing it, with a recommended option to stash the current editor first. This avoids silent data loss while still allowing restore.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "db024490-4abc-4e9e-867e-47805f9ff62e",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "4720fd75-8d28-4f8b-a8b4-162f16e88cb3",
+								"timestamp": "2026-08-03T13:48:16.057Z",
+								"source": "user",
+								"content": "Approved pop/remove on restore.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:44:02.261Z",
+						"updated_at": "2026-08-03T13:48:16.057Z",
+						"question": "After restoring a stashed prompt, should that stash be removed from the stack or kept for reuse?",
+						"answer": "Default restore should pop/remove the restored stash from the stack. Add a separate 'copy/peek' style command later only if needed. This matches stash semantics and keeps the stack clean.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-08-03T13:41:07.260Z",
+				"updated_at": "2026-08-03T13:44:02.261Z"
+			},
+			{
+				"id": "a7eaedf1-d21a-4ae9-be73-0f805956acdf",
+				"type": "group",
+				"priority": "important",
+				"title": "Storage model and persistence",
+				"status": "open",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "cd540585-77f4-4e02-b52b-21fc2c07584e",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "dfa4f567-1197-4606-8079-90e24a5d3ab4",
+								"timestamp": "2026-08-03T13:49:09.964Z",
+								"source": "user",
+								"content": "Approved persisting stashes across pi restarts and having a clear-all command.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:48:20.916Z",
+						"updated_at": "2026-08-03T13:49:09.964Z",
+						"question": "Should stashes persist across pi restarts, or only last for the current pi session?",
+						"answer": "Persist stashes across pi restarts in extension state/storage. Prompt drafts are user data and should survive a crash or accidental exit. Include a clear command to delete all stashes.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "f3563427-ee28-41fa-a2e9-fe80bbf2f194",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "da527952-a659-4444-9d89-1b659f2670e9",
+								"timestamp": "2026-08-03T13:50:23.912Z",
+								"source": "user",
+								"content": "Approved session-scoped stashes.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:49:20.566Z",
+						"updated_at": "2026-08-03T13:50:23.912Z",
+						"question": "Should stashes be scoped to the current pi session or shared globally across all pi sessions/projects?",
+						"answer": "Scope stashes to the current pi session. Use pi.appendEntry custom entries to persist stash events in the session transcript, then reconstruct the stack on session_start. This avoids leaking prompts across projects and matches pi's session branching model.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-08-03T13:41:11.970Z",
+				"updated_at": "2026-08-03T13:49:20.566Z"
+			},
+			{
+				"id": "d2fef51e-06e2-4d6c-b8e2-960b203ac06a",
+				"type": "group",
+				"priority": "important",
+				"title": "User interface and keybindings",
+				"status": "open",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "df53c124-c328-4c36-8579-b2fec95f29f5",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "08049440-37dd-440f-943f-dedbffe1c112",
+								"timestamp": "2026-08-03T13:51:14.227Z",
+								"source": "user",
+								"content": "Requested adding a list command.",
+								"deleted_at": null
+							},
+							{
+								"id": "e15d60d7-5617-44ec-ab8f-6ceb39ecce19",
+								"timestamp": "2026-08-03T13:51:53.551Z",
+								"source": "user",
+								"content": "Prefer simple command names: stash, pop, pop-choose, list, clear-all.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:50:27.616Z",
+						"updated_at": "2026-08-03T13:51:53.551Z",
+						"question": "Which commands should prompt-stash expose in the first version?",
+						"answer": "Expose five simple commands: prompt-stash.stash, prompt-stash.pop, prompt-stash.pop-choose, prompt-stash.list, and prompt-stash.clear-all. 'stash' saves and clears the editor, 'pop' restores/removes the latest stash, 'pop-choose' lets the user choose a stash to restore/remove, 'list' shows stashes without changing them, and 'clear-all' deletes all stashes.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "8976e92e-4f0e-49c1-9212-2081e083f807",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "c0817ccb-d2e6-429d-94da-1d56bb7764fb",
+								"timestamp": "2026-08-03T13:52:47.673Z",
+								"source": "user",
+								"content": "Approved shortcuts, with pop changed to Ctrl+Alt+Shift+S.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:51:19.281Z",
+						"updated_at": "2026-08-03T13:52:47.673Z",
+						"question": "Which keyboard shortcuts should prompt-stash register by default?",
+						"answer": "Register two default shortcuts: Ctrl+Alt+S for prompt-stash.stash and Ctrl+Alt+Shift+S for prompt-stash.pop. Leave pop-choose, list, and clear-all command-only to avoid shortcut clutter and accidental destructive actions.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "be3a877e-642f-4ca0-b7f5-757faa91a776",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "answered",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:54:07.396Z",
+						"updated_at": "2026-08-03T13:54:07.396Z",
+						"question": "How should prompt-stash.list display stashes?",
+						"answer": "Display stashes as a stack with newest first. Show compact metadata and preview for each stash, such as stack index, first-line preview, age/time, and character count. Avoid dumping full prompt content unless a user explicitly chooses a stash.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-08-03T13:41:16.834Z",
+				"updated_at": "2026-08-03T13:54:07.396Z"
+			},
+			{
+				"id": "e4d384d3-54fc-47f2-8e84-427c1868e0f5",
+				"type": "group",
+				"priority": "major",
+				"title": "Scope, packaging, and installation",
+				"status": "open",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "9dc2639f-79dd-42b5-a863-9f4e89e1d82c",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "answered",
+						"notes": [
+							{
+								"id": "b527a737-dca6-42af-9728-1e64b53ba79d",
+								"timestamp": "2026-08-03T13:53:22.528Z",
+								"source": "user",
+								"content": "User says there is an existing ./install script for extension installation.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-08-03T13:53:01.574Z",
+						"updated_at": "2026-08-03T13:53:22.528Z",
+						"question": "Where should the prompt-stash extension be installed?",
+						"answer": "Package prompt-stash in this repository and use the existing ./install script to install it. The installer should place/link it into the appropriate pi extension discovery location rather than manually creating files under ~/.pi/agent/extensions.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-08-03T13:41:20.372Z",
+				"updated_at": "2026-08-03T13:53:01.574Z"
+			}
+		],
+		"created_at": "2026-08-03T13:39:16.228Z",
+		"updated_at": "2026-08-03T13:41:20.372Z"
+	},
+	"created_at": "2026-08-03T13:39:16.228Z",
+	"updated_at": "2026-08-03T14:00:10.224Z"
+}
