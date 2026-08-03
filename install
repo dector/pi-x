@@ -85,6 +85,7 @@ extensions=(
   "pi-ui"
   "sqlite"
   "save"
+  "prompt-stash"
   "git"
   "pi-nvim"
 )
