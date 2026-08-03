@@ -72,6 +72,29 @@ test("service overview omits leaf decisions and nextUnresolved ranks user attent
 	expect(unresolved.items.some((entry) => entry.item.type === "decision" && entry.item.answer_stage === "need_polishing")).toBe(false);
 });
 
+test("service selects trees by prefix and falls back to root when active item is invalid", async () => {
+	const { service, persistence, treeId, rootId } = await ready();
+	await persistence.saveSession(projectRoot, { version: 1, active_tree_id: treeId, active_item_id: "00000000-0000-4000-8000-000000000099", created_at: "2026-01-02T03:04:05.000Z", updated_at: "2026-01-02T03:04:05.000Z" });
+
+	const selected = await service.selectTree(projectRoot, treeId.slice(0, 8));
+	expect(selected.active_item_id).toBe(rootId);
+	expect(selected.path).toBe("Product");
+});
+
+test("service clears answers and returns computed active item path", async () => {
+	const { service, rootId } = await ready();
+	const group = await service.createItem(projectRoot, { parent_id: rootId, type: "group", priority: "major", title: "Release" });
+	const decision = await service.createItem(projectRoot, { parent_id: group.item.id, type: "decision", priority: "important", question: "Ship?", answer: "yes" });
+
+	const cleared = await service.updateItem(projectRoot, { item_id: decision.item.id, answer: null });
+	expect(cleared.item.status).toBe("open");
+	expect(cleared.item.answer).toBeNull();
+	expect(cleared.item.answer_stage).toBeNull();
+
+	const active = await service.setActiveItem(projectRoot, { item_id: group.item.id });
+	expect(active.resolved.path).toBe("Product / Release");
+});
+
 test("service appendRaw skips when capture is disabled", async () => {
 	const { service, persistence, treeId } = await ready();
 	const tree = await persistence.loadTree(projectRoot, treeId);
