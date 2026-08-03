@@ -13,6 +13,10 @@ const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
 const SAFE_MODE_TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
 const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
+const PROMPT_STASH_STASH_EVENT = "prompt-stash:stash";
+const PROMPT_STASH_POP_EVENT = "prompt-stash:pop";
+const PROMPT_STASH_LIST_EVENT = "prompt-stash:list";
+const PROMPT_STASH_CLEAR_ALL_EVENT = "prompt-stash:clear-all";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
@@ -550,6 +554,10 @@ async function showHiDialog(
 		onToggleOuter: () => void;
 		onSetYoloPlus: () => void;
 		onShowPromptPreviews: () => Promise<void>;
+		onPromptStashStash: () => void;
+		onPromptStashPop: () => void;
+		onPromptStashList: () => void;
+		onPromptStashClearAll: () => void;
 	},
 	dialogLifecycle: {
 		isShown: () => boolean;
@@ -574,7 +582,16 @@ async function showHiDialog(
 	try {
 		await ctx.ui.custom<void>(
 			(tui, _theme, _kb, done) => {
-				const { onToggleReader, onToggleOuter, onSetYoloPlus, onShowPromptPreviews } = handlers;
+				const {
+					onToggleReader,
+					onToggleOuter,
+					onSetYoloPlus,
+					onShowPromptPreviews,
+					onPromptStashStash,
+					onPromptStashPop,
+					onPromptStashList,
+					onPromptStashClearAll,
+				} = handlers;
 				let selectedIndex = 0;
 				let closed = false;
 				const closeDialog = (): void => {
@@ -621,7 +638,30 @@ async function showHiDialog(
 					};
 				};
 
-				const actions: DialogAction[] = [
+				type DialogMenu = "main" | "stash";
+				let activeMenu: DialogMenu = "main";
+
+				const runAfterClose = (fn: () => void): void => {
+					closeDialog();
+					setTimeout(fn, 0);
+				};
+
+				const setMenu = (menu: DialogMenu): void => {
+					activeMenu = menu;
+					selectedIndex = 0;
+					tui.requestRender();
+				};
+
+				const mainActions: DialogAction[] = [
+					{
+						hotkey: "s",
+						hotkeyAliases: ["S"],
+						label: "Prompt stash...",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => setMenu("stash"),
+					},
 					{
 						hotkey: "r",
 						hotkeyAliases: ["R"],
@@ -656,10 +696,60 @@ async function showHiDialog(
 						},
 					},
 				];
-				const actionCount = actions.length;
+
+				const stashActions: DialogAction[] = [
+					{
+						hotkey: "s",
+						hotkeyAliases: ["S"],
+						label: "Stash prompt draft",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onPromptStashStash),
+					},
+					{
+						hotkey: "o",
+						hotkeyAliases: ["O"],
+						label: "Pop newest prompt stash",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onPromptStashPop),
+					},
+					{
+						hotkey: "l",
+						hotkeyAliases: ["L"],
+						label: "List/restore prompt stashes",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onPromptStashList),
+					},
+					{
+						hotkey: "x",
+						hotkeyAliases: ["X"],
+						label: "Clear all prompt stashes",
+						risk: true,
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onPromptStashClearAll),
+					},
+					{
+						hotkey: "<-",
+						hotkeyAliases: [Key.backspace],
+						label: "Back",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => setMenu("main"),
+					},
+				];
+
+				const getActions = (): DialogAction[] => (activeMenu === "stash" ? stashActions : mainActions);
 
 				const executeAction = (index: number): void => {
-					const action = actions[index];
+					const action = getActions()[index];
 					if (!action) return;
 					void (async () => {
 						try {
@@ -671,8 +761,16 @@ async function showHiDialog(
 					})();
 				};
 
+				const matchesActionKey = (data: string, key: string): boolean => {
+					return data === key || matchesKey(data, key);
+				};
+
 				const matchActionIndexForInput = (data: string): number => {
-					return actions.findIndex((action) => data === action.hotkey || action.hotkeyAliases?.includes(data));
+					return getActions().findIndex(
+						(action) =>
+							matchesActionKey(data, action.hotkey) ||
+							action.hotkeyAliases?.some((alias) => matchesActionKey(data, alias)),
+					);
 				};
 
 				return {
@@ -704,6 +802,8 @@ async function showHiDialog(
 							const gap = Math.max(0, innerWidth - visibleWidth(clippedLeft) - badgeWidth);
 							return `${clippedLeft}${" ".repeat(gap)}${badge}`;
 						};
+						const actions = getActions();
+						const title = activeMenu === "stash" ? "Ctrl+, Actions › Prompt stash" : "Ctrl+, Actions";
 						const actionLines = actions.map((action, index) =>
 							actionLine(action.hotkey, action.label, action.isEnabled(state), selectedIndex === index, {
 								risk: action.risk,
@@ -712,7 +812,7 @@ async function showHiDialog(
 						);
 						return [
 							`╔${"═".repeat(innerWidth)}╗`,
-							`║${centerLine(innerWidth, "Ctrl+, Actions")}║`,
+							`║${centerLine(innerWidth, title)}║`,
 							`║${"─".repeat(innerWidth)}║`,
 							...actionLines.map((line) => `║${line}║`),
 							`║${"─".repeat(innerWidth)}║`,
@@ -726,12 +826,22 @@ async function showHiDialog(
 							closeDialog();
 							return;
 						}
+						if (matchesKey(data, Key.backspace)) {
+							if (activeMenu === "main") {
+								closeDialog();
+							} else {
+								setMenu("main");
+							}
+							return;
+						}
 						if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+							const actionCount = getActions().length;
 							selectedIndex = (selectedIndex - 1 + actionCount) % actionCount;
 							tui.requestRender();
 							return;
 						}
 						if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+							const actionCount = getActions().length;
 							selectedIndex = (selectedIndex + 1) % actionCount;
 							tui.requestRender();
 							return;
@@ -962,6 +1072,18 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onShowPromptPreviews: async () => {
 						await showPromptPreviewDialog(ctx);
+					},
+					onPromptStashStash: () => {
+						pi.events.emit(PROMPT_STASH_STASH_EVENT, { ctx });
+					},
+					onPromptStashPop: () => {
+						pi.events.emit(PROMPT_STASH_POP_EVENT, { ctx });
+					},
+					onPromptStashList: () => {
+						pi.events.emit(PROMPT_STASH_LIST_EVENT, { ctx });
+					},
+					onPromptStashClearAll: () => {
+						pi.events.emit(PROMPT_STASH_CLEAR_ALL_EVENT, { ctx });
 					},
 				},
 				{

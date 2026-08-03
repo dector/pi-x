@@ -31,6 +31,7 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 
 Current dialog items:
 
+- `s - prompt stash...` (opens a stash submenu)
 - `r - toggle reader mode`
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
@@ -42,10 +43,16 @@ Current dialog items:
 
 Behavior details:
 
-- Pressing `Esc` closes the dialog with no side effects.
+- Pressing `Esc` or `Backspace` in the main dialog closes it with no side effects.
 - Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
-- Pressing `Enter` executes the currently selected action and closes the dialog.
+- Pressing `Enter` executes the currently selected action and closes the dialog, unless the action opens a submenu.
+- Pressing `s` (or `S`) opens the prompt-stash submenu:
+  - `s` — emits event `prompt-stash:stash` and closes the dialog.
+  - `o` — emits event `prompt-stash:pop` and closes the dialog.
+  - `l` — emits event `prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
+  - `x` — emits event `prompt-stash:clear-all` and closes the dialog.
+  - `<-` / `Backspace` — returns to the main action dialog.
 - Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `safe-mode:set-yolo-plus` and closes the dialog.
@@ -56,17 +63,22 @@ Behavior details:
 - Safe-mode rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
   - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
-- If `safe-mode` is not installed/enabled, these keys simply close the dialog (no listener handles the event).
+- If `prompt-stash` or `safe-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
 - Main action dialog sizing is responsive (`~62%` width, `minWidth: 40`, centered).
 - Prompt preview dialog uses centered max-width overlay (`width: 100%`, `minWidth: 40`).
 
 Integration contract (important):
 
 - Event names used by `pi-ui`:
+  - `prompt-stash:stash`
+  - `prompt-stash:pop`
+  - `prompt-stash:list`
+  - `prompt-stash:clear-all`
   - `safe-mode:toggle-reader`
   - `safe-mode:toggle-outer`
   - `safe-mode:set-yolo-plus`
-- Expected listener behavior (implemented in `safe-mode`):
+- Expected prompt-stash listener behavior (implemented in `prompt-stash`): save, pop, list/restore, or clear prompt stashes for the active context.
+- Expected safe-mode listener behavior (implemented in `safe-mode`):
   - if mode is not `reader`: switch to `reader` and remember previous mode
   - if mode is `reader` and previous mode exists: restore previous mode
   - if mode is `reader` and no remembered previous mode: no-op
@@ -101,11 +113,18 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
+  - `s` — open prompt-stash submenu
+    - `s` — request prompt-stash stash via `prompt-stash:stash`
+    - `o` — request prompt-stash pop via `prompt-stash:pop`
+    - `l` — request prompt-stash list/restore via `prompt-stash:list`
+    - `x` — request prompt-stash clear-all via `prompt-stash:clear-all`
+    - `<-` / `Backspace` — return to main action dialog
   - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
   - `p` — open preview prompts dialog (first/latest user prompt, top 10 lines each)
   - `Esc` — close dialog
+  - `Backspace` — close main dialog, or return from submenu to main dialog
   - `Ctrl+,` — close dialog (toggle)
 
 ## Install

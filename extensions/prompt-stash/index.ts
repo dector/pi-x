@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, Key, Text } from "@earendil-works/pi-tui";
+import { Box, Text } from "@earendil-works/pi-tui";
 
 const CUSTOM_TYPE = "prompt-stash";
+const STASH_EVENT = "prompt-stash:stash";
+const POP_EVENT = "prompt-stash:pop";
+const LIST_EVENT = "prompt-stash:list";
+const CLEAR_ALL_EVENT = "prompt-stash:clear-all";
 
 type PromptStashEvent =
 	| { action: "stash"; stash: PromptStashItem }
@@ -204,81 +208,70 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("prompt-stash.pop-choose", {
-		description: "Choose a prompt stash to restore and remove",
-		handler: async (_args, ctx) => {
-			if (stashes.length === 0) {
-				notify(ctx, "prompt-stash: no stashes", "warning");
-				return;
-			}
-			if (!ctx.hasUI) {
-				notify(ctx, "prompt-stash: pop-choose requires interactive UI", "warning");
-				return;
-			}
+	const listStashes = async (ctx: ExtensionContext): Promise<void> => {
+		if (stashes.length === 0) {
+			notify(ctx, "prompt-stash: no stashes", "info");
+			return;
+		}
 
-			const ordered = newestFirst(stashes);
-			const lines = ordered.map((stash, index) => formatStashLine(stash, index + 1));
-			const choice = await ctx.ui.select("prompt-stash: choose stash to restore", lines);
+		const ordered = newestFirst(stashes);
+		const lines = ordered.map((stash, index) => formatStashLine(stash, index + 1));
+		if (ctx.hasUI) {
+			const choice = await ctx.ui.select(`prompt-stash: ${stashes.length} stash${stashes.length === 1 ? "" : "es"}`, lines);
 			if (choice === undefined) return;
 			const index = lines.indexOf(choice);
 			if (index === -1) return;
 			await restoreStash(ctx, ordered[index]!);
-		},
-	});
+		} else {
+			console.log(lines.join("\n"));
+		}
+	};
 
 	pi.registerCommand("prompt-stash.list", {
-		description: "List prompt stashes newest-first without changing them",
+		description: "List prompt stashes newest-first; in UI, select one to restore it",
 		handler: async (_args, ctx) => {
-			if (stashes.length === 0) {
-				notify(ctx, "prompt-stash: no stashes", "info");
-				return;
-			}
-
-			const lines = newestFirst(stashes).map((stash, index) => formatStashLine(stash, index + 1));
-			if (ctx.hasUI) {
-				await ctx.ui.select(`prompt-stash: ${stashes.length} stash${stashes.length === 1 ? "" : "es"}`, lines);
-			} else {
-				console.log(lines.join("\n"));
-			}
+			await listStashes(ctx);
 		},
 	});
+
+	const clearAll = async (ctx: ExtensionContext): Promise<void> => {
+		if (stashes.length === 0) {
+			notify(ctx, "prompt-stash: no stashes", "info");
+			return;
+		}
+		if (!ctx.hasUI) {
+			notify(ctx, "prompt-stash: clear-all requires interactive confirmation", "warning");
+			return;
+		}
+
+		const count = stashes.length;
+		const ok = await ctx.ui.confirm("prompt-stash: clear all?", `Delete ${count} stash${count === 1 ? "" : "es"}?`);
+		if (!ok) return;
+
+		const clearedIds = stashes.map((stash) => stash.id);
+		appendEvent(pi, { action: "clear-all", clearedIds });
+		stashes = [];
+		notify(ctx, `prompt-stash: cleared ${count} stash${count === 1 ? "" : "es"}`, "info");
+	};
 
 	pi.registerCommand("prompt-stash.clear-all", {
 		description: "Delete every prompt stash",
 		handler: async (_args, ctx) => {
-			if (stashes.length === 0) {
-				notify(ctx, "prompt-stash: no stashes", "info");
-				return;
-			}
-			if (!ctx.hasUI) {
-				notify(ctx, "prompt-stash: clear-all requires interactive confirmation", "warning");
-				return;
-			}
-
-			const count = stashes.length;
-			const ok = await ctx.ui.confirm("prompt-stash: clear all?", `Delete ${count} stash${count === 1 ? "" : "es"}?`);
-			if (!ok) return;
-
-			const clearedIds = stashes.map((stash) => stash.id);
-			appendEvent(pi, { action: "clear-all", clearedIds });
-			stashes = [];
-			notify(ctx, `prompt-stash: cleared ${count} stash${count === 1 ? "" : "es"}`, "info");
+			await clearAll(ctx);
 		},
 	});
 
-	pi.registerShortcut(Key.ctrlAlt("s"), {
-		description: "Stash current prompt draft",
-		handler: async (ctx) => {
-			await stashCurrentEditor(ctx);
-		},
-	});
+	const withCtx = async (payload: unknown, fn: (ctx: ExtensionContext) => Promise<unknown>): Promise<void> => {
+		if (!payload || typeof payload !== "object") return;
+		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!maybeCtx) return;
+		await fn(maybeCtx);
+	};
 
-	pi.registerShortcut(Key.ctrlShiftAlt("s"), {
-		description: "Pop newest prompt stash",
-		handler: async (ctx) => {
-			await popNewest(ctx);
-		},
-	});
+	pi.events.on(STASH_EVENT, (payload) => void withCtx(payload, stashCurrentEditor));
+	pi.events.on(POP_EVENT, (payload) => void withCtx(payload, popNewest));
+	pi.events.on(LIST_EVENT, (payload) => void withCtx(payload, listStashes));
+	pi.events.on(CLEAR_ALL_EVENT, (payload) => void withCtx(payload, clearAll));
 
 	pi.registerEntryRenderer<PromptStashEvent>(CUSTOM_TYPE, (entry, _options, theme) => {
 		const event = entry.data;
