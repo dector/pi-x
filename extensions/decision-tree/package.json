@@ -1,0 +1,11 @@
+{
+  "name": "decision-tree",
+  "private": true,
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck core/index.ts",
+    "test": "bun test core/*.test.ts"
+  }
+}
