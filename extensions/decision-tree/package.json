@@ -2,10 +2,14 @@
   "name": "decision-tree",
   "private": true,
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@earendil-works/pi-tui": "^0.75.4",
+    "@mariozechner/pi-ai": "0.59.0",
+    "@types/node": "^22.15.30",
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck core/index.ts persistence/index.ts",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck index.ts core/index.ts persistence/index.ts",
     "test": "bun test core/*.test.ts persistence/*.test.ts"
   }
 }
