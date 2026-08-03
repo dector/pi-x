@@ -11,29 +11,36 @@ export const TreeModeSchema = StringEnum(["overview", "full"] as const, { descri
 
 const NullableString = Type.Union([Type.String(), Type.Null()]);
 const NullableAnswerStage = Type.Union([AnswerStageSchema, Type.Null()]);
+const ResponseOptions = {
+	return_json: Type.Optional(Type.Boolean({ description: "If true, include the JSON result in the tool response. Defaults to false to save context." })),
+};
 
-export const DtInitParams = Type.Object({});
+export const DtInitParams = Type.Object({ ...ResponseOptions });
 
-export const DtGetSessionParams = Type.Object({});
+export const DtGetSessionParams = Type.Object({ ...ResponseOptions });
 
 export const DtCreateTreeParams = Type.Object({
+	...ResponseOptions,
 	title: Type.String({ description: "Decision tree title." }),
 	priority: PrioritySchema,
 });
 
-export const DtListTreesParams = Type.Object({});
+export const DtListTreesParams = Type.Object({ ...ResponseOptions });
 
 export const DtSelectTreeParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.String({ description: "Tree UUID or unique prefix." }),
 });
 
 export const DtGetTreeParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	mode: Type.Optional(TreeModeSchema),
 	include_deleted_notes: Type.Optional(Type.Boolean({ description: "Include deleted notes in full mode." })),
 });
 
 export const DtGetItemParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	item_id: Type.Optional(Type.String({ description: "Item UUID. Defaults to active item, then root." })),
 	include_path: Type.Optional(Type.Boolean({ description: "Include ancestors and computed path. Defaults to true." })),
@@ -42,6 +49,7 @@ export const DtGetItemParams = Type.Object({
 });
 
 export const DtCreateItemParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	parent_id: Type.Optional(Type.String({ description: "Parent item UUID. Defaults to active item." })),
 	type: ItemTypeSchema,
@@ -54,6 +62,7 @@ export const DtCreateItemParams = Type.Object({
 });
 
 export const DtUpdateItemParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	item_id: Type.Optional(Type.String({ description: "Item UUID. Defaults to active item." })),
 	priority: Type.Optional(PrioritySchema),
@@ -67,6 +76,7 @@ export const DtUpdateItemParams = Type.Object({
 });
 
 export const DtUpdateNoteParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	item_id: Type.String({ description: "Item UUID." }),
 	note_id: Type.String({ description: "Note UUID." }),
@@ -76,11 +86,13 @@ export const DtUpdateNoteParams = Type.Object({
 });
 
 export const DtSetActiveItemParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to active tree." })),
 	item_id: Type.String({ description: "Item UUID." }),
 });
 
 export const DtNextUnresolvedParams = Type.Object({
+	...ResponseOptions,
 	tree_id: Type.Optional(Type.String({ description: "Tree UUID or unique prefix. Defaults to all trees." })),
 	strategy: Type.Optional(StrategySchema),
 	priorities: Type.Optional(Type.Array(PrioritySchema)),

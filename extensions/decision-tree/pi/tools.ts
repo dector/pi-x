@@ -29,7 +29,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.init(ctx.projectRoot);
-				return okResult(result.created ? "Decision tree storage initialized." : "Decision tree storage already initialized.", base(ctx, { ok: true, created: result.created }));
+				return okResult(result.created ? "Decision tree storage initialized." : "Decision tree storage already initialized.", base(ctx, { ok: true, created: result.created }), responseOptions(_params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -48,7 +48,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 				if (session.session?.active_tree_id) {
 					try { activePath = (await ctx.service.getItem(ctx.projectRoot, { tree_id: session.session.active_tree_id, item_id: session.session.active_item_id ?? undefined })).path; } catch {}
 				}
-				return okResult("Decision tree session.", base(ctx, { ok: true, ...session, active_path: activePath }));
+				return okResult("Decision tree session.", base(ctx, { ok: true, ...session, active_path: activePath }), responseOptions(_params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -63,7 +63,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.createTree(ctx.projectRoot, params as { title: string; priority: Priority });
-				return okResult("Decision tree created.", base(ctx, { ok: true, tree: summarizeTree(result.tree), root_id: result.tree.root.id, resolved: resolvedWithTitle(result.resolved, result.tree.title) }));
+				return okResult("Decision tree created.", base(ctx, { ok: true, tree: summarizeTree(result.tree), root_id: result.tree.root.id, resolved: resolvedWithTitle(result.resolved, result.tree.title) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -78,7 +78,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const trees = await ctx.service.listTrees(ctx.projectRoot);
-				return okResult("Decision trees listed.", base(ctx, { ok: true, count: trees.length, trees: trees.map((tree) => ({ ...tree, short_id: shortId(tree.id) })) }));
+				return okResult("Decision trees listed.", base(ctx, { ok: true, count: trees.length, trees: trees.map((tree) => ({ ...tree, short_id: shortId(tree.id) })) }), responseOptions(_params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -93,7 +93,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.selectTree(ctx.projectRoot, (params as { tree_id: string }).tree_id);
-				return okResult("Decision tree selected.", base(ctx, { ok: true, active_tree: result.tree, active_item_id: result.active_item_id, path: result.path }));
+				return okResult("Decision tree selected.", base(ctx, { ok: true, active_tree: result.tree, active_item_id: result.active_item_id, path: result.path }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -109,7 +109,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			try {
 				const result = await ctx.service.getTree(ctx.projectRoot, params as { tree_id?: string; mode?: "overview" | "full"; include_deleted_notes?: boolean });
 				const title = "title" in result.tree ? result.tree.title : undefined;
-				return okResult(`Decision tree ${result.mode}.`, base(ctx, { ok: true, mode: result.mode, resolved: resolvedWithTitle(result.resolved, title), tree: result.tree }));
+				return okResult(`Decision tree ${result.mode}.`, base(ctx, { ok: true, mode: result.mode, resolved: resolvedWithTitle(result.resolved, title), tree: result.tree }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -124,7 +124,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.getItem(ctx.projectRoot, params as { tree_id?: string; item_id?: string; include_path?: boolean; children_depth?: number; include_deleted_notes?: boolean });
-				return okResult("Decision tree item.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }));
+				return okResult("Decision tree item.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -139,7 +139,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.createItem(ctx.projectRoot, params as { tree_id?: string; parent_id?: string; type: ItemType; priority: Priority; title?: string | null; question?: string; answer?: string | null; answer_stage?: AnswerStage | null; status?: Status });
-				return okResult("Decision tree item created.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }));
+				return okResult("Decision tree item created.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -154,7 +154,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.updateItem(ctx.projectRoot, params as { tree_id?: string; item_id?: string; priority?: Priority; title?: string | null; question?: string; answer?: string | null; answer_stage?: AnswerStage | null; status?: Status; append_notes?: { source: NoteSource; content: string }[]; append_raw_refs?: string[] });
-				return okResult("Decision tree item updated.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }));
+				return okResult("Decision tree item updated.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -169,7 +169,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.updateNote(ctx.projectRoot, params as { tree_id?: string; item_id?: string; note_id: string; content?: string; source?: NoteSource; deleted_at?: string | null });
-				return okResult("Decision tree note updated.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }));
+				return okResult("Decision tree note updated.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -184,7 +184,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.setActiveItem(ctx.projectRoot, params as { tree_id?: string; item_id: string });
-				return okResult("Decision tree active item set.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }));
+				return okResult("Decision tree active item set.", base(ctx, { ok: true, ...result, resolved: await withTreeTitle(ctx, result.resolved) }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -199,7 +199,7 @@ export function registerDecisionTreeTools(pi: ExtensionAPI): void {
 			const ctx = await createDecisionTreePiContext(cwd);
 			try {
 				const result = await ctx.service.nextUnresolved(ctx.projectRoot, params as { tree_id?: string; strategy?: "ranked" | "one"; priorities?: Priority[]; statuses?: Status[]; answer_stages?: (AnswerStage | null)[]; subtree_root_id?: string; limit?: number });
-				return okResult("Decision tree unresolved items.", base(ctx, { ok: true, count: result.items.length, ...result }));
+				return okResult("Decision tree unresolved items.", base(ctx, { ok: true, count: result.items.length, ...result }), responseOptions(params));
 			} catch (error) { return errorResult(error, base(ctx)); }
 		},
 	});
@@ -228,6 +228,10 @@ function register(pi: ExtensionAPI, tool: Registration): void {
 			return await tool.execute(params, ctx.cwd);
 		},
 	});
+}
+
+function responseOptions(params: unknown): { returnJson: boolean } {
+	return { returnJson: typeof params === "object" && params !== null && (params as { return_json?: unknown }).return_json === true };
 }
 
 function base(ctx: { projectRoot: string; decisionsPath: string }, extra: Record<string, unknown> = {}): Record<string, unknown> {

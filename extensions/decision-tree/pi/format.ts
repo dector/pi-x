@@ -3,7 +3,8 @@ import { PersistenceError, ProjectNotInitializedError } from "../persistence/err
 
 type ToolContent = { type: "text"; text: string };
 
-export function okResult(message: string, details: Record<string, unknown>): { content: ToolContent[]; details: Record<string, unknown> } {
+export function okResult(message: string, details: Record<string, unknown>, options: { returnJson?: boolean } = {}): { content: ToolContent[]; details: Record<string, unknown> } {
+	if (!options.returnJson) return { content: [], details: {} };
 	return {
 		content: [{ type: "text", text: `${message}\n${stableJson(details)}` }],
 		details,
