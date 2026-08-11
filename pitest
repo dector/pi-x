@@ -25,6 +25,15 @@ if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
 	exit 1
 fi
 
+# `--no-extensions` below disables global extensions, including Herdr's managed
+# Pi lifecycle integration. Load just that managed integration back when present
+# so Herdr can see repo-extension prompts (for example safe-mode approvals) as
+# blocked/waiting instead of working/in-progress.
+HERDR_EXT_FILE="$HOME/.pi/agent/extensions/herdr-agent-state.ts"
+if [[ "${PI_PITEST_HERDR_INTEGRATION:-true}" != "false" && -f "$HERDR_EXT_FILE" ]]; then
+	EXT_ARGS+=("-e" "$HERDR_EXT_FILE")
+fi
+
 WITH_NVIM=0
 PI_ARGS=()
 for arg in "$@"; do
