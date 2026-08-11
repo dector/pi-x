@@ -31,6 +31,7 @@ type AllowlistEntry = {
 
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "status-bar:set";
+const HERDR_BLOCKED_EVENT = "herdr:blocked";
 const TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
 const TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
 const SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
@@ -747,6 +748,19 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		return modeLabel(mode, outerAccess, options);
 	}
 
+	function reportHerdrBlocked(active: boolean, label?: string): void {
+		pi.events.emit(HERDR_BLOCKED_EVENT, { active, label });
+	}
+
+	async function withHerdrBlocked<T>(label: string, action: () => Promise<T>): Promise<T> {
+		reportHerdrBlocked(true, label);
+		try {
+			return await action();
+		} finally {
+			reportHerdrBlocked(false);
+		}
+	}
+
 	function updateStatus(ctx: ExtensionContext): void {
 		const content = ctx.hasUI ? styleMode(ctx, mode, outerAccess) : statusLabel();
 		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
@@ -1189,9 +1203,11 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
-		const approval = await confirmApproval(ctx, prompt.title, prompt.message, {
-			allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
-		});
+		const approval = await withHerdrBlocked(`safe-mode approval: ${event.toolName}`, () =>
+			confirmApproval(ctx, prompt.title, prompt.message, {
+				allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
+			}),
+		);
 		if (approval === "approve-all-session") {
 			if (exactBashCommand) {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);
@@ -1218,7 +1234,9 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		if (approval === "steer") {
-			const steerText = await ctx.ui.input("How should I proceed instead?", "Describe the safer approach");
+			const steerText = await withHerdrBlocked("safe-mode steering", () =>
+				ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
+			);
 			if (typeof steerText === "string" && steerText.trim().length > 0) {
 				pi.sendUserMessage(steerText, { deliverAs: "steer" });
 				ctx.ui.notify("safe-mode: steering message sent.", "info");
