@@ -5,6 +5,7 @@ import {
 	describeToolCall,
 	getBashCommandType,
 	isBashCommandAllowedAnyArgs,
+	isBashCommandAllowedByAllowlist,
 	normalizeGitToolArgs,
 	type BashCommandType,
 	type SafeMode,
@@ -373,6 +374,17 @@ test("isBashCommandAllowedAnyArgs: allows complex commands only when every execu
 	expect(isBashCommandAllowedAnyArgs("flutter test > out.txt", allowed)).toBe(false);
 	expect(isBashCommandAllowedAnyArgs("flutter $TARGET", allowed)).toBe(false);
 	expect(isBashCommandAllowedAnyArgs("$(echo flutter) test", allowed)).toBe(false);
+});
+
+test("isBashCommandAllowedByAllowlist: combines allowAny and exact command segments", () => {
+	const exact = new Set(["task flutter:format", "task flutter:reload", "task flutter:test"]);
+	const allowAny = new Set(["flutter", "dart"]);
+
+	expect(isBashCommandAllowedByAllowlist(
+		"dart format lib/main.dart && flutter analyze && task flutter:reload",
+		exact,
+		allowAny,
+	)).toBe(true);
 });
 
 test("decideToolCall: reader mode integration", () => {

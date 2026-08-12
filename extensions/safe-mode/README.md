@@ -179,7 +179,7 @@ When approval is required:
   - format: `{ "allow": ["..."], "allowAny": ["flutter"], "deny": [] }` (`deny` currently ignored)
   - `allow` contains exact `bash` command lines saved from approvals.
   - `allowAny` is a manually editable section for executable names that may run with any arguments, e.g. `"flutter"` allows `flutter test` and `flutter foo`.
-  - `allowAny` only matches one plain command by executable name; shell chains, redirects, dynamic arguments, and path executables like `./flutter` still require approval unless normal policy allows them.
+  - For shell chains, every parsed command segment must match either an exact `allow` entry or an `allowAny` executable name. Redirects, dynamic arguments, command substitution, and path executables like `./flutter` still require approval unless normal policy allows them.
   - file is created only when project-level approvals are actually saved; if absent, built-in default rules apply
 
 ## Non-interactive behavior

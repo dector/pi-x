@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { analyzeBash, classifyAnalyzedCommands, validateBashCommand } from "./bash-policy";
+import type { AnalyzedCommand } from "./bash-policy/types";
 
 export const SAFE_MODES = ["paranoid", "reader", "smart", "yolo"] as const;
 export type SafeMode = (typeof SAFE_MODES)[number];
@@ -28,7 +29,33 @@ export interface BashCommandType {
 	isPlainCommand: boolean;
 }
 
+function getAnalyzedCommandText(command: AnalyzedCommand): string {
+	return [command.programRaw, ...command.args].join(" ");
+}
+
+function isAnalyzedCommandSafeForAllowlist(command: AnalyzedCommand): boolean {
+	if (command.sourceKind !== "top-level") return false;
+	if (command.hasDynamicName || command.hasDynamicArgs || command.hasAnyExpansion) return false;
+	return true;
+}
+
+function isAnalyzedCommandAllowedAnyArgs(command: AnalyzedCommand, allowedCommands: ReadonlySet<string>): boolean {
+	if (!isAnalyzedCommandSafeForAllowlist(command)) return false;
+	if (command.programRaw.includes("/")) return false;
+	return allowedCommands.has(command.programRaw);
+}
+
 export function isBashCommandAllowedAnyArgs(command: string, allowedCommands: ReadonlySet<string>): boolean {
+	return isBashCommandAllowedByAllowlist(command, new Set(), allowedCommands);
+}
+
+export function isBashCommandAllowedByAllowlist(
+	command: string,
+	exactCommands: ReadonlySet<string>,
+	allowAnyCommands: ReadonlySet<string>,
+): boolean {
+	if (exactCommands.has(command)) return true;
+
 	const analysis = analyzeBash(command);
 	if (!analysis.parse.ok) return false;
 	if (analysis.commandCount === 0) return false;
@@ -36,9 +63,11 @@ export function isBashCommandAllowedAnyArgs(command: string, allowedCommands: Re
 	if (analysis.structure.hasSubstitution) return false;
 
 	for (const analyzedCommand of analysis.commands) {
-		if (analyzedCommand.hasDynamicName || analyzedCommand.hasDynamicArgs || analyzedCommand.hasAnyExpansion) return false;
-		if (analyzedCommand.programRaw.includes("/")) return false;
-		if (!allowedCommands.has(analyzedCommand.programRaw)) return false;
+		if (!isAnalyzedCommandSafeForAllowlist(analyzedCommand)) return false;
+		const exactSegment = getAnalyzedCommandText(analyzedCommand);
+		if (exactCommands.has(exactSegment)) continue;
+		if (isAnalyzedCommandAllowedAnyArgs(analyzedCommand, allowAnyCommands)) continue;
+		return false;
 	}
 
 	return true;

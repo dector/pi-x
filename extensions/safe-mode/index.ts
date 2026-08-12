@@ -11,7 +11,7 @@ import {
 	cycleSafeMode,
 	decideToolCall,
 	describeToolCall,
-	isBashCommandAllowedAnyArgs,
+	isBashCommandAllowedByAllowlist,
 	parseSafeMode,
 	type SafeMode,
 } from "./policy";
@@ -1206,14 +1206,14 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		if (mode === "smart" && exactBashCommand && autoApprovedBashCommandsForProject.has(exactBashCommand)) {
-			return;
-		}
-
 		if (
 			mode === "smart" &&
 			exactBashCommand &&
-			isBashCommandAllowedAnyArgs(exactBashCommand, autoApprovedAnyBashCommandsForProject)
+			isBashCommandAllowedByAllowlist(
+				exactBashCommand,
+				autoApprovedBashCommandsForProject,
+				autoApprovedAnyBashCommandsForProject,
+			)
 		) {
 			return;
 		}
