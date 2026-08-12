@@ -176,7 +176,10 @@ When approval is required:
 - Resolution order on startup: CLI flags (`--safe-mode`, `--safe-mode-outer-access`) → session persisted state → saved defaults → built-in defaults.
 - Smart-mode project allowlist is persisted per repository at:
   - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`
-  - format: `{ "allow": ["..."], "deny": [] }` (`deny` currently ignored)
+  - format: `{ "allow": ["..."], "allowAny": ["flutter"], "deny": [] }` (`deny` currently ignored)
+  - `allow` contains exact `bash` command lines saved from approvals.
+  - `allowAny` is a manually editable section for executable names that may run with any arguments, e.g. `"flutter"` allows `flutter test` and `flutter foo`.
+  - `allowAny` only matches one plain command by executable name; shell chains, redirects, dynamic arguments, and path executables like `./flutter` still require approval unless normal policy allows them.
   - file is created only when project-level approvals are actually saved; if absent, built-in default rules apply
 
 ## Non-interactive behavior

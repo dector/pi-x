@@ -11,6 +11,7 @@ import {
 	cycleSafeMode,
 	decideToolCall,
 	describeToolCall,
+	isBashCommandAllowedAnyArgs,
 	parseSafeMode,
 	type SafeMode,
 } from "./policy";
@@ -267,39 +268,58 @@ function normalizeAllowlistCommands(raw: unknown): string[] {
 	return [...deduped];
 }
 
-async function loadProjectSmartAllowlist(projectRoot: string): Promise<{ commands: Set<string>; exists: boolean }> {
+function normalizeAllowAnyCommands(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const deduped = new Set<string>();
+	for (const item of raw) {
+		if (typeof item !== "string") continue;
+		const command = item.trim();
+		if (command.length === 0) continue;
+		if (command.includes("/")) continue;
+		deduped.add(command);
+	}
+	return [...deduped];
+}
+
+async function loadProjectSmartAllowlist(projectRoot: string): Promise<{ commands: Set<string>; allowAnyCommands: Set<string>; exists: boolean }> {
 	const filePath = getSmartAllowlistPath(projectRoot);
 	try {
 		const raw = await readFile(filePath, "utf8");
 		const parsed = JSON.parse(raw) as unknown;
 		if (Array.isArray(parsed)) {
-			return { commands: new Set(normalizeAllowlistCommands(parsed)), exists: true };
+			return { commands: new Set(normalizeAllowlistCommands(parsed)), allowAnyCommands: new Set(), exists: true };
 		}
 
 		if (parsed && typeof parsed === "object") {
+			const allowAnyCommands = new Set(normalizeAllowAnyCommands((parsed as { allowAny?: unknown }).allowAny));
 			if ("allow" in parsed) {
 				const commands = normalizeAllowlistCommands((parsed as { allow?: unknown }).allow);
-				return { commands: new Set(commands), exists: true };
+				return { commands: new Set(commands), allowAnyCommands, exists: true };
 			}
 
 			if ("commands" in parsed) {
 				const commands = normalizeAllowlistCommands((parsed as { commands?: unknown }).commands);
-				return { commands: new Set(commands), exists: true };
+				return { commands: new Set(commands), allowAnyCommands, exists: true };
 			}
+
+			return { commands: new Set(), allowAnyCommands, exists: true };
 		}
 
-		return { commands: new Set(), exists: true };
+		return { commands: new Set(), allowAnyCommands: new Set(), exists: true };
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { commands: new Set(), exists: false };
+		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+			return { commands: new Set(), allowAnyCommands: new Set(), exists: false };
+		}
 		throw error;
 	}
 }
 
-async function saveProjectSmartAllowlist(projectRoot: string, commands: Set<string>): Promise<void> {
+async function saveProjectSmartAllowlist(projectRoot: string, commands: Set<string>, allowAnyCommands: Set<string>): Promise<void> {
 	const filePath = getSmartAllowlistPath(projectRoot);
 	await mkdir(dirname(filePath), { recursive: true });
 	const content = {
 		allow: [...commands].sort((a, b) => a.localeCompare(b)),
+		allowAny: [...allowAnyCommands].sort((a, b) => a.localeCompare(b)),
 		deny: [] as string[],
 	};
 	await writeFile(filePath, `${JSON.stringify(content, null, 2)}\n`, "utf8");
@@ -709,6 +729,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let stateBeforeYoloPlusShortcut: SafeModeState | undefined;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
+	const autoApprovedAnyBashCommandsForProject = new Set<string>();
 
 	function resetSessionApprovals(): void {
 		autoApprovedBashCommandsForSession.clear();
@@ -716,6 +737,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	async function loadProjectApprovals(ctx: ExtensionContext): Promise<void> {
 		autoApprovedBashCommandsForProject.clear();
+		autoApprovedAnyBashCommandsForProject.clear();
 		activeProjectRoot = ctx.cwd;
 		projectAllowlistFileExists = false;
 		try {
@@ -723,6 +745,9 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			projectAllowlistFileExists = loaded.exists;
 			for (const command of loaded.commands) {
 				autoApprovedBashCommandsForProject.add(command);
+			}
+			for (const command of loaded.allowAnyCommands) {
+				autoApprovedAnyBashCommandsForProject.add(command);
 			}
 		} catch (error) {
 			if (ctx.hasUI) {
@@ -732,11 +757,15 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function persistProjectApprovals(ctx: ExtensionContext): Promise<void> {
-		if (autoApprovedBashCommandsForProject.size === 0 && !projectAllowlistFileExists) {
+		if (
+			autoApprovedBashCommandsForProject.size === 0 &&
+			autoApprovedAnyBashCommandsForProject.size === 0 &&
+			!projectAllowlistFileExists
+		) {
 			return;
 		}
 		const projectRoot = activeProjectRoot || ctx.cwd;
-		await saveProjectSmartAllowlist(projectRoot, autoApprovedBashCommandsForProject);
+		await saveProjectSmartAllowlist(projectRoot, autoApprovedBashCommandsForProject, autoApprovedAnyBashCommandsForProject);
 		projectAllowlistFileExists = true;
 	}
 
@@ -1178,6 +1207,14 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		if (mode === "smart" && exactBashCommand && autoApprovedBashCommandsForProject.has(exactBashCommand)) {
+			return;
+		}
+
+		if (
+			mode === "smart" &&
+			exactBashCommand &&
+			isBashCommandAllowedAnyArgs(exactBashCommand, autoApprovedAnyBashCommandsForProject)
+		) {
 			return;
 		}
 

@@ -28,6 +28,22 @@ export interface BashCommandType {
 	isPlainCommand: boolean;
 }
 
+export function isBashCommandAllowedAnyArgs(command: string, allowedCommands: ReadonlySet<string>): boolean {
+	const analysis = analyzeBash(command);
+	if (!analysis.parse.ok) return false;
+	if (!analysis.structure.isPlainCommand) return false;
+	if (analysis.commandCount !== 1) return false;
+	if (analysis.structure.hasInputRedirection || analysis.structure.hasOutputRedirection) return false;
+	if (analysis.structure.hasSubstitution) return false;
+
+	const [analyzedCommand] = analysis.commands;
+	if (!analyzedCommand) return false;
+	if (analyzedCommand.hasDynamicName || analyzedCommand.hasDynamicArgs || analyzedCommand.hasAnyExpansion) return false;
+	if (analyzedCommand.programRaw.includes("/")) return false;
+
+	return allowedCommands.has(analyzedCommand.programRaw);
+}
+
 export interface GitToolClassification {
 	recognized: boolean;
 	readOnly: boolean;

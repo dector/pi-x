@@ -4,6 +4,7 @@ import {
 	decideToolCall,
 	describeToolCall,
 	getBashCommandType,
+	isBashCommandAllowedAnyArgs,
 	normalizeGitToolArgs,
 	type BashCommandType,
 	type SafeMode,
@@ -353,6 +354,21 @@ test("getBashCommandType: unknown commands", () => {
 	expectBashType("custom-tool arg1 arg2", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("command rm -rf tmp", { hasReads: false, hasWrites: false, isPlainCommand: true });
 	expectBashType("custom-tool | grep x", { isPlainCommand: false });
+});
+
+test("isBashCommandAllowedAnyArgs: allows only one plain matching executable", () => {
+	const allowed = new Set(["flutter"]);
+
+	expect(isBashCommandAllowedAnyArgs("flutter test", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("flutter foo --bar", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("myflutter test", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("fluttered test", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("./flutter test", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("flutter test && rm -rf tmp", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("flutter test | rm -rf tmp", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("flutter test > out.txt", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("flutter $TARGET", allowed)).toBe(false);
+	expect(isBashCommandAllowedAnyArgs("$(echo flutter) test", allowed)).toBe(false);
 });
 
 test("decideToolCall: reader mode integration", () => {
