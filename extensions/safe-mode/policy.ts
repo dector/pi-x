@@ -31,17 +31,17 @@ export interface BashCommandType {
 export function isBashCommandAllowedAnyArgs(command: string, allowedCommands: ReadonlySet<string>): boolean {
 	const analysis = analyzeBash(command);
 	if (!analysis.parse.ok) return false;
-	if (!analysis.structure.isPlainCommand) return false;
-	if (analysis.commandCount !== 1) return false;
+	if (analysis.commandCount === 0) return false;
 	if (analysis.structure.hasInputRedirection || analysis.structure.hasOutputRedirection) return false;
 	if (analysis.structure.hasSubstitution) return false;
 
-	const [analyzedCommand] = analysis.commands;
-	if (!analyzedCommand) return false;
-	if (analyzedCommand.hasDynamicName || analyzedCommand.hasDynamicArgs || analyzedCommand.hasAnyExpansion) return false;
-	if (analyzedCommand.programRaw.includes("/")) return false;
+	for (const analyzedCommand of analysis.commands) {
+		if (analyzedCommand.hasDynamicName || analyzedCommand.hasDynamicArgs || analyzedCommand.hasAnyExpansion) return false;
+		if (analyzedCommand.programRaw.includes("/")) return false;
+		if (!allowedCommands.has(analyzedCommand.programRaw)) return false;
+	}
 
-	return allowedCommands.has(analyzedCommand.programRaw);
+	return true;
 }
 
 export interface GitToolClassification {

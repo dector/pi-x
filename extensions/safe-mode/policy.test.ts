@@ -356,11 +356,15 @@ test("getBashCommandType: unknown commands", () => {
 	expectBashType("custom-tool | grep x", { isPlainCommand: false });
 });
 
-test("isBashCommandAllowedAnyArgs: allows only one plain matching executable", () => {
-	const allowed = new Set(["flutter"]);
+test("isBashCommandAllowedAnyArgs: allows complex commands only when every executable is allowed", () => {
+	const allowed = new Set(["flutter", "dart"]);
 
 	expect(isBashCommandAllowedAnyArgs("flutter test", allowed)).toBe(true);
 	expect(isBashCommandAllowedAnyArgs("flutter foo --bar", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("dart foo && dart bar", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("dart foo; flutter test", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("dart foo || flutter test", allowed)).toBe(true);
+	expect(isBashCommandAllowedAnyArgs("dart foo | flutter test", allowed)).toBe(true);
 	expect(isBashCommandAllowedAnyArgs("myflutter test", allowed)).toBe(false);
 	expect(isBashCommandAllowedAnyArgs("fluttered test", allowed)).toBe(false);
 	expect(isBashCommandAllowedAnyArgs("./flutter test", allowed)).toBe(false);
