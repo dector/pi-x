@@ -80,6 +80,7 @@ extensions=(
   "safe-mode"
   "repo-stats"
   "skill-stats"
+  "flutter"
   "http"
   "interactive-bash"
   "pi-ui"
