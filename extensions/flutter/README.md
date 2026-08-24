@@ -4,7 +4,7 @@ Owns a single `flutter run --debug` process and exposes fast hot reload/restart 
 
 ## Features
 
-- `/flutter run` starts `flutter run --debug` in the current pi cwd.
+- `/flutter run` starts `flutter run --debug` in the configured Flutter app workdir, or the current pi cwd when no workdir is configured.
 - `/flutter run android` starts `flutter run --debug -d android`.
 - `/flutter run linux` starts `flutter run --debug -d linux`.
 - `/flutter run <device-id>` passes any other device id to `-d`.
@@ -12,8 +12,8 @@ Owns a single `flutter run --debug` process and exposes fast hot reload/restart 
 - `/flutter restart` or `Alt+Shift+R` sends `R` to Flutter stdin for hot restart.
 - `/flutter stop` stops the owned process (`q`, then `SIGTERM`, then `SIGKILL` fallback).
 - `/flutter status` shows pid/device/runtime, resolved Flutter path, and all captured stdout/stderr lines from the current or previous run.
-- `/flutter env` shows cwd, resolved Flutter path, PATH, and `flutter --version` from pi's extension environment.
-- `/flutter doctor` runs `flutter doctor -v` using the same resolved Flutter binary.
+- `/flutter env` shows pi cwd, Flutter cwd, resolved Flutter path, PATH, and `flutter --version` from pi's extension environment.
+- `/flutter doctor` runs `flutter doctor -v` from the same Flutter cwd using the same resolved Flutter binary.
 - The running process remains owned, visible, and controllable across `/reload`, `/new`, `/resume`, and `/fork`.
 
 ## Status bar
@@ -27,6 +27,20 @@ Example status:
 ```text
 ● Flutter (pid 12345)
 ```
+
+## Configuration
+
+For monorepos, configure the Flutter app directory so `/flutter run`, `/flutter env`, and `/flutter doctor` do not execute from the repository root.
+
+Create `<repo>/.pi/memory/flutter/config.json`:
+
+```json
+{
+  "workdir": "apps/mobile"
+}
+```
+
+`workdir` may be relative to the repo root (when loaded from `<repo>/.pi/memory/flutter/config.json`) or absolute.
 
 ## Commands
 

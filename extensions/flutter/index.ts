@@ -1,4 +1,6 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const EXTENSION_ID = "flutter";
@@ -11,6 +13,7 @@ const FIRST_LINE_PRIORITY = 200; // repo-stats uses 100 and skill-stats uses -10
 const MAX_LOG_LINES = 1000;
 const STOP_TERM_DELAY_MS = 2000;
 const STOP_KILL_DELAY_MS = 5000;
+const CONFIG_RELATIVE_PATH = join(".pi", "memory", "flutter", "config.json");
 
 const ANSI_RESET = "\u001b[0m";
 const ANSI_GREEN = "\u001b[38;5;34m";
@@ -37,6 +40,16 @@ interface FlutterProcessRecord {
 interface GlobalFlutterState {
 	record?: FlutterProcessRecord;
 	lastRecord?: FlutterProcessRecord;
+}
+
+interface FlutterConfig {
+	workdir?: string;
+}
+
+interface ResolvedFlutterWorkdir {
+	cwd: string;
+	configPath?: string;
+	configuredWorkdir?: string;
 }
 
 interface StatusBarPongPayload {
@@ -129,6 +142,61 @@ function runCapture(command: string, args: string[], cwd: string, timeoutMs = 15
 function resolveFlutterPath(cwd: string): string | undefined {
 	const result = runCapture("bash", ["-lc", "command -v flutter"], cwd, 5000);
 	return result.stdout.split("\n")[0]?.trim() || undefined;
+}
+
+function findRepoRoot(cwd: string): string | undefined {
+	const result = runCapture("git", ["rev-parse", "--show-toplevel"], cwd, 5000);
+	if (result.code !== 0) return undefined;
+	return result.stdout.split("\n")[0]?.trim() || undefined;
+}
+
+function readFlutterConfig(path: string): FlutterConfig | undefined {
+	if (!existsSync(path)) return undefined;
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const raw = (parsed as { workdir?: unknown }).workdir;
+		return typeof raw === "string" && raw.trim() ? { workdir: raw.trim() } : {};
+	} catch (error) {
+		console.error(`flutter: failed to parse ${path}: ${String(error)}`);
+		return {};
+	}
+}
+
+function loadFlutterConfig(cwd: string): { config: FlutterConfig; path?: string; baseDir?: string } {
+	const repoRoot = findRepoRoot(cwd);
+	const configCandidates = [
+		repoRoot ? { path: join(repoRoot, CONFIG_RELATIVE_PATH), baseDir: repoRoot } : undefined,
+		{ path: join(cwd, CONFIG_RELATIVE_PATH), baseDir: cwd },
+	].filter((candidate): candidate is { path: string; baseDir: string } => !!candidate);
+
+	const seen = new Set<string>();
+	for (const candidate of configCandidates) {
+		if (seen.has(candidate.path)) continue;
+		seen.add(candidate.path);
+		const config = readFlutterConfig(candidate.path);
+		if (config) return { config, path: candidate.path, baseDir: candidate.baseDir };
+	}
+
+	return { config: {} };
+}
+
+function resolveFlutterWorkdir(cwd: string): ResolvedFlutterWorkdir {
+	const loaded = loadFlutterConfig(cwd);
+	const configuredWorkdir = loaded.config.workdir;
+	if (!configuredWorkdir) return { cwd, configPath: loaded.path };
+	const baseDir = loaded.baseDir ?? cwd;
+	return {
+		cwd: isAbsolute(configuredWorkdir) ? configuredWorkdir : resolve(baseDir, configuredWorkdir),
+		configPath: loaded.path,
+		configuredWorkdir,
+	};
+}
+
+function assertDirectory(path: string): void {
+	if (!existsSync(path) || !statSync(path).isDirectory()) {
+		throw new Error(`Flutter workdir does not exist or is not a directory: ${path}`);
+	}
 }
 
 function describeRecord(record: FlutterProcessRecord): string {
@@ -303,11 +371,19 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 		}
 
 		const args = buildRunArgs(device);
-		const flutterPath = resolveFlutterPath(ctx.cwd);
+		const workdir = resolveFlutterWorkdir(ctx.cwd);
+		try {
+			assertDirectory(workdir.cwd);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			notify(ctx, message, "error");
+			return;
+		}
+		const flutterPath = resolveFlutterPath(workdir.cwd);
 		let child: ChildProcessWithoutNullStreams;
 		try {
 			child = spawn(flutterPath ?? "flutter", args, {
-				cwd: ctx.cwd,
+				cwd: workdir.cwd,
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
@@ -318,7 +394,7 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 
 		const record: FlutterProcessRecord = {
 			process: child,
-			cwd: ctx.cwd,
+			cwd: workdir.cwd,
 			flutterPath,
 			device,
 			startedAt: Date.now(),
@@ -359,7 +435,8 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 		});
 
 		publish();
-		notify(ctx, `Started ${flutterPath ?? "flutter"} ${args.join(" ")} (pid ${child.pid ?? "unknown"}) in ${ctx.cwd}.`, "info");
+		const configDetail = workdir.configuredWorkdir ? ` (configured by ${workdir.configPath}: workdir=${workdir.configuredWorkdir})` : "";
+		notify(ctx, `Started ${flutterPath ?? "flutter"} ${args.join(" ")} (pid ${child.pid ?? "unknown"}) in ${workdir.cwd}${configDetail}.`, "info");
 	};
 
 	const showStatus = (ctx: ExtensionContext): void => {
@@ -382,10 +459,21 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 	};
 
 	const showEnv = (ctx: ExtensionContext): void => {
-		const flutterPath = resolveFlutterPath(ctx.cwd);
-		const version = runCapture(flutterPath ?? "flutter", ["--version"], ctx.cwd, 15000);
+		const workdir = resolveFlutterWorkdir(ctx.cwd);
+		try {
+			assertDirectory(workdir.cwd);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			notify(ctx, message, "error");
+			return;
+		}
+		const flutterPath = resolveFlutterPath(workdir.cwd);
+		const version = runCapture(flutterPath ?? "flutter", ["--version"], workdir.cwd, 15000);
 		const lines = [
-			`cwd: ${ctx.cwd}`,
+			`pi cwd: ${ctx.cwd}`,
+			`flutter cwd: ${workdir.cwd}`,
+			workdir.configPath ? `config: ${workdir.configPath}` : undefined,
+			workdir.configuredWorkdir ? `configured workdir: ${workdir.configuredWorkdir}` : undefined,
 			`resolved flutter: ${flutterPath ?? "(not found)"}`,
 			`PATH: ${process.env.PATH ?? ""}`,
 			"flutter --version:",
@@ -397,10 +485,21 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 	};
 
 	const runDoctor = (ctx: ExtensionContext): void => {
-		const flutterPath = resolveFlutterPath(ctx.cwd);
-		const doctor = runCapture(flutterPath ?? "flutter", ["doctor", "-v"], ctx.cwd, 60000);
+		const workdir = resolveFlutterWorkdir(ctx.cwd);
+		try {
+			assertDirectory(workdir.cwd);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			notify(ctx, message, "error");
+			return;
+		}
+		const flutterPath = resolveFlutterPath(workdir.cwd);
+		const doctor = runCapture(flutterPath ?? "flutter", ["doctor", "-v"], workdir.cwd, 60000);
 		const lines = [
-			`cwd: ${ctx.cwd}`,
+			`pi cwd: ${ctx.cwd}`,
+			`flutter cwd: ${workdir.cwd}`,
+			workdir.configPath ? `config: ${workdir.configPath}` : undefined,
+			workdir.configuredWorkdir ? `configured workdir: ${workdir.configuredWorkdir}` : undefined,
 			`resolved flutter: ${flutterPath ?? "(not found)"}`,
 			`exit code: ${doctor.code ?? "?"}`,
 			doctor.error ? `error: ${doctor.error}` : undefined,
