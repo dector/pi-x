@@ -385,6 +385,16 @@ test("isBashCommandAllowedByAllowlist: combines allowAny and exact command segme
 		exact,
 		allowAny,
 	)).toBe(true);
+	expect(isBashCommandAllowedByAllowlist(
+		"cd app && flutter test",
+		new Set(["cd app"]),
+		new Set(["flutter"]),
+	)).toBe(true);
+	expect(isBashCommandAllowedByAllowlist(
+		"cd app && flutter test",
+		new Set(),
+		new Set(["flutter"]),
+	)).toBe(false);
 });
 
 test("decideToolCall: reader mode integration", () => {
