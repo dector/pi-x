@@ -14,10 +14,38 @@ if [[ ! -d "$EXTENSIONS_DIR" ]]; then
 	exit 1
 fi
 
+INCLUDE_ALL=0
+WITH_NVIM=0
+PI_ARGS=()
+for arg in "$@"; do
+	case "$arg" in
+		--include-all)
+			INCLUDE_ALL=1
+			;;
+		--nvim)
+			WITH_NVIM=1
+			;;
+		*)
+			PI_ARGS+=("$arg")
+			;;
+	esac
+done
+
 EXT_ARGS=()
 while IFS= read -r -d '' index_file; do
 	ext_dir="$(dirname "$index_file")"
-	EXT_ARGS+=("-e" "$ext_dir")
+	rel_index="${index_file#"$SCRIPT_DIR"/}"
+
+	if git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$rel_index" >/dev/null 2>&1; then
+		EXT_ARGS+=("-e" "$ext_dir")
+	elif [[ $INCLUDE_ALL -eq 1 ]]; then
+		# Loading an untracked entrypoint explicitly keeps it visible in Pi's
+		# verbose extension list. Add its conventional resources separately.
+		EXT_ARGS+=("-e" "$index_file")
+		[[ -d "$ext_dir/skills" ]] && EXT_ARGS+=("--skill" "$ext_dir/skills")
+		[[ -d "$ext_dir/prompts" ]] && EXT_ARGS+=("--prompt-template" "$ext_dir/prompts")
+		[[ -d "$ext_dir/themes" ]] && EXT_ARGS+=("--theme" "$ext_dir/themes")
+	fi
 done < <(find "$EXTENSIONS_DIR" -mindepth 2 -maxdepth 2 -type f -name "index.ts" -print0 | sort -z)
 
 if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
@@ -33,16 +61,6 @@ HERDR_EXT_FILE="$HOME/.pi/agent/extensions/herdr-agent-state.ts"
 if [[ "${PI_PITEST_HERDR_INTEGRATION:-true}" != "false" && -f "$HERDR_EXT_FILE" ]]; then
 	EXT_ARGS+=("-e" "$HERDR_EXT_FILE")
 fi
-
-WITH_NVIM=0
-PI_ARGS=()
-for arg in "$@"; do
-	if [[ "$arg" == "--nvim" ]]; then
-		WITH_NVIM=1
-		continue
-	fi
-	PI_ARGS+=("$arg")
-done
 
 if [[ $WITH_NVIM -eq 1 ]]; then
 	NVIM_EXT_DIR="$HOME/.pi/tmp/extensions/pi-nvim"
