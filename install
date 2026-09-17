@@ -87,6 +87,7 @@ extensions=(
   "sqlite"
   "save"
   "prompt-stash"
+  "notes"
   "git"
   "pi-nvim"
 )
