@@ -36,6 +36,7 @@ Current dialog items:
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
 - `p - preview prompts` (opens a second dialog)
+- `n/N - new note / list notes` (`n` opens the `/notes` editor, `N` opens the `/notes:list` browser)
 - `↑/↓ - move selection`
 - `Enter - run selected action`
 - `Esc - close`
@@ -60,6 +61,9 @@ Behavior details:
   - first user prompt in current branch history (top 10 lines)
   - latest user prompt in current branch history (top 10 lines)
   - preview dialog uses max-width overlay and closes via `Esc`, `Enter`, `q`, or `Ctrl+,`.
+- Pressing `n` emits event `notes:open` and closes the dialog; `notes` then opens its editor.
+- Pressing `N` emits event `notes:list` and closes the dialog; `notes` then opens its list browser.
+- Both notes actions are shown as a single row (`n/N`); pressing `Enter` on it defaults to `n` (editor).
 - Safe-mode rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
   - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
@@ -77,7 +81,10 @@ Integration contract (important):
   - `safe-mode:toggle-reader`
   - `safe-mode:toggle-outer`
   - `safe-mode:set-yolo-plus`
+  - `notes:open`
+  - `notes:list`
 - Expected prompt-stash listener behavior (implemented in `prompt-stash`): save, pop, list/restore, or clear prompt stashes for the active context.
+- Expected notes listener behavior (implemented in `notes`): open the `/notes` editor for `notes:open`, and the `/notes:list` browser for `notes:list`.
 - Expected safe-mode listener behavior (implemented in `safe-mode`):
   - if mode is not `reader`: switch to `reader` and remember previous mode
   - if mode is `reader` and previous mode exists: restore previous mode
@@ -123,6 +130,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
   - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
   - `p` — open preview prompts dialog (first/latest user prompt, top 10 lines each)
+  - `n/N` — request notes editor (`n`) or notes list (`N`) via `notes:open` / `notes:list`
   - `Esc` — close dialog
   - `Backspace` — close main dialog, or return from submenu to main dialog
   - `Ctrl+,` — close dialog (toggle)

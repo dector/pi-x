@@ -17,6 +17,8 @@ const PROMPT_STASH_STASH_EVENT = "prompt-stash:stash";
 const PROMPT_STASH_POP_EVENT = "prompt-stash:pop";
 const PROMPT_STASH_LIST_EVENT = "prompt-stash:list";
 const PROMPT_STASH_CLEAR_ALL_EVENT = "prompt-stash:clear-all";
+const NOTES_OPEN_EVENT = "notes:open";
+const NOTES_LIST_EVENT = "notes:list";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
@@ -558,6 +560,8 @@ async function showHiDialog(
 		onPromptStashPop: () => void;
 		onPromptStashList: () => void;
 		onPromptStashClearAll: () => void;
+		onOpenNote: () => Promise<void>;
+		onListNotes: () => Promise<void>;
 	},
 	dialogLifecycle: {
 		isShown: () => boolean;
@@ -591,6 +595,8 @@ async function showHiDialog(
 					onPromptStashPop,
 					onPromptStashList,
 					onPromptStashClearAll,
+					onOpenNote,
+					onListNotes,
 				} = handlers;
 				let selectedIndex = 0;
 				let closed = false;
@@ -607,11 +613,13 @@ async function showHiDialog(
 				type DialogAction = {
 					hotkey: string;
 					hotkeyAliases?: string[];
+					hotkeyLabel?: string;
 					label: string;
 					risk?: boolean;
 					showStatusBadge?: boolean;
 					isEnabled: (state: DialogState) => boolean;
 					run: () => void | Promise<void>;
+					runWithKey?: (key: string) => void | Promise<void>;
 					closeAfterRun?: boolean;
 				};
 				const getSafeModeUiState = (): DialogState => {
@@ -695,6 +703,17 @@ async function showHiDialog(
 							await onShowPromptPreviews();
 						},
 					},
+					{
+						hotkey: "n",
+						hotkeyAliases: ["N"],
+						hotkeyLabel: "n/N",
+						label: "New note / list notes",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(() => void onOpenNote()),
+						runWithKey: (key) => runAfterClose(() => void (key === "N" ? onListNotes() : onOpenNote())),
+					},
 				];
 
 				const stashActions: DialogAction[] = [
@@ -748,12 +767,16 @@ async function showHiDialog(
 
 				const getActions = (): DialogAction[] => (activeMenu === "stash" ? stashActions : mainActions);
 
-				const executeAction = (index: number): void => {
+				const executeAction = (index: number, key?: string): void => {
 					const action = getActions()[index];
 					if (!action) return;
 					void (async () => {
 						try {
-							await action.run();
+							if (key !== undefined && action.runWithKey) {
+								await action.runWithKey(key);
+							} else {
+								await action.run();
+							}
 						} finally {
 							if (action.closeAfterRun === false) return;
 							closeDialog();
@@ -765,12 +788,15 @@ async function showHiDialog(
 					return data === key || matchesKey(data, key);
 				};
 
-				const matchActionIndexForInput = (data: string): number => {
-					return getActions().findIndex(
-						(action) =>
-							matchesActionKey(data, action.hotkey) ||
-							action.hotkeyAliases?.some((alias) => matchesActionKey(data, alias)),
-					);
+				const matchActionForInput = (data: string): { index: number; key: string } | undefined => {
+					const actions = getActions();
+					for (let index = 0; index < actions.length; index += 1) {
+						const action = actions[index]!;
+						if (matchesActionKey(data, action.hotkey)) return { index, key: action.hotkey };
+						const alias = action.hotkeyAliases?.find((candidate) => matchesActionKey(data, candidate));
+						if (alias !== undefined) return { index, key: alias };
+					}
+					return undefined;
 				};
 
 				return {
@@ -805,7 +831,7 @@ async function showHiDialog(
 						const actions = getActions();
 						const title = activeMenu === "stash" ? "Ctrl+, Actions › Prompt stash" : "Ctrl+, Actions";
 						const actionLines = actions.map((action, index) =>
-							actionLine(action.hotkey, action.label, action.isEnabled(state), selectedIndex === index, {
+							actionLine(action.hotkeyLabel ?? action.hotkey, action.label, action.isEnabled(state), selectedIndex === index, {
 								risk: action.risk,
 								showStatusBadge: action.showStatusBadge,
 							}),
@@ -850,9 +876,9 @@ async function showHiDialog(
 							executeAction(selectedIndex);
 							return;
 						}
-						const actionIndex = matchActionIndexForInput(data);
-						if (actionIndex >= 0) {
-							executeAction(actionIndex);
+						const match = matchActionForInput(data);
+						if (match) {
+							executeAction(match.index, match.key);
 						}
 					},
 				};
@@ -1084,6 +1110,12 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onPromptStashClearAll: () => {
 						pi.events.emit(PROMPT_STASH_CLEAR_ALL_EVENT, { ctx });
+					},
+					onOpenNote: async () => {
+						pi.events.emit(NOTES_OPEN_EVENT, { ctx });
+					},
+					onListNotes: async () => {
+						pi.events.emit(NOTES_LIST_EVENT, { ctx });
 					},
 				},
 				{
