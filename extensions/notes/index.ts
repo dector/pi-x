@@ -4,6 +4,7 @@ import {
 	copyToClipboard,
 	getAgentDir,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -20,6 +21,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 const NOTES_DIR_NAME = "notes";
+const NOTES_OPEN_EVENT = "notes:open";
+const NOTES_LIST_EVENT = "notes:list";
 const TITLE_MAX = 80;
 const CLEAR_WINDOW_MS = 500;
 const SCROLL_STEP = 5;
@@ -265,11 +268,12 @@ class NoteEditorDialog implements Component, Focusable {
 	render(width: number): string[] {
 		const renderWidth = Math.max(1, width);
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
-		const title = this.savedPath ? " Notes (editing) " : " Notes ";
+		const title = this.theme.fg("accent", this.theme.bold(" Notes "));
+		const unsaved = this.isDirty() ? this.theme.fg("dim", " (unsaved)") : "";
 
 		const lines: string[] = [
 			border,
-			truncateToWidth(this.theme.fg("accent", this.theme.bold(title)), renderWidth),
+			truncateToWidth(`${title}${unsaved}`, renderWidth),
 		];
 
 		for (const line of this.editor.render(renderWidth)) {
@@ -495,30 +499,52 @@ class NotesListDialog implements Component, Focusable {
 	}
 }
 
+async function openNoteEditor(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("notes: the editor dialog requires an interactive session", "warning");
+		return;
+	}
+	await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new NoteEditorDialog(tui, theme, done));
+}
+
+async function openNotesList(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("notes: the list dialog requires an interactive session", "warning");
+		return;
+	}
+	await ctx.ui.custom<null>(async (tui, theme, _keybindings, done) => {
+		const dialog = new NotesListDialog(tui, theme, () => done(null));
+		await dialog.load();
+		return dialog;
+	});
+}
+
 export default function notesExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("notes", {
 		description: "Compose a note; ctrl+s saves, esc closes",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("notes: the editor dialog requires an interactive session", "warning");
-				return;
-			}
-			await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new NoteEditorDialog(tui, theme, done));
+			await openNoteEditor(ctx);
 		},
 	});
 
 	pi.registerCommand("notes:list", {
 		description: "Browse saved notes; ctrl+c copies the selected note",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("notes: the list dialog requires an interactive session", "warning");
-				return;
-			}
-			await ctx.ui.custom<null>(async (tui, theme, _keybindings, done) => {
-				const dialog = new NotesListDialog(tui, theme, () => done(null));
-				await dialog.load();
-				return dialog;
-			});
+			await openNotesList(ctx);
 		},
 	});
+
+	// Allow other extensions (e.g. pi-ui's Ctrl+, dialog) to open the dialogs.
+	const withCtx = async (
+		payload: unknown,
+		fn: (ctx: ExtensionContext) => Promise<unknown>,
+	): Promise<void> => {
+		if (!payload || typeof payload !== "object") return;
+		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!maybeCtx) return;
+		await fn(maybeCtx);
+	};
+
+	pi.events.on(NOTES_OPEN_EVENT, (payload) => void withCtx(payload, openNoteEditor));
+	pi.events.on(NOTES_LIST_EVENT, (payload) => void withCtx(payload, openNotesList));
 }

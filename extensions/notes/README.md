@@ -11,6 +11,17 @@ editor.
 - `/notes` — open a multi-line note editor.
 - `/notes:list` — browse saved notes and copy the selected one.
 
+## pi-ui integration
+
+When the [pi-ui](../pi-ui) extension is enabled, the same dialogs are also
+reachable from its `Ctrl+,` action dialog:
+
+- `n` — open the `/notes` editor (pi-ui emits the `notes:open` event).
+- `N` — open the `/notes:list` browser (pi-ui emits the `notes:list` event).
+
+Both events carry `{ ctx }` in their payload, matching the convention used by
+`safe-mode` and `prompt-stash`.
+
 ## `/notes` dialog
 
 | Key | Action |
