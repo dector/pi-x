@@ -20,14 +20,16 @@ Default layout (`legacy` display mode):
 }
 ```
 
-`new` display mode (default) uses a reduced layout because context/model/safe-mode
-are shown on the editor frame border:
+`new` display mode (default) uses a reduced layout. Context/model/safe-mode are
+shown on the editor frame border, and `switch-thinking` (favorite thinking modes)
+is redundant with the border thinking level. The input/output/cache token breakdown
+stays because the border only shows the total:
 
 ```ts
 {
-  left: ["switch-thinking"],
+  left: [],
   center: [],
-  right: [],
+  right: ["context-watcher-tokens"],
 }
 ```
 
@@ -113,7 +115,9 @@ Placement priority:
 context/model/safe-mode info:
 
 - `new` (border priority): editor frame shows the corner labels; status line hides
-  `safe-mode` and `context-watcher-*`.
+  `safe-mode`, `switch-thinking`, `context-watcher-model`, and
+  `context-watcher-percent`. Only `context-watcher-tokens` (the input/output/cache
+  breakdown) stays, since the border shows just the total.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout.
 

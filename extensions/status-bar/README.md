@@ -24,7 +24,8 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
 - `new` display mode uses a reduced layout (see [Display mode](#display-mode)) because
-  the same info is shown on the editor frame border.
+  context/model/safe-mode are shown on the editor frame border; only the
+  `context-watcher-tokens` breakdown stays on the status line.
 - `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
 - Token label format: `↑<input>/↓<output>/<cacheRead>`.
 - Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
@@ -99,7 +100,9 @@ labels are rendered in the frame corners:
 
 - `new` (default) — border priority.
   - Editor frame shows the corner labels (bottom-left context, top-right model, bottom-right safe-mode).
-  - Status line uses the reduced layout: `left: ["switch-thinking"]`, `center: []`, `right: []`.
+  - Status line keeps only the detail the border does not show: the input/output/cache
+    token breakdown. Layout: `left: []`, `center: []`, `right: ["context-watcher-tokens"]`.
+  - `safe-mode`, `switch-thinking` (favorite thinking modes), model, and percent are hidden.
 - `legacy` — status-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).
   - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`,
