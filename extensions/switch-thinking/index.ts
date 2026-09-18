@@ -26,9 +26,33 @@ function isReasoningDisabled(model: ExtensionContext["model"]): boolean {
 	return model?.reasoning === false;
 }
 
+/**
+ * Standard thinking levels that are available by default. Extended levels such
+ * as `xhigh` are opt-in and only available when the model maps them explicitly.
+ */
+const DEFAULT_THINKING_MODES: ThinkingMode[] = ["off", "minimal", "low", "medium", "high"];
+
+/**
+ * Modes supported by the current model.
+ *
+ * `model.thinkingLevelMap` maps pi levels to provider values. A `null` value
+ * marks a level as unsupported; omitted standard levels fall back to provider
+ * defaults, while omitted extended levels (e.g. `xhigh`) are unsupported.
+ * See https://github.com/earendil-works/pi docs/models.md#thinking-level-map
+ */
 function getAvailableModes(model: ExtensionContext["model"]): ThinkingMode[] {
 	if (isReasoningDisabled(model)) return ["off"];
-	return [...THINKING_MODES];
+
+	const map = model?.thinkingLevelMap;
+	if (!map) return [...DEFAULT_THINKING_MODES];
+
+	return THINKING_MODES.filter((mode) => {
+		const mapped = map[mode];
+		if (mapped === null) return false;
+		// Extended levels are opt-in: only available when explicitly mapped.
+		if (!DEFAULT_THINKING_MODES.includes(mode)) return mapped !== undefined;
+		return true;
+	});
 }
 
 function notify(ctx: ExtensionContext, message: string, type: "info" | "warning" | "error" = "info"): void {
@@ -77,9 +101,10 @@ export default function switchThinkingExtension(pi: ExtensionAPI) {
 		const current = pi.getThinkingLevel();
 		lastStatusMode = current;
 
-		// Render favorites, but if current mode is not a favorite,
-		// show it ephemerally in canonical position without persisting it.
-		const displayModes = uniqueModes([...favorites, current]);
+		// Hide favorites the current model does not support, then show the active
+		// mode ephemerally in canonical position without persisting it.
+		const available = new Set(getAvailableModes(ctx.model));
+		const displayModes = uniqueModes([...favorites.filter((mode) => available.has(mode)), current]);
 		const signature = `${displayModes.join(",")}|${current}`;
 		if (signature === lastStatusSignature) return;
 		lastStatusSignature = signature;

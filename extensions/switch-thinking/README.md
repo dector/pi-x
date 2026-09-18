@@ -18,8 +18,14 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
   - `~/.pi/agent/space.dector-switch-thinking.json`
 
 Availability rules:
-- Reasoning model: all modes available
 - Non-reasoning model: only `off` available
+- Reasoning model without `thinkingLevelMap`: standard levels `off → high`
+- Reasoning model with `thinkingLevelMap`: levels mapped to `null` are hidden
+  - omitted standard levels keep provider defaults
+  - extended levels (`xhigh`) are only shown when explicitly mapped
+
+Unsupported favorites are hidden from both the picker and the status bar for the
+current model, but stay saved in the favorites file.
 
 ## Important keybinding conflict (`Ctrl+T`)
 
