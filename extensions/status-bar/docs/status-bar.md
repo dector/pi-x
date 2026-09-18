@@ -37,21 +37,21 @@ breakdown moves to status line 1, after the producer items, without a cost suffi
 
 Producers publish content to the shared event bus:
 
-- `status-bar:set`
+- `px:status-bar:set`
   - payload: `{ id: string, content: string }`
-- `status-bar:clear`
+- `px:status-bar:clear`
   - payload: `{ id: string }`
-- `status-bar:first-line:set`
+- `px:status-bar:first-line:set`
   - payload: `{ id: string, content: string, section?: "left" | "center" | "right", priority?: number }`
   - omitted `section` defaults to `left`
-- `status-bar:first-line:clear`
+- `px:status-bar:first-line:clear`
   - payload: `{ id: string }`
-- `status-bar:ping`
+- `px:status-bar:ping`
   - payload: `{ id: string }`
-- `status-bar:pong`
+- `px:status-bar:pong`
   - payload: `{ id: string }`
 
-When `status-bar` receives a valid `status-bar:ping`, it emits `status-bar:pong` echoing the same `id`.
+When `status-bar` receives a valid `px:status-bar:ping`, it emits `px:status-bar:pong` echoing the same `id`.
 
 `id` is the producer ID (for example `safe-mode`, `switch-thinking`, `repo-stats`).
 
@@ -123,7 +123,7 @@ context/model/safe-mode info:
 
 Setup:
 
-- `/status-bar-display-mode new|legacy`
+- `/px:status-bar-display-mode new|legacy`
 - `~/.pi/agent/status-bar.json` -> `{ "displayMode": "new" }`
 - `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` env override (wins over the file)
 
@@ -171,8 +171,8 @@ is too narrow. When the editor is scrolled, `↓ N more` sits left of the bottom
 ### Producer extensions
 
 - Own their text/formatting.
-- Emit `status-bar:set` when content changes.
-- Emit `status-bar:clear` when content should disappear.
+- Emit `px:status-bar:set` when content changes.
+- Emit `px:status-bar:clear` when content should disappear.
 
 ### Status-bar extension
 

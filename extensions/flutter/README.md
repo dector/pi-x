@@ -4,16 +4,16 @@ Owns a single `flutter run --debug` process and exposes fast hot reload/restart 
 
 ## Features
 
-- `/flutter run` starts `flutter run --debug` in the configured Flutter app workdir, or the current pi cwd when no workdir is configured.
-- `/flutter run android` starts `flutter run --debug -d android`.
-- `/flutter run linux` starts `flutter run --debug -d linux`.
-- `/flutter run <device-id>` passes any other device id to `-d`.
-- `/flutter reload` or `Alt+R` sends `r` to Flutter stdin for hot reload.
-- `/flutter restart` or `Alt+Shift+R` sends `R` to Flutter stdin for hot restart.
-- `/flutter stop` stops the owned process (`q`, then `SIGTERM`, then `SIGKILL` fallback).
-- `/flutter status` shows pid/device/runtime, resolved Flutter path, and all captured stdout/stderr lines from the current or previous run.
-- `/flutter env` shows pi cwd, Flutter cwd, resolved Flutter path, PATH, and `flutter --version` from pi's extension environment.
-- `/flutter doctor` runs `flutter doctor -v` from the same Flutter cwd using the same resolved Flutter binary.
+- `/px:flutter run` starts `flutter run --debug` in the configured Flutter app workdir, or the current pi cwd when no workdir is configured.
+- `/px:flutter run android` starts `flutter run --debug -d android`.
+- `/px:flutter run linux` starts `flutter run --debug -d linux`.
+- `/px:flutter run <device-id>` passes any other device id to `-d`.
+- `/px:flutter reload` or `Alt+R` sends `r` to Flutter stdin for hot reload.
+- `/px:flutter restart` or `Alt+Shift+R` sends `R` to Flutter stdin for hot restart.
+- `/px:flutter stop` stops the owned process (`q`, then `SIGTERM`, then `SIGKILL` fallback).
+- `/px:flutter status` shows pid/device/runtime, resolved Flutter path, and all captured stdout/stderr lines from the current or previous run.
+- `/px:flutter env` shows pi cwd, Flutter cwd, resolved Flutter path, PATH, and `flutter --version` from pi's extension environment.
+- `/px:flutter doctor` runs `flutter doctor -v` from the same Flutter cwd using the same resolved Flutter binary.
 - The running process remains owned, visible, and controllable across `/reload`, `/new`, `/resume`, and `/fork`.
 
 ## Status bar
@@ -30,7 +30,7 @@ Example status:
 
 ## Configuration
 
-For monorepos, configure the Flutter app directory so `/flutter run`, `/flutter env`, and `/flutter doctor` do not execute from the repository root.
+For monorepos, configure the Flutter app directory so `/px:flutter run`, `/px:flutter env`, and `/px:flutter doctor` do not execute from the repository root.
 
 Create `<repo>/.pi/memory/flutter/config.json`:
 
@@ -45,13 +45,13 @@ Create `<repo>/.pi/memory/flutter/config.json`:
 ## Commands
 
 ```text
-/flutter run [android|linux|device-id]
-/flutter reload
-/flutter restart
-/flutter stop
-/flutter status
-/flutter env
-/flutter doctor
+/px:flutter run [android|linux|device-id]
+/px:flutter reload
+/px:flutter restart
+/px:flutter stop
+/px:flutter status
+/px:flutter env
+/px:flutter doctor
 ```
 
 ## Shortcuts

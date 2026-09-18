@@ -4,7 +4,7 @@ Extension that registers:
 
 - `git` tool
 - `commit` tool
-- `/git` command
+- `/px:git` command
 
 Current support:
 

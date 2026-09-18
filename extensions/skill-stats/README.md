@@ -16,7 +16,7 @@ Requires [`status-bar`](../status-bar/README.md). If `status-bar` does not answe
 Publishes:
 
 ```ts
-pi.events.emit("status-bar:first-line:set", {
+pi.events.emit("px:status-bar:first-line:set", {
   id: "skill-stats",
   content: "SKILLS: 0/0",
   section: "right",
@@ -26,8 +26,8 @@ pi.events.emit("status-bar:first-line:set", {
 
 The low priority keeps repo/change stats ahead of skill stats in the same right-side section.
 
-On shutdown it clears the same id with `status-bar:first-line:clear`.
+On shutdown it clears the same id with `px:status-bar:first-line:clear`.
 
 ## Commands
 
-- `/skill-stats-debug` — show the denominator and counted absolute `SKILL.md` paths.
+- `/px:skill-stats-debug` — show the denominator and counted absolute `SKILL.md` paths.

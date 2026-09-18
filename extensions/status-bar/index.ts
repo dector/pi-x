@@ -1234,7 +1234,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		pi.events.emit(STATUS_BAR_EVENTS.pong, { id: payload.id });
 	});
 
-	pi.registerCommand("status-bar-contract", {
+	pi.registerCommand("px:status-bar-contract", {
 		description: "Open a read-only status-bar contract settings view",
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
@@ -1243,13 +1243,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("status-bar-display-mode", {
-		description: "Set status-bar display mode: /status-bar-display-mode new|legacy",
+	pi.registerCommand("px:status-bar-display-mode", {
+		description: "Set status-bar display mode: /px:status-bar-display-mode new|legacy",
 		handler: async (args, ctx) => {
 			const requested = normalizeDisplayMode(args ?? "");
 			if (!requested) {
 				if (ctx.hasUI) {
-					ctx.ui.notify(`status-bar display mode: ${displayMode} (usage: /status-bar-display-mode new|legacy)`, "info");
+					ctx.ui.notify(`status-bar display mode: ${displayMode} (usage: /px:status-bar-display-mode new|legacy)`, "info");
 				}
 				return;
 			}
@@ -1267,12 +1267,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("status-bar-set", {
-		description: "Dev helper: /status-bar-set <id> <content>",
+	pi.registerCommand("px:status-bar-set", {
+		description: "Dev helper: /px:status-bar-set <id> <content>",
 		handler: async (args, ctx) => {
 			const parsed = parseSetArgs(args ?? "");
 			if (!parsed) {
-				if (ctx.hasUI) ctx.ui.notify("Usage: /status-bar-set <id> <content>", "warning");
+				if (ctx.hasUI) ctx.ui.notify("Usage: /px:status-bar-set <id> <content>", "warning");
 				return;
 			}
 			bindContextAndRender(ctx);
@@ -1280,12 +1280,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("status-bar-clear", {
-		description: "Dev helper: /status-bar-clear <id>",
+	pi.registerCommand("px:status-bar-clear", {
+		description: "Dev helper: /px:status-bar-clear <id>",
 		handler: async (args, ctx) => {
 			const parsed = parseClearArgs(args ?? "");
 			if (!parsed) {
-				if (ctx.hasUI) ctx.ui.notify("Usage: /status-bar-clear <id>", "warning");
+				if (ctx.hasUI) ctx.ui.notify("Usage: /px:status-bar-clear <id>", "warning");
 				return;
 			}
 			bindContextAndRender(ctx);

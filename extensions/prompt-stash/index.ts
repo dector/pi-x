@@ -3,10 +3,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 
 const CUSTOM_TYPE = "prompt-stash";
-const STASH_EVENT = "prompt-stash:stash";
-const POP_EVENT = "prompt-stash:pop";
-const LIST_EVENT = "prompt-stash:list";
-const CLEAR_ALL_EVENT = "prompt-stash:clear-all";
+const STASH_EVENT = "px:prompt-stash:stash";
+const POP_EVENT = "px:prompt-stash:pop";
+const LIST_EVENT = "px:prompt-stash:list";
+const CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
 
 type PromptStashEvent =
 	| { action: "stash"; stash: PromptStashItem }
@@ -194,14 +194,14 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		rebuildStashes(ctx);
 	});
 
-	pi.registerCommand("prompt-stash.stash", {
+	pi.registerCommand("px:prompt-stash.stash", {
 		description: "Save current editor draft and clear the editor",
 		handler: async (_args, ctx) => {
 			await stashCurrentEditor(ctx);
 		},
 	});
 
-	pi.registerCommand("prompt-stash.pop", {
+	pi.registerCommand("px:prompt-stash.pop", {
 		description: "Restore and remove the newest prompt stash",
 		handler: async (_args, ctx) => {
 			await popNewest(ctx);
@@ -227,7 +227,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		}
 	};
 
-	pi.registerCommand("prompt-stash.list", {
+	pi.registerCommand("px:prompt-stash.list", {
 		description: "List prompt stashes newest-first; in UI, select one to restore it",
 		handler: async (_args, ctx) => {
 			await listStashes(ctx);
@@ -254,7 +254,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		notify(ctx, `prompt-stash: cleared ${count} stash${count === 1 ? "" : "es"}`, "info");
 	};
 
-	pi.registerCommand("prompt-stash.clear-all", {
+	pi.registerCommand("px:prompt-stash.clear-all", {
 		description: "Delete every prompt stash",
 		handler: async (_args, ctx) => {
 			await clearAll(ctx);

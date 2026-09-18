@@ -497,7 +497,7 @@ export default function gitExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("git", {
+	pi.registerCommand("px:git", {
 		description: "Run git status/log helpers",
 		handler: async (args, ctx) => {
 			const argv = normalizeArgs(args);

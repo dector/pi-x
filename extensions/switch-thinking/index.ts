@@ -65,8 +65,8 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 
 const STATUS_BAR_ID = "switch-thinking";
 const STATUS_BAR_ACTIVE_ID = "switch-thinking-active";
-const STATUS_BAR_SET_EVENT = "status-bar:set";
-const STATUS_BAR_CLEAR_EVENT = "status-bar:clear";
+const STATUS_BAR_SET_EVENT = "px:status-bar:set";
+const STATUS_BAR_CLEAR_EVENT = "px:status-bar:clear";
 
 export default function switchThinkingExtension(pi: ExtensionAPI) {
 	let favorites: ThinkingMode[] = [];

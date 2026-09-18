@@ -36,7 +36,7 @@ Current dialog items:
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
 - `p - preview prompts` (opens a second dialog)
-- `n/N - new note / list notes` (`n` opens the `/notes` editor, `N` opens the `/notes:list` browser)
+- `n/N - new note / list notes` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
 - `↑/↓ - move selection`
 - `Enter - run selected action`
 - `Esc - close`
@@ -49,20 +49,20 @@ Behavior details:
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
 - Pressing `Enter` executes the currently selected action and closes the dialog, unless the action opens a submenu.
 - Pressing `s` (or `S`) opens the prompt-stash submenu:
-  - `s` — emits event `prompt-stash:stash` and closes the dialog.
-  - `o` — emits event `prompt-stash:pop` and closes the dialog.
-  - `l` — emits event `prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
-  - `x` — emits event `prompt-stash:clear-all` and closes the dialog.
+  - `s` — emits event `px:prompt-stash:stash` and closes the dialog.
+  - `o` — emits event `px:prompt-stash:pop` and closes the dialog.
+  - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
+  - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
-- Pressing `r` (or `R`) emits event `safe-mode:toggle-reader` and closes the dialog.
-- Pressing `+` emits event `safe-mode:toggle-outer` and closes the dialog.
-- Pressing `!` emits event `safe-mode:set-yolo-plus` and closes the dialog.
+- Pressing `r` (or `R`) emits event `px:safe-mode:toggle-reader` and closes the dialog.
+- Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
+- Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
 - Pressing `p` (or `P`) opens a second overlay dialog showing prompt previews:
   - first user prompt in current branch history (top 10 lines)
   - latest user prompt in current branch history (top 10 lines)
   - preview dialog uses max-width overlay and closes via `Esc`, `Enter`, `q`, or `Ctrl+,`.
-- Pressing `n` emits event `notes:open` and closes the dialog; `notes` then opens its editor.
-- Pressing `N` emits event `notes:list` and closes the dialog; `notes` then opens its list browser.
+- Pressing `n` emits event `px:notes:open` and closes the dialog; `notes` then opens its editor.
+- Pressing `N` emits event `px:notes:list` and closes the dialog; `notes` then opens its list browser.
 - Both notes actions are shown as a single row (`n/N`); pressing `Enter` on it defaults to `n` (editor).
 - Safe-mode rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
   - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
@@ -74,23 +74,23 @@ Behavior details:
 Integration contract (important):
 
 - Event names used by `pi-ui`:
-  - `prompt-stash:stash`
-  - `prompt-stash:pop`
-  - `prompt-stash:list`
-  - `prompt-stash:clear-all`
-  - `safe-mode:toggle-reader`
-  - `safe-mode:toggle-outer`
-  - `safe-mode:set-yolo-plus`
-  - `notes:open`
-  - `notes:list`
+  - `px:prompt-stash:stash`
+  - `px:prompt-stash:pop`
+  - `px:prompt-stash:list`
+  - `px:prompt-stash:clear-all`
+  - `px:safe-mode:toggle-reader`
+  - `px:safe-mode:toggle-outer`
+  - `px:safe-mode:set-yolo-plus`
+  - `px:notes:open`
+  - `px:notes:list`
 - Expected prompt-stash listener behavior (implemented in `prompt-stash`): save, pop, list/restore, or clear prompt stashes for the active context.
-- Expected notes listener behavior (implemented in `notes`): open the `/notes` editor for `notes:open`, and the `/notes:list` browser for `notes:list`.
+- Expected notes listener behavior (implemented in `notes`): open the `/px:notes` editor for `px:notes:open`, and the `/px:notes:list` browser for `px:notes:list`.
 - Expected safe-mode listener behavior (implemented in `safe-mode`):
   - if mode is not `reader`: switch to `reader` and remember previous mode
   - if mode is `reader` and previous mode exists: restore previous mode
   - if mode is `reader` and no remembered previous mode: no-op
-  - for `safe-mode:toggle-outer`: toggle `outerAccess`
-  - for `safe-mode:set-yolo-plus`: toggle `yolo+` (enter `yolo+` and remember previous state; if already in `yolo+`, restore previous state when available)
+  - for `px:safe-mode:toggle-outer`: toggle `outerAccess`
+  - for `px:safe-mode:set-yolo-plus`: toggle `yolo+` (enter `yolo+` and remember previous state; if already in `yolo+`, restore previous state when available)
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
@@ -112,8 +112,8 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 ### Runtime command
 
-- `/pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
-- `/pi-ui-bell [on|off|toggle|status]` — control bell notifications
+- `/px:pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
+- `/px:pi-ui-bell [on|off|toggle|status]` — control bell notifications
 
 ### Shortcut
 
@@ -121,16 +121,16 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
   - `s` — open prompt-stash submenu
-    - `s` — request prompt-stash stash via `prompt-stash:stash`
-    - `o` — request prompt-stash pop via `prompt-stash:pop`
-    - `l` — request prompt-stash list/restore via `prompt-stash:list`
-    - `x` — request prompt-stash clear-all via `prompt-stash:clear-all`
+    - `s` — request prompt-stash stash via `px:prompt-stash:stash`
+    - `o` — request prompt-stash pop via `px:prompt-stash:pop`
+    - `l` — request prompt-stash list/restore via `px:prompt-stash:list`
+    - `x` — request prompt-stash clear-all via `px:prompt-stash:clear-all`
     - `<-` / `Backspace` — return to main action dialog
-  - `r` — request safe-mode reader toggle via `safe-mode:toggle-reader`
-  - `+` — request safe-mode outer toggle via `safe-mode:toggle-outer`
-  - `!` — request safe-mode `yolo+` toggle via `safe-mode:set-yolo-plus`
+  - `r` — request safe-mode reader toggle via `px:safe-mode:toggle-reader`
+  - `+` — request safe-mode outer toggle via `px:safe-mode:toggle-outer`
+  - `!` — request safe-mode `yolo+` toggle via `px:safe-mode:set-yolo-plus`
   - `p` — open preview prompts dialog (first/latest user prompt, top 10 lines each)
-  - `n/N` — request notes editor (`n`) or notes list (`N`) via `notes:open` / `notes:list`
+  - `n/N` — request notes editor (`n`) or notes list (`N`) via `px:notes:open` / `px:notes:list`
   - `Esc` — close dialog
   - `Backspace` — close main dialog, or return from submenu to main dialog
   - `Ctrl+,` — close dialog (toggle)

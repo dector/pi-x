@@ -4,10 +4,10 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const EXTENSION_ID = "flutter";
-const STATUS_BAR_FIRST_LINE_SET_EVENT = "status-bar:first-line:set";
-const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
-const STATUS_BAR_PING_EVENT = "status-bar:ping";
-const STATUS_BAR_PONG_EVENT = "status-bar:pong";
+const STATUS_BAR_FIRST_LINE_SET_EVENT = "px:status-bar:first-line:set";
+const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "px:status-bar:first-line:clear";
+const STATUS_BAR_PING_EVENT = "px:status-bar:ping";
+const STATUS_BAR_PONG_EVENT = "px:status-bar:pong";
 const STATUS_BAR_WARNING_DELAY_MS = 500;
 const FIRST_LINE_PRIORITY = 200; // repo-stats uses 100 and skill-stats uses -100; render before both.
 const MAX_LOG_LINES = 1000;
@@ -365,7 +365,7 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 	const startRun = (ctx: ExtensionContext, device?: string): void => {
 		const existing = globalState.record;
 		if (isAlive(existing)) {
-			notify(ctx, `${describeRecord(existing)} is already owned by this extension. Use /flutter stop first.`, "warning");
+			notify(ctx, `${describeRecord(existing)} is already owned by this extension. Use /px:flutter stop first.`, "warning");
 			publish();
 			return;
 		}
@@ -549,8 +549,8 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 		pi.events.emit(STATUS_BAR_FIRST_LINE_CLEAR_EVENT, { id: EXTENSION_ID });
 	});
 
-	pi.registerCommand("flutter", {
-		description: "Manage an owned Flutter debug run: /flutter run [android|linux|device], reload, restart, stop, status, env, doctor",
+	pi.registerCommand("px:flutter", {
+		description: "Manage an owned Flutter debug run: /px:flutter run [android|linux|device], reload, restart, stop, status, env, doctor",
 		handler: async (rawArgs, ctx) => {
 			activeSessionContext = ctx;
 			pingStatusBar();
@@ -588,11 +588,11 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 			}
 
 			if (command === "stop") {
-				stopProcess(ctx, "requested by /flutter stop");
+				stopProcess(ctx, "requested by /px:flutter stop");
 				return;
 			}
 
-			notify(ctx, "Usage: /flutter run [android|linux|device] | /flutter reload | /flutter restart | /flutter stop | /flutter status | /flutter env | /flutter doctor", "warning");
+			notify(ctx, "Usage: /px:flutter run [android|linux|device] | /px:flutter reload | /px:flutter restart | /px:flutter stop | /px:flutter status | /px:flutter env | /px:flutter doctor", "warning");
 		},
 	});
 

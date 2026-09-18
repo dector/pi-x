@@ -31,11 +31,11 @@ type AllowlistEntry = {
 };
 
 const STATUS_BAR_ID = "safe-mode";
-const STATUS_BAR_SET_EVENT = "status-bar:set";
-const HERDR_BLOCKED_EVENT = "herdr:blocked";
-const TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
-const TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
-const SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
+const STATUS_BAR_SET_EVENT = "px:status-bar:set";
+const HERDR_BLOCKED_EVENT = "px:herdr:blocked";
+const TOGGLE_READER_EVENT = "px:safe-mode:toggle-reader";
+const TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
+const SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
@@ -997,7 +997,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 			if (parts.length !== 2) {
 				if (ctx.hasUI) {
-					ctx.ui.notify("Usage: /safe default <mode[+]> | /safe default | /safe default reset", "warning");
+					ctx.ui.notify("Usage: /px:safe default <mode[+]> | /px:safe default | /px:safe default reset", "warning");
 				}
 				return;
 			}
@@ -1045,7 +1045,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			}
 
 			if (ctx.hasUI) {
-				ctx.ui.notify("Invalid outer modifier. Use: /safe outer on|off|toggle", "warning");
+				ctx.ui.notify("Invalid outer modifier. Use: /px:safe outer on|off|toggle", "warning");
 			}
 			return;
 		}
@@ -1068,28 +1068,28 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		setMode(parsed.mode, ctx);
 	};
 
-	pi.registerCommand("safe-mode", {
+	pi.registerCommand("px:safe-mode", {
 		description: `Show or set safe mode (${formatModeList()})`,
 		handler: async (args, ctx) => {
 			await handleSafeCommand(args, ctx);
 		},
 	});
 
-	pi.registerCommand("safe", {
-		description: `Alias for /safe-mode with defaults support`,
+	pi.registerCommand("px:safe", {
+		description: `Alias for /px:safe-mode with defaults support`,
 		handler: async (args, ctx) => {
 			await handleSafeCommand(args, ctx);
 		},
 	});
 
-	pi.registerCommand("yolo", {
+	pi.registerCommand("px:yolo", {
 		description: "Set safe mode to yolo+",
 		handler: async (_args, ctx) => {
 			setModeAndOuter("yolo", true, ctx);
 		},
 	});
 
-	pi.registerCommand("safe-mode-list", {
+	pi.registerCommand("px:safe-mode-list", {
 		description: "Manage exact bash commands auto-approved for this session and project",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) return;

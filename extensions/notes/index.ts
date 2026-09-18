@@ -21,8 +21,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 const NOTES_DIR_NAME = "notes";
-const NOTES_OPEN_EVENT = "notes:open";
-const NOTES_LIST_EVENT = "notes:list";
+const NOTES_OPEN_EVENT = "px:notes:open";
+const NOTES_LIST_EVENT = "px:notes:list";
 const TITLE_MAX = 80;
 const CLEAR_WINDOW_MS = 500;
 const SCROLL_STEP = 5;
@@ -135,7 +135,7 @@ function isShiftLetter(data: string, letter: "j" | "k"): boolean {
 }
 
 /**
- * `/notes` dialog: multi-line note editor.
+ * `/px:notes` dialog: multi-line note editor.
  * - ctrl+s saves (creates, then updates the same note while open)
  * - ctrl+x twice within 500ms clears the editor
  * - esc closes, asking for confirmation when there are unsaved changes
@@ -287,7 +287,7 @@ class NoteEditorDialog implements Component, Focusable {
 }
 
 /**
- * `/notes:list` dialog: notes on the left, selected note content on the right.
+ * `/px:notes:list` dialog: notes on the left, selected note content on the right.
  * - up/down or j/k selects a note
  * - shift+j / shift+k scrolls the content by 5 lines
  * - ctrl+c (or y) copies the raw note to the clipboard
@@ -338,7 +338,7 @@ class NotesListDialog implements Component, Focusable {
 		this.scroll = 0;
 		const note = this.notes[this.selected];
 		if (!note) {
-			this.rightLines = ["No notes yet. Use /notes to create one."];
+			this.rightLines = ["No notes yet. Use /px:notes to create one."];
 			return;
 		}
 
@@ -437,7 +437,7 @@ class NotesListDialog implements Component, Focusable {
 
 	private renderHeader(width: number): string {
 		const count = `Notes (${this.notes.length})`;
-		const hint = "/notes:list";
+		const hint = "/px:notes:list";
 		const gap = Math.max(1, width - visibleWidth(count) - visibleWidth(hint) - 1);
 		return truncateToWidth(this.theme.fg("accent", this.theme.bold(count)) + " ".repeat(gap) + this.theme.fg("dim", hint), width);
 	}
@@ -450,7 +450,7 @@ class NotesListDialog implements Component, Focusable {
 			return [
 				border,
 				this.renderHeader(renderWidth),
-				truncateToWidth(this.theme.fg("muted", " No notes yet. Use /notes to create one."), renderWidth),
+				truncateToWidth(this.theme.fg("muted", " No notes yet. Use /px:notes to create one."), renderWidth),
 				border,
 				truncateToWidth(this.theme.fg("dim", " esc close"), renderWidth),
 			];
@@ -520,14 +520,14 @@ async function openNotesList(ctx: ExtensionContext): Promise<void> {
 }
 
 export default function notesExtension(pi: ExtensionAPI): void {
-	pi.registerCommand("notes", {
+	pi.registerCommand("px:notes", {
 		description: "Compose a note; ctrl+s saves, esc closes",
 		handler: async (_args, ctx) => {
 			await openNoteEditor(ctx);
 		},
 	});
 
-	pi.registerCommand("notes:list", {
+	pi.registerCommand("px:notes:list", {
 		description: "Browse saved notes; ctrl+c copies the selected note",
 		handler: async (_args, ctx) => {
 			await openNotesList(ctx);

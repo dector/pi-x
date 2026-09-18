@@ -16,17 +16,17 @@ This repo currently contains the following extension(s):
 | [`safe-mode`](extensions/safe-mode/README.md) | Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. | `status-bar`, `bash-parser` |
 | [`repo-stats`](extensions/repo-stats/README.md) | Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. | `status-bar` |
 | [`skill-stats`](extensions/skill-stats/README.md) | Publishes `SKILLS: n/m` for unique `SKILL.md` files successfully read in the current session. | `status-bar` |
-| [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/flutter run`, `/flutter reload`, `/flutter restart`, `/flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `status-bar`, `flutter` CLI |
+| [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/px:flutter run`, `/px:flutter reload`, `/px:flutter restart`, `/px:flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `status-bar`, `flutter` CLI |
 | [`http`](extensions/http/README.md) | Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`. | `cheerio`, `pandoc` for `http_md` |
 | [`sqlite`](extensions/sqlite/README.md) | Adds a `sqlite` query tool for file-backed and in-memory databases, with read-only/mutating SQL classification for safe-mode integration. | `sqlite3` CLI |
 | [`interactive-bash`](extensions/interactive-bash/README.md) | Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts). | |
-| [`git`](extensions/git/README.md) | Adds a `git` tool and `/git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support. | `git` CLI |
+| [`git`](extensions/git/README.md) | Adds a `git` tool and `/px:git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support. | `git` CLI |
 | [`pi-ui`](extensions/pi-ui/README.md) | UI tweaks extension (currently a colorful configurable working indicator animation). | |
 | [`pi-nvim`](extensions/pi-nvim/README.md) | Unix-socket bridge for sending prompts into a running pi session from compatible Neovim clients. | compatible Neovim plugin |
-| [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/attension-core-test` command. | |
-| [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/save file.md`). | |
+| [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/px:attension-core-test` command. | |
+| [`save`](extensions/save/README.md) | Adds a `/px:save` command to write the latest assistant response to Markdown (`/px:save` or `/px:save file.md`). | |
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
-| [`notes`](extensions/notes/README.md) | Global free-form notes: `/notes` composes one, `/notes:list` browses and copies them from a two-pane dialog. | |
+| [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
 
 ## Themes
 

@@ -10,15 +10,15 @@ const GLOBAL_BELL_DEBOUNCE_MS_KEY = "__pi_ui_bell_debounce_ms";
 const GLOBAL_BELL_LAST_RING_MS_KEY = "__pi_ui_bell_last_ring_ms";
 const UI_INPUT_PATCH_FLAG = "__pi_ui_bell_ui_input_patch_v1";
 const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
-const SAFE_MODE_TOGGLE_READER_EVENT = "safe-mode:toggle-reader";
-const SAFE_MODE_TOGGLE_OUTER_EVENT = "safe-mode:toggle-outer";
-const SAFE_MODE_SET_YOLO_PLUS_EVENT = "safe-mode:set-yolo-plus";
-const PROMPT_STASH_STASH_EVENT = "prompt-stash:stash";
-const PROMPT_STASH_POP_EVENT = "prompt-stash:pop";
-const PROMPT_STASH_LIST_EVENT = "prompt-stash:list";
-const PROMPT_STASH_CLEAR_ALL_EVENT = "prompt-stash:clear-all";
-const NOTES_OPEN_EVENT = "notes:open";
-const NOTES_LIST_EVENT = "notes:list";
+const SAFE_MODE_TOGGLE_READER_EVENT = "px:safe-mode:toggle-reader";
+const SAFE_MODE_TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
+const SAFE_MODE_SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
+const PROMPT_STASH_STASH_EVENT = "px:prompt-stash:stash";
+const PROMPT_STASH_POP_EVENT = "px:prompt-stash:pop";
+const PROMPT_STASH_LIST_EVENT = "px:prompt-stash:list";
+const PROMPT_STASH_CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
+const NOTES_OPEN_EVENT = "px:notes:open";
+const NOTES_LIST_EVENT = "px:notes:list";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
@@ -1019,7 +1019,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		// stopAnimation(ctx);
 	});
 
-	pi.registerCommand("pi-ui-working-length", {
+	pi.registerCommand("px:pi-ui-working-length", {
 		description: `Set minimum working indicator length (${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH}) [full-width mode keeps using terminal width]`,
 		handler: async (args, ctx) => {
 			ensureUiBellPatched(ctx);
@@ -1034,7 +1034,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 			const next = parseTrackLength(trimmed);
 			if (next === undefined) {
-				notify(ctx, `Usage: /pi-ui-working-length <${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH}>`);
+				notify(ctx, `Usage: /px:pi-ui-working-length <${MIN_TRACK_LENGTH}-${MAX_TRACK_LENGTH}>`);
 				return;
 			}
 
@@ -1045,8 +1045,8 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("pi-ui-bell", {
-		description: "Control bell notifications when pi waits for user input: /pi-ui-bell [on|off|toggle|status]",
+	pi.registerCommand("px:pi-ui-bell", {
+		description: "Control bell notifications when pi waits for user input: /px:pi-ui-bell [on|off|toggle|status]",
 		handler: async (args, ctx) => {
 			ensureUiBellPatched(ctx);
 			const trimmed = (args ?? "").trim().toLowerCase();
@@ -1066,7 +1066,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			} else if (trimmed === "toggle") {
 				bellEnabled = !bellEnabled;
 			} else {
-				notify(ctx, "Usage: /pi-ui-bell [on|off|toggle|status]");
+				notify(ctx, "Usage: /px:pi-ui-bell [on|off|toggle|status]");
 				return;
 			}
 

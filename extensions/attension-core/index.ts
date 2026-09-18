@@ -36,7 +36,7 @@ export default function attensionCoreExtension(pi: ExtensionAPI): void {
 		lastBellAt = 0;
 	});
 
-	pi.registerCommand("attension-core-test", {
+	pi.registerCommand("px:attension-core-test", {
 		description: "Ring terminal bell now",
 		handler: async (_args, ctx) => {
 			const didRing = tryRingTerminalBell(true);

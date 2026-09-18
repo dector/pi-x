@@ -114,23 +114,23 @@ This covers normal skill loading via `read` of `SKILL.md` plus sibling/reference
 
 ## Commands
 
-- `/safe` (alias: `/safe-mode`)
+- `/px:safe` (alias: `/px:safe-mode`)
   - Show current mode and outer access status.
-- `/safe <paranoid|reader|smart|yolo>[+]`
+- `/px:safe <paranoid|reader|smart|yolo>[+]`
   - Set mode (`+` enables outer access, e.g. `smart+`).
-- `/safe cycle`
+- `/px:safe cycle`
   - Cycle modes.
-- `/safe outer on|off|toggle`
+- `/px:safe outer on|off|toggle`
   - Configure outside-project behavior.
-- `/safe default`
+- `/px:safe default`
   - Show saved default mode from settings.
-- `/safe default <paranoid|reader|smart|yolo>[+]`
+- `/px:safe default <paranoid|reader|smart|yolo>[+]`
   - Save default mode in settings for future sessions.
-- `/safe default reset`
+- `/px:safe default reset`
   - Clear saved default (falls back to built-in `smart`).
-- `/yolo`
+- `/px:yolo`
   - Quick command to set `yolo+`.
-- `/safe-mode-list`
+- `/px:safe-mode-list`
   - Open an interactive manager for exact `bash` command lines auto-approved for this session and this project.
   - Project-persistent entries are shown first with `(project)` prefix.
   - Project-persistent entries are editable only in `smart`/`smart!`; in other modes they are shown muted/read-only.
@@ -170,7 +170,7 @@ When approval is required:
 ## Persistence
 
 - Mode and outer access changes are persisted in session history via custom entries (`safe-mode`) and restored on resume/tree navigation/fork.
-- Optional global defaults from `/safe default ...` are stored at:
+- Optional global defaults from `/px:safe default ...` are stored at:
   - `~/.pi/agent/extensions/safe-mode/settings.json`
   - shape: `{ "mode": "smart", "outerAccess": true }`
 - Resolution order on startup: CLI flags (`--safe-mode`, `--safe-mode-outer-access`) → session persisted state → saved defaults → built-in defaults.
@@ -214,7 +214,7 @@ Then run `/reload`.
 
 ## Notes
 
-Status rendering is emitted via status-bar events (`status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
+Status rendering is emitted via status-bar events (`px:status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
 For non-paranoid modes, `!` indicates `outerAccess=true`.
 
 Read-only bash matching is intentionally strict and AST-based (via `bash-parser`).

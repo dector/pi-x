@@ -11,10 +11,10 @@ export type CommandTreeSummary = {
 export function helpText(): string {
 	return [
 		"Decision tree commands:",
-		"  /dt init              Initialize docs/.decisions/",
-		"  /dt status            Show project decision tree status",
-		"  /dt list              List decision trees",
-		"  /dt select <id>       Select a tree by full ID or unique prefix",
+		"  /px:dt init           Initialize docs/.decisions/",
+		"  /px:dt status         Show project decision tree status",
+		"  /px:dt list           List decision trees",
+		"  /px:dt select <id>    Select a tree by full ID or unique prefix",
 	].join("\n");
 }
 
@@ -52,7 +52,7 @@ export function formatStatus(input: {
 		`decisions path: ${input.decisionsPath}`,
 	];
 	if (!input.initialized) {
-		lines.push("suggestion: run /dt init");
+		lines.push("suggestion: run /px:dt init");
 		return lines.join("\n");
 	}
 	lines.push(`tree count: ${input.treeCount ?? 0}`);

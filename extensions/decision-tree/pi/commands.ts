@@ -9,7 +9,7 @@ import { formatInit, formatList, formatSelected, formatStatus, helpText, type Co
 import { resolveStoragePaths } from "../persistence";
 
 export function registerDecisionTreeCommands(pi: ExtensionAPI): void {
-	pi.registerCommand("dt", {
+	pi.registerCommand("px:dt", {
 		description: "Decision tree setup, status, list, and selection",
 		getArgumentCompletions: (prefix) => {
 			const commands = ["init", "status", "list", "select"];
@@ -97,7 +97,7 @@ async function selectText(cwd: string, idPrefix: string, select: null | ((title:
 	const dt = await createDecisionTreePiContext(cwd);
 	let prefix = idPrefix.trim();
 	if (!prefix) {
-		if (!select) return "Usage: /dt select <id-prefix>";
+		if (!select) return "Usage: /px:dt select <id-prefix>";
 		const trees = await dt.service.listTrees(dt.projectRoot);
 		if (trees.length === 0) return "No decision trees found. Create one through the agent/tool workflow.";
 		const choice = await select("Select decision tree", trees.map(selectLabel));

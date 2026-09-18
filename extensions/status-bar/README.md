@@ -11,8 +11,8 @@ Install and enable it first so producer extensions can render their status outpu
 
 ### Availability
 
-- `status-bar:ping` with `{ id }`
-- `status-bar:pong` with `{ id }`
+- `px:status-bar:ping` with `{ id }`
+- `px:status-bar:pong` with `{ id }`
 
 When `status-bar` receives a valid ping payload, it emits a pong payload echoing the same `id`.
 
@@ -33,8 +33,8 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - Precision is capped at 2 decimals (for example `$0.05`); non-zero amounts below half a cent render as `<$0.01`.
   - No suffix is rendered when cost is unavailable or zero.
 - Events:
-  - `status-bar:set` with `{ id, content }`
-  - `status-bar:clear` with `{ id }`
+  - `px:status-bar:set` with `{ id, content }`
+  - `px:status-bar:clear` with `{ id }`
 - Item delimiter inside a section: ` · `
 - Section delimiter: two spaces (`  `)
 
@@ -42,8 +42,8 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 
 - Sections: `left`, `center`, `right`
 - Events:
-  - `status-bar:first-line:set` with `{ id, content, section?, priority? }`
-  - `status-bar:first-line:clear` with `{ id }`
+  - `px:status-bar:first-line:set` with `{ id, content, section?, priority? }`
+  - `px:status-bar:first-line:clear` with `{ id }`
 - Compatibility: omitted `section` defaults to `left`.
 - Resolution inside each section:
   - highest `priority` first (default `0`)
@@ -121,7 +121,7 @@ labels are rendered in the frame corners:
 
 Set it with:
 
-- `/status-bar-display-mode new` or `/status-bar-display-mode legacy`
+- `/px:status-bar-display-mode new` or `/px:status-bar-display-mode legacy`
 - `~/.pi/agent/status-bar.json`: `{ "displayMode": "new" }`
 - env override: `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` (takes precedence over the file)
 
@@ -184,13 +184,13 @@ First-line producers (example):
 
 ## Commands
 
-- `/status-bar-contract`
+- `/px:status-bar-contract`
   - Opens a read-only settings-style view with contract, ping/pong availability events, renderer details, and the active display mode/layout.
-- `/status-bar-display-mode [new|legacy]`
+- `/px:status-bar-display-mode [new|legacy]`
   - Shows or sets the display mode and persists it to `~/.pi/agent/status-bar.json`.
-- `/status-bar-set <id> <content>`
+- `/px:status-bar-set <id> <content>`
   - Sets test content for a second-line ID and re-renders.
-- `/status-bar-clear <id>`
+- `/px:status-bar-clear <id>`
   - Clears test content for a second-line ID and re-renders.
 
 ## Install

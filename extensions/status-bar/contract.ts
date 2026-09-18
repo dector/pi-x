@@ -1,10 +1,10 @@
 export const STATUS_BAR_EVENTS = {
-	set: "status-bar:set",
-	clear: "status-bar:clear",
-	firstLineSet: "status-bar:first-line:set",
-	firstLineClear: "status-bar:first-line:clear",
-	ping: "status-bar:ping",
-	pong: "status-bar:pong",
+	set: "px:status-bar:set",
+	clear: "px:status-bar:clear",
+	firstLineSet: "px:status-bar:first-line:set",
+	firstLineClear: "px:status-bar:first-line:clear",
+	ping: "px:status-bar:ping",
+	pong: "px:status-bar:pong",
 } as const;
 
 export type StatusBarSection = "left" | "center" | "right";

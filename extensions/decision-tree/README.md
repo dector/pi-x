@@ -16,7 +16,7 @@ A project can have multiple decision trees. Each tree has one root `group` item.
 
 ## Storage layout
 
-After `dt_init` or `/dt init`, project data is stored under:
+After `dt_init` or `/px:dt init`, project data is stored under:
 
 ```text
 docs/.decisions/
@@ -126,20 +126,20 @@ A concise agent workflow:
 
 Most tools can omit `tree_id` and/or `item_id`. They use the active context from `session.json` where appropriate and report the resolved tree/item/path.
 
-## `/dt` commands
+## `/px:dt` commands
 
 Human commands are minimal wrappers:
 
 ```text
-/dt init
-/dt status
-/dt list
-/dt select <id-prefix>
+/px:dt init
+/px:dt status
+/px:dt list
+/px:dt select <id-prefix>
 ```
 
-`/dt` with no arguments is the same as `/dt status`.
+`/px:dt` with no arguments is the same as `/px:dt status`.
 
-`/dt select` without an ID opens a picker when Pi UI selection is available. Otherwise it prints usage.
+`/px:dt select` without an ID opens a picker when Pi UI selection is available. Otherwise it prints usage.
 
 ## Read modes
 

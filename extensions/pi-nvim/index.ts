@@ -204,7 +204,7 @@ export default function piNvimExtension(pi: ExtensionAPI): void {
 
 	process.on("exit", cleanup);
 
-	pi.registerCommand("pi-nvim-info", {
+	pi.registerCommand("px:pi-nvim-info", {
 		description: "Show pi-nvim socket path",
 		handler: async (_args, ctx) => {
 			if (socketPath) {

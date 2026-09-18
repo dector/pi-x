@@ -4,10 +4,10 @@ Save and restore in-progress prompt drafts inside the current pi session.
 
 ## Commands
 
-- `/prompt-stash.stash` — save the current editor text and clear the editor.
-- `/prompt-stash.pop` — restore and remove the newest stash.
-- `/prompt-stash.list` — show stashes newest-first; in UI, select one to restore it.
-- `/prompt-stash.clear-all` — delete every stash after confirmation.
+- `/px:prompt-stash.stash` — save the current editor text and clear the editor.
+- `/px:prompt-stash.pop` — restore and remove the newest stash.
+- `/px:prompt-stash.list` — show stashes newest-first; in UI, select one to restore it.
+- `/px:prompt-stash.clear-all` — delete every stash after confirmation.
 
 ## UI actions
 

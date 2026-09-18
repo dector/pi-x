@@ -2,10 +2,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { basename, isAbsolute, resolve } from "node:path";
 
 const EXTENSION_ID = "skill-stats";
-const STATUS_BAR_FIRST_LINE_SET_EVENT = "status-bar:first-line:set";
-const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
-const STATUS_BAR_PING_EVENT = "status-bar:ping";
-const STATUS_BAR_PONG_EVENT = "status-bar:pong";
+const STATUS_BAR_FIRST_LINE_SET_EVENT = "px:status-bar:first-line:set";
+const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "px:status-bar:first-line:clear";
+const STATUS_BAR_PING_EVENT = "px:status-bar:ping";
+const STATUS_BAR_PONG_EVENT = "px:status-bar:pong";
 const STATUS_BAR_WARNING_DELAY_MS = 500;
 const FIRST_LINE_PRIORITY = -100;
 const ANSI_RESET = "\u001b[0m";
@@ -135,7 +135,7 @@ export default function skillStatsExtension(pi: ExtensionAPI): void {
 		activeSessionContext = undefined;
 	});
 
-	pi.registerCommand("skill-stats-debug", {
+	pi.registerCommand("px:skill-stats-debug", {
 		description: "Show skill-stats counted skill paths and loaded skill denominator",
 		handler: async (_args, ctx) => {
 			activeSessionContext = ctx;

@@ -19,7 +19,7 @@ For stability across session transitions, state is reset on:
 
 ## Command
 
-- `/attension-core-test` — rings the terminal bell immediately (bypasses cooldown).
+- `/px:attension-core-test` — rings the terminal bell immediately (bypasses cooldown).
 
 ## Install
 

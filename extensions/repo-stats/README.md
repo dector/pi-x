@@ -23,8 +23,8 @@ Examples:
 
 `repo-stats` emits first-line events consumed by `status-bar` (displayed on the right side of first row):
 
-- `status-bar:first-line:set` with `{ id, content, section: "right", priority }`
-- `status-bar:first-line:clear` with `{ id }`
+- `px:status-bar:first-line:set` with `{ id, content, section: "right", priority }`
+- `px:status-bar:first-line:clear` with `{ id }`
 
 Producer id:
 
@@ -63,7 +63,7 @@ Updates are lightly debounced and emitted only when content changes.
 
 ## Debug command
 
-- `/repo-stats-debug` — shows current computed payload details
+- `/px:repo-stats-debug` — shows current computed payload details
 
 ## Install
 

@@ -4,8 +4,8 @@ import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const STATUS_BAR_ID = "repo-stats";
-const STATUS_BAR_FIRST_LINE_SET_EVENT = "status-bar:first-line:set";
-const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "status-bar:first-line:clear";
+const STATUS_BAR_FIRST_LINE_SET_EVENT = "px:status-bar:first-line:set";
+const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "px:status-bar:first-line:clear";
 const FIRST_LINE_PRIORITY = 100;
 
 const ANSI_RESET = "\u001b[0m";
@@ -290,7 +290,7 @@ export default function repoStatsExtension(pi: ExtensionAPI): void {
 		clearStatus();
 	});
 
-	pi.registerCommand("repo-stats-debug", {
+	pi.registerCommand("px:repo-stats-debug", {
 		description: "Show computed repo-stats payload",
 		handler: async (_args, ctx) => {
 			const stats = collectRepoStats(ctx.cwd);

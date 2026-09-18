@@ -8,21 +8,21 @@ editor.
 
 ## Commands
 
-- `/notes` — open a multi-line note editor.
-- `/notes:list` — browse saved notes and copy the selected one.
+- `/px:notes` — open a multi-line note editor.
+- `/px:notes:list` — browse saved notes and copy the selected one.
 
 ## pi-ui integration
 
 When the [pi-ui](../pi-ui) extension is enabled, the same dialogs are also
 reachable from its `Ctrl+,` action dialog:
 
-- `n` — open the `/notes` editor (pi-ui emits the `notes:open` event).
-- `N` — open the `/notes:list` browser (pi-ui emits the `notes:list` event).
+- `n` — open the `/px:notes` editor (pi-ui emits the `px:notes:open` event).
+- `N` — open the `/px:notes:list` browser (pi-ui emits the `px:notes:list` event).
 
 Both events carry `{ ctx }` in their payload, matching the convention used by
 `safe-mode` and `prompt-stash`.
 
-## `/notes` dialog
+## `/px:notes` dialog
 
 | Key | Action |
 | --- | --- |
@@ -34,7 +34,7 @@ Both events carry `{ ctx }` in their payload, matching the convention used by
 The dialog stays open after saving, so you can keep editing and save again to
 update the same file.
 
-## `/notes:list` dialog
+## `/px:notes:list` dialog
 
 | Key | Action |
 | --- | --- |

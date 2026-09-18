@@ -73,7 +73,7 @@ PI_NVIM_SOCKET_PATH=/tmp/pi-nvim-latest.sock scripts/pi-nvim-smoke.sh
 
 In pi:
 
-- `/pi-nvim-info` shows active socket path.
+- `/px:pi-nvim-info` shows active socket path.
 
 ## Compatibility test matrix (Neovim)
 
