@@ -127,6 +127,27 @@ Setup:
 - `~/.pi/agent/status-bar.json` -> `{ "displayMode": "new" }`
 - `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` env override (wins over the file)
 
+## Aliases
+
+Exact-name alias tables in `~/.pi/agent/status-bar.json` shorten the border labels:
+
+- `providerAliases`: `ctx.model.provider` -> short label (border label only).
+- `modelAliases`: `ctx.model.id` -> short label (border + legacy `context-watcher-model`).
+
+```json
+{
+  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "go" },
+  "modelAliases": {
+    "gpt-5.6-sol": "5.6-sol",
+    "deepseek-v4.1-flash": "ds-4.1-fl",
+    "deepseek-v4-pro": "ds-4-pro"
+  }
+}
+```
+
+Matching is exact id only (no patterns); missing keys fall back to the raw id.
+Aliases load at session start, so reload/restart after editing the file.
+
 ## Editor frame
 
 Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
@@ -136,7 +157,7 @@ full frame (`│` sides + `┌ ┐ └ ┘` corners), and renders:
   colored with the same context-usage rules as the status-bar context items
   (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%)
 - bottom-right: `safe-mode` producer content (for example `[SMART]`)
-- top-right: active model ID (`ctx.model.id`), colored with the frame border color
+- top-right: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color
 
 The top border keeps the working status spinner from pi (>= 0.85).
 The inner editor renders 2 columns narrower; autocomplete stays outside the frame

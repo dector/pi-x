@@ -28,6 +28,8 @@ import {
 	STATUS_BAR_DISPLAY_MODES,
 	STATUS_BAR_EVENTS,
 	STATUS_BAR_JOIN_SEPARATOR,
+	type StatusBarAliasConfig,
+	type StatusBarAliasMap,
 	type StatusBarClearPayload,
 	type StatusBarDisplayMode,
 	type StatusBarFirstLineClearPayload,
@@ -50,7 +52,7 @@ const CONTEXT_WATCHER_IDS = {
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
-const DISPLAY_MODE_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
+const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
 // Extra room kept for the working status when the top border already has embedded content.
@@ -139,7 +141,7 @@ interface FrameStatusEditorOptions {
 	bottomLeft?: FrameStatusProvider;
 	/** Bottom-right corner label (safe-mode status). */
 	bottomRight?: FrameStatusProvider;
-	/** Top-right corner label (active model). */
+	/** Top-right corner label (active provider/model). */
 	topRight?: FrameStatusProvider;
 }
 
@@ -359,6 +361,20 @@ function styleContextLabel(
 	return theme.fg("error", label);
 }
 
+// Border (top-right) model label: "provider/model-id" with alias tables applied,
+// id-only when provider is missing.
+function buildBorderModelLabel(
+	ctx: ExtensionContext,
+	providerAliases: StatusBarAliasMap,
+	modelAliases: StatusBarAliasMap,
+): string | undefined {
+	const model = ctx.model;
+	if (!model?.id) return undefined;
+	const modelLabel = modelAliases[model.id] ?? model.id;
+	const providerLabel = model.provider ? (providerAliases[model.provider] ?? model.provider) : undefined;
+	return providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
+}
+
 function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
 	const usage = collectUsage(ctx);
 	let label = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
@@ -372,6 +388,7 @@ function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): st
 function getContextWatcherOverrides(
 	ctx: ExtensionContext,
 	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	modelAliases: StatusBarAliasMap = {},
 ): Map<string, string | undefined> {
 	const overrides = new Map<string, string | undefined>([
 		[CONTEXT_WATCHER_IDS.tokens, undefined],
@@ -386,7 +403,8 @@ function getContextWatcherOverrides(
 
 	const safePercent = Math.max(0, percent);
 	const roundedPercent = Number(safePercent.toFixed(1));
-	const modelName = ctx.model?.id ?? "no-model";
+	const rawModelName = ctx.model?.id;
+	const modelName = rawModelName ? (modelAliases[rawModelName] ?? rawModelName) : "no-model";
 	const percentLabel = `${roundedPercent.toFixed(1)}%`;
 
 	overrides.set(CONTEXT_WATCHER_IDS.tokens, styleContextLabel(theme, roundedPercent, buildContextTokenLabel(ctx, true)));
@@ -481,6 +499,37 @@ function isDisplayMode(value: unknown): value is StatusBarDisplayMode {
 	return typeof value === "string" && (STATUS_BAR_DISPLAY_MODES as readonly string[]).includes(value);
 }
 
+function readSettingsFile(): Record<string, unknown> {
+	try {
+		const parsed = JSON.parse(readFileSync(STATUS_BAR_SETTINGS_PATH, "utf-8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		// Missing or invalid settings file.
+	}
+	return {};
+}
+
+function normalizeAliasMap(value: unknown): StatusBarAliasMap {
+	const aliases: StatusBarAliasMap = {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) return aliases;
+	for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof raw === "string" && raw.trim()) aliases[key] = raw.trim();
+	}
+	return aliases;
+}
+
+// Exact-name alias tables (no pattern matching). Configured under
+// `providerAliases` / `modelAliases` in ~/.pi/agent/status-bar.json.
+function loadAliases(): StatusBarAliasConfig {
+	const settings = readSettingsFile();
+	return {
+		providerAliases: normalizeAliasMap(settings.providerAliases),
+		modelAliases: normalizeAliasMap(settings.modelAliases),
+	};
+}
+
 function normalizeDisplayMode(value: unknown): StatusBarDisplayMode | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
@@ -492,7 +541,7 @@ function loadDisplayMode(): StatusBarDisplayMode {
 	if (fromEnv) return fromEnv;
 
 	try {
-		const parsed = JSON.parse(readFileSync(DISPLAY_MODE_SETTINGS_PATH, "utf-8")) as { displayMode?: unknown } | null;
+		const parsed = JSON.parse(readFileSync(STATUS_BAR_SETTINGS_PATH, "utf-8")) as { displayMode?: unknown } | null;
 		const fromFile = normalizeDisplayMode(parsed?.displayMode);
 		if (fromFile) return fromFile;
 	} catch {
@@ -507,7 +556,7 @@ function saveDisplayMode(mode: StatusBarDisplayMode): { ok: true } | { ok: false
 	try {
 		let existing: Record<string, unknown> = {};
 		try {
-			const parsed = JSON.parse(readFileSync(DISPLAY_MODE_SETTINGS_PATH, "utf-8"));
+			const parsed = JSON.parse(readFileSync(STATUS_BAR_SETTINGS_PATH, "utf-8"));
 			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 				existing = parsed as Record<string, unknown>;
 			}
@@ -515,10 +564,10 @@ function saveDisplayMode(mode: StatusBarDisplayMode): { ok: true } | { ok: false
 			// New or unreadable file: start from an empty object.
 		}
 
-		mkdirSync(dirname(DISPLAY_MODE_SETTINGS_PATH), { recursive: true });
-		tempPath = `${DISPLAY_MODE_SETTINGS_PATH}.tmp-${process.pid}-${Date.now()}`;
+		mkdirSync(dirname(STATUS_BAR_SETTINGS_PATH), { recursive: true });
+		tempPath = `${STATUS_BAR_SETTINGS_PATH}.tmp-${process.pid}-${Date.now()}`;
 		writeFileSync(tempPath, `${JSON.stringify({ ...existing, displayMode: mode }, null, 2)}\n`, "utf-8");
-		renameSync(tempPath, DISPLAY_MODE_SETTINGS_PATH);
+		renameSync(tempPath, STATUS_BAR_SETTINGS_PATH);
 		return { ok: true };
 	} catch (error) {
 		if (tempPath) {
@@ -530,7 +579,7 @@ function saveDisplayMode(mode: StatusBarDisplayMode): { ok: true } | { ok: false
 		}
 		return {
 			ok: false,
-			error: `Failed to save ${DISPLAY_MODE_SETTINGS_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+			error: `Failed to save ${STATUS_BAR_SETTINGS_PATH}: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
 }
@@ -667,7 +716,17 @@ interface StatusBarContractSettingItem {
 	description?: string;
 }
 
-async function showStatusBarContractUI(ctx: ExtensionContext, displayMode: StatusBarDisplayMode): Promise<void> {
+function formatAliasSummary(aliases: StatusBarAliasMap): string {
+	const entries = Object.entries(aliases);
+	if (entries.length === 0) return "(none)";
+	return entries.map(([from, to]) => `${from}->${to}`).join(", ");
+}
+
+async function showStatusBarContractUI(
+	ctx: ExtensionContext,
+	displayMode: StatusBarDisplayMode,
+	aliases: StatusBarAliasConfig,
+): Promise<void> {
 	if (!ctx.hasUI) return;
 
 	const layout = displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
@@ -757,6 +816,18 @@ async function showStatusBarContractUI(ctx: ExtensionContext, displayMode: Statu
 			label: "Cost display providers",
 			value: [...COST_DISPLAY_PROVIDERS].join(", "),
 			description: "Providers whose context usage label also shows cumulative session cost.",
+		},
+		{
+			id: "alias-providers",
+			label: "Provider aliases",
+			value: formatAliasSummary(aliases.providerAliases),
+			description: "Exact provider id -> short label for the border provider/model label.",
+		},
+		{
+			id: "alias-models",
+			label: "Model aliases",
+			value: formatAliasSummary(aliases.modelAliases),
+			description: "Exact model id -> short label, applied wherever the model is shown.",
 		},
 	];
 
@@ -862,6 +933,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	const firstLineById = new Map<string, FirstLineEntry>();
 	let firstLineOrderCounter = 0;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
+	const { providerAliases, modelAliases } = loadAliases();
 	let lastContext: ExtensionContext | undefined;
 	let footerOwnerContext: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
@@ -983,7 +1055,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const layout = activeLayout();
-					const contextOverrides = layout.right.length > 0 ? getContextWatcherOverrides(activeCtx, theme) : undefined;
+					const contextOverrides =
+						layout.right.length > 0 ? getContextWatcherOverrides(activeCtx, theme, modelAliases) : undefined;
 
 					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
 					let left = renderSection(layout.left, undefined, joinSeparator);
@@ -1026,7 +1099,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			getDisplayMode: () => displayMode,
 			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
 			bottomRight: () => contentById.get(SAFE_MODE_ID),
-			topRight: () => activeContext().model?.id,
+			topRight: () => buildBorderModelLabel(activeContext(), providerAliases, modelAliases),
 		};
 
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
@@ -1146,7 +1219,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
-			await showStatusBarContractUI(ctx, displayMode);
+			await showStatusBarContractUI(ctx, displayMode, { providerAliases, modelAliases });
 		},
 	});
 

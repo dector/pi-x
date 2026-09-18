@@ -62,7 +62,7 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-┌── <working status> ──────────────────── gpt-5 ─┐
+┌── <working status> ────────────── cdx/5.6-sol ─┐
 │ ... input ...                                   │
 └─ MED | 15.9% (210k, 0.03$) ────────── [SMART] ─┘
 ```
@@ -87,8 +87,11 @@ labels are rendered in the frame corners:
 - **bottom-right** — `safe-mode` status content (`[SMART]`, `[READER]`, `[YOLO]`,
   `[PARANOID]`, plus `+` when outer access is on). Rendered only while the
   `safe-mode` producer has published content.
-- **top-right** — active model ID (`ctx.model.id`), rendered in the frame border
-  color. Hidden when no model is active.
+- **top-right** — active provider + model (`<ctx.model.provider>/<ctx.model.id>`, e.g.
+  `deepseek/deepseek-chat`; id-only when provider is missing), rendered in the frame
+  border color. Hidden when no model is active. Both parts go through the exact-name
+  alias tables (see [Aliases](#aliases)), so the example above can render as
+  `cdx/5.6-sol` or `go/ds-4.1-fl`.
 - Corner labels are prefixed with a space and followed by one border dash before
   the corner. They are dropped when the terminal is too narrow; the top-right model
   label also reserves extra room while the working status is embedded in the top border.
@@ -118,6 +121,28 @@ Set it with:
 - `/status-bar-display-mode new` or `/status-bar-display-mode legacy`
 - `~/.pi/agent/status-bar.json`: `{ "displayMode": "new" }`
 - env override: `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` (takes precedence over the file)
+
+### Aliases
+
+Short labels for the border `provider/model` text come from two exact-name tables
+in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
+
+```json
+{
+  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "go" },
+  "modelAliases": {
+    "gpt-5.6-sol": "5.6-sol",
+    "deepseek-v4.1-flash": "ds-4.1-fl",
+    "deepseek-v4-pro": "ds-4-pro"
+  }
+}
+```
+
+- `providerAliases`: `ctx.model.provider` -> short label. Applied to the border label only.
+- `modelAliases`: `ctx.model.id` -> short label. Applied wherever the model is shown
+  (border and legacy `context-watcher-model`).
+- Missing keys fall back to the raw provider/model id.
+- Loaded at session start; edit the file and restart/reload to apply.
 
 ## Implementation
 

@@ -21,6 +21,16 @@ export interface StatusBarLayout {
 	right: string[];
 }
 
+// Short-label aliases for the border `provider/model` label. Keys are exact
+// provider ids / model ids; values are the replacement labels. Configured in
+// ~/.pi/agent/status-bar.json as `providerAliases` / `modelAliases`.
+export type StatusBarAliasMap = Record<string, string>;
+
+export interface StatusBarAliasConfig {
+	providerAliases: StatusBarAliasMap;
+	modelAliases: StatusBarAliasMap;
+}
+
 export interface StatusBarSetPayload {
 	id: string;
 	content: string;
