@@ -112,7 +112,7 @@ function formatThinkingLevel(level: string | undefined): string {
 	if (!normalized) return "---";
 	const abbreviation = THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toUpperCase();
 	const indicator = THINKING_LEVEL_INDICATORS[normalized];
-	return indicator ? `${abbreviation} ${indicator}` : abbreviation;
+	return indicator ? `${indicator} ${abbreviation}` : abbreviation;
 }
 
 function formatCostTrailing(total: number): string {
@@ -121,7 +121,7 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `MED 🡺 · 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
+// Bottom-border label: `🢁 HIGH · 15.9% 210k · 0.03$` (the frame adds `─`/`╰`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
 	ctx: ExtensionContext,
@@ -140,7 +140,7 @@ function buildFrameStatusLabel(
 
 	const cost = collectUsage(ctx).cost;
 
-	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} ${tokens} · ${formatCostTrailing(cost)}`;
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
@@ -194,7 +194,7 @@ function renderBorderLine(
  * ```
  * ╭── <working status> ──────────────── <model> ──╮
  * │ ... input ...                                  │
- * ╰─ MED 🡺 · 15.9% (210k, 0.03$) ──────── [SMART] ────╯
+ * ╰─ 🢁 HIGH · 15.9% 210k · 0.03$ ──────── [SMART] ────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -231,6 +231,9 @@ class FrameStatusEditor extends CustomEditor {
 		if (!this.isBorderMode() || width < 3) return super.render(width);
 
 		const innerWidth = width - 2;
+		// Host settings override constructor padding after the editor is created,
+		// so re-assert it here to keep one column of inner padding in border mode.
+		this.setPaddingX(1);
 		const lines = super.render(innerWidth);
 		const autocompleteHeight = this.getRenderedAutocompleteHeight();
 		const bodyEnd = Math.max(1, lines.length - autocompleteHeight);

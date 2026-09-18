@@ -64,7 +64,7 @@ labels are rendered in the frame corners:
 ```
 ╭── <working status> ──────────────── cdx/5.6-sol ──╮
 │ ... input ...                                     │
-╰─ MED 🡺 · 15.9% (210k, 0.03$) ────────── [SMART] ──────╯
+╰─ 🢁 HIGH · 15.9% 210k · 0.03$ ────────── [SMART] ──────╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
@@ -73,11 +73,10 @@ labels are rendered in the frame corners:
   autocomplete list stays outside the frame and is indented to line up.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - **bottom-left** — thinking level, context usage, and cost.
-  - Format: `─ <thinking> | <percent> (<tokens>, <cost>)`.
-  - `thinking`: current thinking level abbreviated to 3-4 uppercase symbols
-    (`OFF`, `MIN`, `LOW`, `MED`, `HIGH`, `XHI`, `MAX`) plus an arrow indicator:
-    `off` → `OFF ✘`, `minimal` → `MIN 🡻🡻`, `low` → `LOW 🡻`, `medium` → `MED 🡺`,
-    `high` → `HIGH 🢁`, `xhigh` → `XHI 🢁🢁`, `max` → `MAX 🢁🢁🢁`; unknown levels are
+  - Format: `─ <thinking> · <percent> <tokens> · <cost>`.
+  - `thinking`: arrow indicator plus the 3-4 uppercase level symbol:
+    `off` → `✘ OFF`, `minimal` → `🡻🡻 MIN`, `low` → `🡻 LOW`, `medium` → `🡺 MED`,
+    `high` → `🢁 HIGH`, `xhigh` → `🢁🢁 XHI`, `max` → `🢁🢁🢁 MAX`; unknown levels are
     truncated to 4 uppercase chars with no indicator.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
