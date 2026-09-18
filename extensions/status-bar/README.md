@@ -62,18 +62,20 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-╭── <working status> ──────────────── cdx/5.6-sol ──╮
-│ ... input ...                                     │
-╰─ 🢁 HIGH · 15.9% 210k · 0.03$ ────────── [SMART] ──────╯
+╭-< <working status> >-----------------< cdx/5.6-sol >-╮
+│ ... input ...                                         │
+╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
   borders and rounded corners (`╭ ╮ ╰ ╯`). The editor uses one column of
   horizontal padding (`paddingX: 1`), so input sits at `│ <input> │`. The
   autocomplete list stays outside the frame and is indented to line up.
+- Every border text label is delimited with ASCII angle tacks on both sides:
+  `-< <label> >-`.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - **bottom-left** — thinking level, context usage, and cost.
-  - Format: `─ <thinking> · <percent> <tokens> · <cost>`.
+  - Format: `-< <thinking> · <percent> <tokens> · <cost> >-`.
   - `thinking`: arrow indicator plus the 3-4 uppercase level symbol:
     `off` → `✘ OFF`, `minimal` → `🡻🡻 MIN`, `low` → `🡻 LOW`, `medium` → `🡺 MED`,
     `high` → `🢁 HIGH`, `xhigh` → `🢁🢁 XHI`, `max` → `🢁🢁🢁 MAX`; unknown levels are
@@ -87,8 +89,8 @@ labels are rendered in the frame corners:
   - The label uses the same context-usage color rules as the status-bar context items:
     `muted` up to 20%, `text` up to 30%, `warning` up to 50%, `error` above 50%.
     It stays uncolored when context percent is unknown.
-- **bottom-right** — `safe-mode` status content (`[SMART]`, `[READER]`, `[YOLO]`,
-  `[PARANOID]`, plus `+` when outer access is on). Rendered only while the
+- **bottom-right** — `safe-mode` status content (`SMART`, `READER`, `YOLO`,
+  `PARANOID`, plus `+` when outer access is on). Rendered only while the
   `safe-mode` producer has published content.
 - **top-right** — active provider + model (`<ctx.model.provider>/<ctx.model.id>`, e.g.
   `deepseek/deepseek-chat`; id-only when provider is missing), rendered in the frame

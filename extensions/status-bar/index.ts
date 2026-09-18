@@ -192,9 +192,9 @@ function renderBorderLine(
  * content is inset by one column on each side (`│ <input> │`):
  *
  * ```
- * ╭── <working status> ──────────────── <model> ──╮
- * │ ... input ...                                  │
- * ╰─ 🢁 HIGH · 15.9% 210k · 0.03$ ──────── [SMART] ────╯
+ * ╭-< <working status> >-----------------< <model> >-╮
+ * │ ... input ...                                   │
+ * ╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -215,10 +215,33 @@ class FrameStatusEditor extends CustomEditor {
 		return this.getDisplayMode() === "new";
 	}
 
-	private rightCornerSegment(label: string, useBorderColor = false): string {
+	private rightCornerSegment(
+		label: string,
+		useBorderColor = false,
+		options?: { leftCap?: string; rightCap?: string },
+	): string {
 		const sanitized = sanitizeStatusText(label);
 		const body = useBorderColor ? this.borderColor(sanitized) : sanitized;
-		return ` ${body}${this.borderColor(" ─")}`;
+		const leftConnector = options?.leftCap ? `${this.borderColor(options.leftCap)} ` : " ";
+		const rightConnector = options?.rightCap ? ` ${options.rightCap}` : " ";
+		return `${leftConnector}${body}${this.borderColor(`${rightConnector}─`)}`;
+	}
+
+	/**
+	 * Bracket the embedded working status with angle tacks:
+	 * `── <status> ────` -> `-< <status> >----`.
+	 */
+	private withTopCaps(border: string): string {
+		const lead = "── ";
+		const leadIndex = border.indexOf(lead);
+		if (leadIndex < 0) return border;
+
+		const newLead = "-< ";
+		const capped = `${border.slice(0, leadIndex)}${newLead}${border.slice(leadIndex + lead.length)}`;
+		// The first `─` after the lead starts the post-status dash run.
+		const dashIndex = capped.indexOf(" ─", leadIndex + newLead.length);
+		if (dashIndex < 0) return capped;
+		return `${capped.slice(0, dashIndex)} >-${capped.slice(dashIndex + 1)}`;
 	}
 
 	/**
@@ -301,17 +324,19 @@ class FrameStatusEditor extends CustomEditor {
 		const base = super.renderTopBorder(width, hiddenLineCount);
 		if (!this.isBorderMode() || width <= 0) return base;
 
-		const label = this.topRightProvider?.();
-		if (!hasVisibleText(label)) return base;
+		const capped = this.withTopCaps(base);
 
-		const segment = this.rightCornerSegment(label, true);
+		const label = this.topRightProvider?.();
+		if (!hasVisibleText(label)) return capped;
+
+		const segment = this.rightCornerSegment(label, true, { leftCap: "-<", rightCap: ">-" });
 		const segmentWidth = visibleWidth(segment);
 		// Keep the working status / scroll indicator from being truncated when present.
 		const hasEmbeddedContent = base !== this.borderColor("─".repeat(width));
 		const minGap = hasEmbeddedContent ? WORKING_STATUS_RESERVE : MIN_CORNER_LABEL_GAP;
-		if (segmentWidth + minGap > width) return base;
+		if (segmentWidth + minGap > width) return capped;
 
-		return `${truncateToWidth(base, width - segmentWidth, "")}${segment}`;
+		return `${truncateToWidth(capped, width - segmentWidth, "")}${segment}`;
 	}
 
 	renderBottomBorder(width: number, hiddenLineCount: number): string {
@@ -326,8 +351,10 @@ class FrameStatusEditor extends CustomEditor {
 			return super.renderBottomBorder(width, hiddenLineCount);
 		}
 
-		const leftSegment = hasLeft ? `${this.borderColor("─ ")}${sanitizeStatusText(leftLabel)} ` : "";
-		const rightSegment = hasRight ? this.rightCornerSegment(rightLabel) : "";
+		const leftSegment = hasLeft
+			? `${this.borderColor("-< ")}${sanitizeStatusText(leftLabel)}${this.borderColor(" >-")}`
+			: "";
+		const rightSegment = hasRight ? this.rightCornerSegment(rightLabel, false, { leftCap: "-<", rightCap: ">-" }) : "";
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 
 		const borderColor = (text: string) => this.borderColor(text);

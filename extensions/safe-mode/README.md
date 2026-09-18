@@ -34,9 +34,12 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
   - `smart`: read rules apply outside paths, but `edit`/`write` remain inside-project only.
 
 Status bar indicator:
-- non-paranoid + `outerAccess=false`: `[SMART]`, `[READER]`, `[YOLO]`
-- non-paranoid + `outerAccess=true`: `[SMART!]`, `[READER!]`, `[YOLO!]`
-- paranoid always: `[PARANOID]`
+- non-paranoid + `outerAccess=false`: `SMART`, `READER`, `YOLO`
+- non-paranoid + `outerAccess=true`: `SMART!`, `READER!`, `YOLO!`
+- paranoid always: `PARANOID`
+
+Notifications and list output still wrap the label in brackets (for example
+`Safe mode: [SMART]`).
 
 ## Read-only `git` tool auto-allow
 

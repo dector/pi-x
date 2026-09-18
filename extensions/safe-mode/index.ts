@@ -325,13 +325,14 @@ async function saveProjectSmartAllowlist(projectRoot: string, commands: Set<stri
 	await writeFile(filePath, `${JSON.stringify(content, null, 2)}\n`, "utf8");
 }
 
-function modeLabel(mode: SafeMode, outerAccess: boolean, options?: { ui?: boolean }): string {
+function modeLabel(mode: SafeMode, outerAccess: boolean, options?: { ui?: boolean; brackets?: boolean }): string {
 	const suffix = mode !== "paranoid" && outerAccess ? (options?.ui ? "+" : "!") : "";
-	return `[${mode.toUpperCase()}${suffix}]`;
+	const label = `${mode.toUpperCase()}${suffix}`;
+	return options?.brackets === false ? label : `[${label}]`;
 }
 
 function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
-	const label = modeLabel(mode, outerAccess, { ui: true });
+	const label = modeLabel(mode, outerAccess, { ui: true, brackets: false });
 	switch (mode) {
 		case "yolo":
 			return ctx.ui.theme.fg("error", label);
