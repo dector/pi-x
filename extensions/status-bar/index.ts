@@ -23,6 +23,8 @@ const CONTEXT_WATCHER_IDS = {
 	percent: "context-watcher-percent",
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
+// Providers whose context usage label also shows cumulative session cost.
+const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -32,10 +34,17 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
-function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number } {
+function formatCost(total: number): string {
+	if (!Number.isFinite(total) || total <= 0) return "";
+	if (total < 0.005) return "<$0.01";
+	return `$${total.toFixed(2)}`;
+}
+
+function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number; cost: number } {
 	let input = 0;
 	let output = 0;
 	let cacheRead = 0;
+	let cost = 0;
 
 	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
 		if (entry.type !== "message") continue;
@@ -46,9 +55,11 @@ function collectUsage(ctx: ExtensionContext): { input: number; output: number; c
 		input += typeof usage.input === "number" ? usage.input : 0;
 		output += typeof usage.output === "number" ? usage.output : 0;
 		cacheRead += typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
+		const usageCost = usage.cost as Record<string, unknown> | undefined;
+		cost += usageCost && typeof usageCost.total === "number" ? usageCost.total : 0;
 	}
 
-	return { input, output, cacheRead };
+	return { input, output, cacheRead, cost };
 }
 
 function styleContextLabel(
@@ -81,7 +92,11 @@ function getContextWatcherOverrides(
 	const roundedPercent = Number(safePercent.toFixed(1));
 	const usage = collectUsage(ctx);
 	const modelName = ctx.model?.id ?? "no-model";
-	const tokenLabel = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
+	let tokenLabel = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
+	if (ctx.model?.provider && COST_DISPLAY_PROVIDERS.has(ctx.model.provider)) {
+		const costLabel = formatCost(usage.cost);
+		if (costLabel) tokenLabel = `${tokenLabel} (${costLabel})`;
+	}
 	const percentLabel = `${roundedPercent.toFixed(1)}%`;
 
 	overrides.set(CONTEXT_WATCHER_IDS.tokens, styleContextLabel(theme, roundedPercent, tokenLabel));
@@ -367,6 +382,12 @@ async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
 			label: "Layout: right",
 			value: DEFAULT_STATUS_BAR_LAYOUT.right.join(", "),
 			description: "Producer IDs rendered in the right section.",
+		},
+		{
+			id: "cost-providers",
+			label: "Cost display providers",
+			value: [...COST_DISPLAY_PROVIDERS].join(", "),
+			description: "Providers whose context usage label also shows cumulative session cost.",
 		},
 	];
 

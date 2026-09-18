@@ -57,6 +57,20 @@ Status-bar stores latest content per producer (`id -> content`) and resolves sec
 
 For `context-watcher-*` IDs, status-bar now computes values internally from the active context/session.
 
+### Cost display
+
+The token item (`context-watcher-tokens`) renders `↑<input>/↓<output>/<cacheRead>`.
+
+When the active provider is in the cost-display whitelist (currently `deepseek` only), status-bar appends the cumulative session cost:
+
+```
+↑12k/↓3.4k/45k ($0.0023)
+```
+
+- Cost source: pi's per-message `usage.cost.total` (from the model price table), summed over the active branch.
+- Precision capped at 2 decimals: `$0.05`. Non-zero totals below half a cent render as `<$0.01`.
+- Omitted when cost is zero or unavailable, or for other providers.
+
 Rules:
 
 - Include only non-empty producer content.

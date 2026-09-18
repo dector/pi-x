@@ -24,6 +24,11 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
 - `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
+- Token label format: `↑<input>/↓<output>/<cacheRead>`.
+- Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
+  - Cost comes from pi's per-message `usage.cost.total` (derived from the model price table), summed over the active branch.
+  - Precision is capped at 2 decimals (for example `$0.05`); non-zero amounts below half a cent render as `<$0.01`.
+  - No suffix is rendered when cost is unavailable or zero.
 - Events:
   - `status-bar:set` with `{ id, content }`
   - `status-bar:clear` with `{ id }`
