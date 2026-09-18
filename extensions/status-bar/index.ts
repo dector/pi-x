@@ -83,22 +83,23 @@ function formatCost(total: number): string {
 	return `$${total.toFixed(2)}`;
 }
 
-// Thinking level shown in the editor frame label (3-4 symbols, uppercase).
-const THINKING_LEVEL_ABBREVIATIONS: Record<string, string> = {
-	off: "OFF",
-	minimal: "MIN",
-	low: "LOW",
-	medium: "MED",
-	high: "HIGH",
-	xhigh: "XHI",
-	max: "MAX",
+// Thinking level shown in the editor frame label as arrow indicators.
+// Higher levels point up, lower levels point down; extra arrows mark extremes.
+const THINKING_LEVEL_INDICATORS: Record<string, string> = {
+	off: "✘",
+	minimal: "🡻🡻",
+	low: "🡻",
+	medium: "🡺",
+	high: "🢁",
+	xhigh: "🢁🢁",
+	max: "🢁🢁🢁",
 };
 
-function abbreviateThinkingLevel(level: string | undefined): string {
+function formatThinkingLevel(level: string | undefined): string {
 	if (typeof level !== "string") return "---";
 	const normalized = level.trim().toLowerCase();
 	if (!normalized) return "---";
-	return THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toUpperCase();
+	return THINKING_LEVEL_INDICATORS[normalized] ?? normalized.slice(0, 4).toUpperCase();
 }
 
 function formatCostTrailing(total: number): string {
@@ -107,7 +108,7 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `MED | 15.9% (210k, 0.03$)` (the frame adds `─`/`└`).
+// Bottom-border label: `🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`└`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
 	ctx: ExtensionContext,
@@ -126,7 +127,7 @@ function buildFrameStatusLabel(
 
 	const cost = collectUsage(ctx).cost;
 
-	const label = `${abbreviateThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+	const label = `${formatThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
@@ -179,7 +180,7 @@ function renderBorderLine(
  * ```
  * ┌── <working status> ──────────────── <model> ─┐
  * │ ... input ...                                 │
- * └─ MED | 15.9% (210k, 0.03$) ──────── [SMART] ─┘
+ * └─ 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ─┘
  * ```
  */
 class FrameStatusEditor extends CustomEditor {

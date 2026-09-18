@@ -153,7 +153,7 @@ Aliases load at session start, so reload/restart after editing the file.
 Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
 full frame (`│` sides + `┌ ┐ └ ┘` corners), and renders:
 
-- bottom-left: thinking level, context usage, and cumulative cost (`─ MED | 15.9% (210k, 0.03$)`),
+- bottom-left: thinking level, context usage, and cumulative cost (`─ 🡺 | 15.9% (210k, 0.03$)`),
   colored with the same context-usage rules as the status-bar context items
   (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%)
 - bottom-right: `safe-mode` producer content (for example `[SMART]`)
