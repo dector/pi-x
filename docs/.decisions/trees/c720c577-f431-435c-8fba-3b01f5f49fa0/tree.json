@@ -1,0 +1,507 @@
+{
+	"version": 1,
+	"id": "c720c577-f431-435c-8fba-3b01f5f49fa0",
+	"title": "proc extension: background process manager for pi",
+	"status": "open",
+	"history": {
+		"capture": null
+	},
+	"root": {
+		"id": "7336597f-8a6b-467b-a187-5b9545284ea6",
+		"type": "group",
+		"priority": "important",
+		"title": "",
+		"status": "resolved",
+		"notes": [],
+		"raw_refs": [],
+		"children": [
+			{
+				"id": "3e842eff-a876-459c-9a95-871df283554e",
+				"type": "group",
+				"priority": "critical",
+				"title": "Process lifecycle and supervision",
+				"status": "resolved",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "f0ff99aa-c148-42d5-bab6-fccbc8273edd",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "8d7e7972-3085-4a78-a40c-1b7d0c2b77d5",
+								"timestamp": "2026-09-18T23:16:49.717Z",
+								"source": "user",
+								"content": "User agreed: survive reload/new/resume/fork; stop all on quit; no restart-reattach in v1.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:16:24.622Z",
+						"updated_at": "2026-09-18T23:16:49.717Z",
+						"question": "What happens to running processes when pi reloads / starts a new session / quits?",
+						"answer": "Processes are owned by the pi process. They survive `/reload`, `/new`, `/resume`, and `/fork` (state kept on a `globalThis` symbol and listeners rebound), but on pi `quit` the extension stops every running process (SIGTERM the group, then SIGKILL after a timeout). Rationale: after pi exits we can no longer capture stdout/stderr, so a \"surviving\" process would be unmanageable and invisible. Restart-persistence/reattach is out of scope for v1.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "ca595690-5f1a-4e23-87a5-b289ca6518e6",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "cfeeb6ee-f140-46fb-a172-1c554f0f60fb",
+								"timestamp": "2026-09-18T23:17:17.920Z",
+								"source": "user",
+								"content": "User agreed: detached process group, group kill, stop=SIGTERM->SIGKILL escalation, kill=SIGKILL, optional signal override.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:16:53.178Z",
+						"updated_at": "2026-09-18T23:17:17.920Z",
+						"question": "How do we stop processes: process-group ownership, escalation, and stop vs kill semantics?",
+						"answer": "Spawn each process in its own process group (`detached: true`) so we can signal the whole tree, and kill with `process.kill(-pid, sig)`. `stop` = SIGTERM the group, escalate to SIGKILL after ~3s. `kill` = SIGKILL the group immediately. Both accept an optional `signal` override (`SIGINT`, `SIGHUP`, `SIGTERM`, `SIGKILL`). No stdin magic (no writing `q`/`exit`) — that is what `write` is for. This prevents the classic orphaned-children case from `npm run dev`/`bash -lc`.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "837ba630-96f2-4077-bf0c-04d57eb58848",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "23e08270-2acd-403f-a25f-513e18822ece",
+								"timestamp": "2026-09-18T23:17:44.629Z",
+								"source": "user",
+								"content": "User agreed: retained until forget or cap ~20 exited; status bar red for ~60s then drop.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:17:22.900Z",
+						"updated_at": "2026-09-18T23:17:44.629Z",
+						"question": "How long do exited processes stick around (in list and in the status bar)?",
+						"answer": "Keep exited processes in `list` and in memory until either `forget <name>` is called or the extension hits a cap of ~20 retained exited processes (oldest auto-dropped). Exited entries always have a `forget` path. On pi `quit` everything is cleared anyway. The status bar shows exited processes in red for ~60s after exit, then drops them from the bar (but they stay in `list` until forgotten).",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "a31fb36e-8d1f-43dd-bf8a-8d9f2ac8b09f",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "dc86f0ce-b86f-41dc-b39f-f63affe1a7e0",
+								"timestamp": "2026-09-18T23:18:13.864Z",
+								"source": "user",
+								"content": "User agreed. Also agreed: run refuses a name that is still running; run replaces an exited name.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:17:47.877Z",
+						"updated_at": "2026-09-18T23:18:13.864Z",
+						"question": "What is the exact `write` (stdin) behavior?",
+						"answer": "`write` takes `name`, `input` (string), optional `newline` (default true), and optional `close` (default false, sends EOF/ends stdin). Stdin is opened as a pipe at spawn and kept open. `write` fails with a clear error if the process already exited or stdin is not writable. No shell-style escaping; the string goes through as-is (plus `\\n` unless `newline:false`).",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "aee6b361-387e-4217-a482-ccc49ae8a9ce",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:18:16.594Z",
+						"updated_at": "2026-09-18T23:18:16.594Z",
+						"question": "What happens if `run` is called with a name that already exists?",
+						"answer": "`run` refuses to reuse a name whose process is still running (clear error). If the name belongs to an exited process, `run` replaces that entry.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-09-18T23:10:54.796Z",
+				"updated_at": "2026-09-18T23:24:22.492Z"
+			},
+			{
+				"id": "4f5616c5-1920-4bfe-9663-9e46e9f7c3b0",
+				"type": "group",
+				"priority": "critical",
+				"title": "Scope and UX surface",
+				"status": "resolved",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "c17dd2cc-86b0-4c84-b58d-0e4c878dc622",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "2df8ee03-33e4-472e-b341-c928daf26a80",
+								"timestamp": "2026-09-18T23:13:30.848Z",
+								"source": "user",
+								"content": "User agreed: both agent tool (primary) and user-facing /px:proc command; no shortcuts in v1.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:12:53.458Z",
+						"updated_at": "2026-09-18T23:13:30.848Z",
+						"question": "Should the extension be agent-tool-only, or also expose user-facing slash commands (e.g. list/kill/tail a process by hand)?",
+						"answer": "Both, but the agent tool is the primary interface. Expose a `proc` tool for the agent, plus a small user-facing `/px:proc` command (list + kill + view logs) for interactive control. No keyboard shortcuts in v1.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "0bd7cab2-1465-464b-bfb8-5a6afece4ae4",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "52f01fcd-cf2f-413b-bd48-4fe9f971a810",
+								"timestamp": "2026-09-18T23:14:06.418Z",
+								"source": "user",
+								"content": "User agreed: single umbrella `proc` tool with actions run/list/status/logs/stop/kill/write/forget.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:13:33.776Z",
+						"updated_at": "2026-09-18T23:14:06.418Z",
+						"question": "Tool shape: one umbrella `proc` tool with an `action` enum, or several separate tools (`proc_run`, `proc_logs`, ...)?",
+						"answer": "One umbrella tool named `proc` with an `action` enum: `run`, `list`, `status`, `logs`, `stop`, `kill`, `write`, `forget`. Fewer tools keeps the system prompt small, and actions share the same id/naming logic. Use StringEnum for action (Google compatibility).",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "3b9f4d87-c66d-439b-a1f5-b80d075dc6b3",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "5a7bbab0-145f-4e62-83df-511b8b614b7e",
+								"timestamp": "2026-09-18T23:14:42.901Z",
+								"source": "user",
+								"content": "User agreed: run takes a shell command string via bash -lc, with optional cwd and env; no argv mode in v1.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:14:09.264Z",
+						"updated_at": "2026-09-18T23:14:42.901Z",
+						"question": "How does `run` accept the process to start: a shell command string, or an argv array?",
+						"answer": "`run` takes a single `command` shell string, executed as `bash -lc \"<command>\"` so pipes, env vars, and `&&` work. Optional `cwd` (defaults to `ctx.cwd`) and optional `env` map merged onto `process.env`. Do not use argv arrays in v1; the model naturally writes shell strings and it keeps the schema tiny.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "6b635714-4036-4069-8858-2699c97120b4",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "e3adf26a-c400-4536-9684-bbc9106b4d61",
+								"timestamp": "2026-09-18T23:15:31.025Z",
+								"source": "user",
+								"content": "User agreed ('ok'): name is the id, derived from command, optional override, numeric suffixes for collisions.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:14:46.286Z",
+						"updated_at": "2026-09-18T23:15:31.025Z",
+						"question": "How are processes identified and named (needed for the status bar short name)?",
+						"answer": "The short name IS the id. Default derives from the command's first word basename (e.g. `npm run dev` -> `npm`, `./serve.sh` -> `serve`), sanitized to `[a-z0-9_-]`. Optional `name` param overrides it. Collisions get a numeric suffix (`vite`, `vite-2`). `run` returns the name and pid; every other action takes `name`. Names stay reserved after exit until `forget` (or a retention timeout, decided later).",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "b45ef11b-7c52-4b61-a6f0-7500acf447ad",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "2fbe2d5e-a9ff-4419-a1b9-5a86802ee065",
+								"timestamp": "2026-09-18T23:16:02.591Z",
+								"source": "user",
+								"content": "User agreed: list/status shapes as proposed; exit produces ui.notify + red status bar, no automatic agent message injection in v1.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:15:34.894Z",
+						"updated_at": "2026-09-18T23:16:02.591Z",
+						"question": "What should `list`/`status` show, and how does the agent learn a process exited (notify/inject vs poll)?",
+						"answer": "`list` returns all known processes as compact rows: name, state (`running`/`exited`), pid, uptime/duration, exit code or signal, and unread log lines. `status <name>` returns one process with command, cwd, start time, duration, exit detail, and the last ~20 log lines. Exited processes stay listed until `forget` or retention. On exit the extension shows a `ctx.ui.notify` (and status bar turns red); it does NOT inject a message into the agent conversation in v1, so the agent polls when it cares.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "52797614-55b2-4fef-87d9-527e1423968b",
+						"type": "decision",
+						"priority": "minor",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:23:58.528Z",
+						"updated_at": "2026-09-18T23:24:13.673Z",
+						"question": "What is the exact /px:proc subcommand grammar?",
+						"answer": "`/px:proc` grammar: bare `/px:proc` or `/px:proc list` shows all processes (notify text). `/px:proc logs <name> [lines]` tails the user-reader cursor (default 50); `/px:proc logs <name> --start [lines]` from the earliest retained line. `/px:proc stop <name>` and `/px:proc kill <name>` and `/px:proc forget <name>`. When `<name>` is omitted, use `ctx.ui.select` (running-only for stop/kill; all for logs/forget). No `/px:proc run` in v1 - users have `!` bash and the agent has the tool.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-09-18T23:11:00.948Z",
+				"updated_at": "2026-09-18T23:24:20.469Z"
+			},
+			{
+				"id": "9b797f6f-b952-4ad2-aee5-5a1901219178",
+				"type": "group",
+				"priority": "critical",
+				"title": "Logs and read cursors",
+				"status": "resolved",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "56bf91cc-d71f-4e0f-b22f-9d7bdd2e1921",
+						"type": "decision",
+						"priority": "critical",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:18:50.017Z",
+						"updated_at": "2026-09-18T23:18:50.017Z",
+						"question": "What is the log buffer model and the \"since last read\" cursor model?",
+						"answer": "One ordered, line-based in-memory ring buffer per process, tagged out:/err: and preserving arrival order. Cap 5000 lines or 2 MB per process, whichever first; trims are counted and reported as `dropped`. Per-reader cursors: `agent` (tool calls) and `user` (/px:proc logs) advance independently. `logs { name, from: \"last\" | \"start\" }` where \"last\" (default) returns only lines after that reader's cursor and \"start\" returns from the earliest retained line. Responses include cursor, dropped, and running.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "2017e95f-a067-4307-97cc-d30730510306",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "3c15b21a-c1ec-462e-9053-b05ef38d72af",
+								"timestamp": "2026-09-18T23:19:13.559Z",
+								"source": "user",
+								"content": "User agreed: logs args/return as proposed, cursor advances only for from:last.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:18:54.137Z",
+						"updated_at": "2026-09-18T23:19:13.559Z",
+						"question": "What are the exact `logs` arguments and return shape?",
+						"answer": "`logs` args: `name`; `from` = `\"last\"` (default) | `\"start\"` | integer line number; `lines` = max lines to return (default 200, max 2000); `filter` = `\"out\" | \"err\"` optional. Response is a small header line (`proc=vite state=running pid=1234 cursor=812 dropped=0 more=true`) followed by the tagged lines. After a successful `logs`, the reader's cursor moves past the returned lines (even if truncated by `lines`, it stays at the last returned line, so the next `from:\"last\"` continues). Integer `from` does NOT move the cursor unless `from:\"last\"` was used.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "6e24c2b0-b025-4ebf-951c-3855be21c28e",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:19:17.983Z",
+						"updated_at": "2026-09-18T23:19:29.645Z",
+						"question": "How are raw process bytes normalized into log lines (ANSI, carriage returns, long lines)?",
+						"answer": "Normalize each stored line: strip ANSI CSI/SGR/OSC escape sequences; convert `\\r\\n` and lone `\\r` to `\\n`; drop empty lines; truncate a single line at 4096 chars with a `…(+N)` marker; prefix `out:` / `err:`. Progress-bar spam is acceptable in v1 (bounded by the ring cap); collapsing repeated lines is deferred.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "1093da1b-dadc-451f-8860-2db83ec722b6",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:19:32.954Z",
+						"updated_at": "2026-09-18T23:19:57.338Z",
+						"question": "Should `logs` support waiting for new output (to avoid agent polling)?",
+						"answer": "Yes, but opt-in: `logs{ ..., wait?: seconds }` with `wait` 0–30 (default 0). When >0 the call resolves as soon as at least one new line is available for that reader, or on timeout. Cancellable via the tool's abort signal. Default stays 0 so normal reads are instant.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-09-18T23:11:02.614Z",
+				"updated_at": "2026-09-18T23:24:24.389Z"
+			},
+			{
+				"id": "150089de-0b86-4f6d-96b1-32b4d9992085",
+				"type": "group",
+				"priority": "important",
+				"title": "Status bar integration",
+				"status": "resolved",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "b1dbd14a-4f65-4bc5-902f-b97dcdc16570",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:20:23.756Z",
+						"updated_at": "2026-09-18T23:20:23.756Z",
+						"question": "How does the proc extension get a dedicated status-bar row: new generic rows contract, or reuse line 2?",
+						"answer": "Extend `status-bar` with a generic extra-rows contract: `px:status-bar:row:set { id, content, order? }` and `px:status-bar:row:clear { id }`. Each registered row renders as its own footer line after the existing two lines, sorted by `order` then registration, and hidden while empty. `proc` publishes id `proc`. This is display-mode agnostic (works in both new and legacy) and reusable by other producers. status-bar README/contract must document it.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "7b3dea6b-9159-416b-bf10-09645f6e0da1",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "6bc4a1f4-da26-41fd-b2c0-534181aaadd5",
+								"timestamp": "2026-09-18T23:20:40.562Z",
+								"source": "user",
+								"content": "User: 'awesome' - row format/dot colors/ordering/overflow approved.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:20:28.099Z",
+						"updated_at": "2026-09-18T23:20:40.562Z",
+						"question": "What exactly goes in the process row (format, dot colors, ordering, overflow)?",
+						"answer": "Row format: one item per process, `● <name> <pid>`, items joined with `  ·  `; e.g. `● vite 48231  ·  ● npm 48255`. Dot is `●` colored via theme: running=success (green), stopping=warning (yellow), exited code 0=muted (gray), exited non-zero/signal=error (red). Running processes first, then recently-exited. Only running + exited-within-60s are shown; if the line overflows, drop the oldest items and append `+N more`.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "ffbdff8f-6d05-4b27-9f87-b816ffbbffd5",
+						"type": "decision",
+						"priority": "minor",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:20:42.957Z",
+						"updated_at": "2026-09-18T23:21:00.052Z",
+						"question": "How does proc behave if status-bar is missing?",
+						"answer": "Reuse the `status-bar` availability handshake from `flutter`: on `session_start` send `px:status-bar:ping {id:\"proc\"}`; listen for `px:status-bar:pong`; if no pong within ~500ms and UI is present, `ui.notify(..., \"warning\")` once. `proc` works fully without status-bar - it only loses the row. Re-ping on session changes/commands.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-09-18T23:11:04.531Z",
+				"updated_at": "2026-09-18T23:24:26.436Z"
+			},
+			{
+				"id": "aa1f83cf-bcf9-49b8-b24d-99dc087fa30a",
+				"type": "group",
+				"priority": "important",
+				"title": "Safety, limits and configuration",
+				"status": "resolved",
+				"notes": [],
+				"raw_refs": [],
+				"children": [
+					{
+						"id": "c3a38be6-dc2d-48ae-a44d-344508a3b211",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [
+							{
+								"id": "9576ef42-8669-4f3b-a141-9bba4f61d7ae",
+								"timestamp": "2026-09-18T23:23:01.040Z",
+								"source": "user",
+								"content": "User chose option A (safe-mode classifier), 'good for now'. Revisit a generic approval event API only if more extensions need it.",
+								"deleted_at": null
+							},
+							{
+								"id": "47b28b0e-2637-4c0e-afb8-7632a4c42d2c",
+								"timestamp": "2026-09-18T23:23:01.040Z",
+								"source": "tool",
+								"content": "Codebase finding: safe-mode intercepts all tool_call events (index.ts ~L1202) and decideToolCall treats unknown tools as confirm (policy.ts ~L592). READ_ONLY_TOOLS set + isReaderAllowed are the extension points.",
+								"deleted_at": null
+							}
+						],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:22:20.700Z",
+						"updated_at": "2026-09-18T23:23:01.040Z",
+						"question": "How does proc integrate with safe-mode for approvals?",
+						"answer": "No routing layer. safe-mode already intercepts every tool_call (its handler has no tool-name filter) and treats unknown tools as confirm, so proc is already gated. Centralize decisions by adding a proc classifier to safe-mode's policy, like git/sqlite/http: list/status/logs = read-only (auto-allow in reader/smart); run/write/stop/kill/forget = confirm. For `run`, re-validate the command string with safe-mode's existing bash classifier so read-only commands auto-allow, and so `run \"rm -rf /\"` is classified as mutating. Requires touching safe-mode/policy.ts (classifyProcToolCall + describeToolCall + tests) and documenting it. proc still works without safe-mode.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "13b32532-526c-4774-8483-544b1e61a907",
+						"type": "decision",
+						"priority": "important",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:23:04.354Z",
+						"updated_at": "2026-09-18T23:23:32.016Z",
+						"question": "What are the resource limits and where does configuration live?",
+						"answer": "Max 8 concurrently running processes (configurable). `run` at the cap fails with a clear \"stop or forget a process\" error. Global config in `~/.pi/agent/proc.json` with defaults: maxProcesses=8, logLines=5000, logBytes=2_000_000, exitedRetentionMs=60000, exitedCap=20, statusRow=true. No project-local config in v1 (avoids project-trust complexity). Env overrides not needed in v1. Each process gets its own log buffer, so worst case ~16MB at defaults.",
+						"answer_stage": "accepted"
+					},
+					{
+						"id": "5862c3e1-a748-44ac-83bb-71b00dae26bc",
+						"type": "decision",
+						"priority": "major",
+						"title": null,
+						"status": "resolved",
+						"notes": [],
+						"raw_refs": [],
+						"children": [],
+						"created_at": "2026-09-18T23:23:35.820Z",
+						"updated_at": "2026-09-18T23:23:54.130Z",
+						"question": "What files/deliverables does this change touch?",
+						"answer": "Deliver as `extensions/proc/{index.ts,README.md}` with no new npm deps. Also update: root `README.md` extension table (add proc, dep status-bar), `install` extension list (add proc right after status-bar), `status-bar/README.md` + `contract.ts` for the new row events, and `safe-mode/policy.ts` + `policy.test.ts` + `README.md` for the proc classifier. Follow repo conventions: globalThis state, ping/pong status-bar handshake, Conventional Commits.",
+						"answer_stage": "accepted"
+					}
+				],
+				"created_at": "2026-09-18T23:11:06.118Z",
+				"updated_at": "2026-09-18T23:24:28.394Z"
+			}
+		],
+		"created_at": "2026-09-18T23:10:49.584Z",
+		"updated_at": "2026-09-18T23:24:17.793Z"
+	},
+	"created_at": "2026-09-18T23:10:49.584Z",
+	"updated_at": "2026-09-18T23:24:28.394Z"
+}

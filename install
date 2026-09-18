@@ -77,6 +77,7 @@ mkdir -p "$DEST_ROOT"
 # Install status-bar first because other extensions depend on it.
 extensions=(
   "status-bar"
+  "proc"
   "no-reflection"
   "switch-thinking"
   "safe-mode"
