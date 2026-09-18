@@ -49,27 +49,46 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - If no first-line producer exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
 
-### Editor frame label (bottom-left)
+### Editor frame
 
-`status-bar` also replaces the editor component with a `CustomEditor` subclass and
-renders a compact label in the bottom-left corner of the input frame:
+`status-bar` also replaces the editor component with a `CustomEditor` subclass.
+The input frame is drawn with side borders and corner characters, and compact
+labels are rendered in the frame corners:
 
 ```
--| MED | 15.9% (210k, 0.03$) |──────────────────────────
+┌── <working status> ──────────────────── gpt-5 ─┐
+│ ... input ...                                   │
+└─ MED | 15.9% (210k, 0.03$) ────────── [SMART] ─┘
 ```
 
-- Format: `-| <thinking> | <percent> (<tokens>, <cost>) |-`.
-- `thinking`: current thinking level abbreviated to 3-4 uppercase symbols
-  (`OFF`, `MIN`, `LOW`, `MED`, `HIGH`, `XHI`, `MAX`; unknown levels are truncated to 4 chars).
-- `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
-- `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
-- `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
-  Zero/unavailable renders as `0.00$`; non-zero below half a cent renders as `<0.01$`.
-- The frame label is independent of the second-line cost whitelist: it always shows
-  accumulated `usage.cost.total` from the active branch.
-- The working status spinner stays embedded in the top border (pi >= 0.85); the label
-  only overrides the bottom border. When the editor is scrolled, the `↓ N more`
-  indicator is kept on the right side of the label.
+- The inner editor is rendered 2 columns narrower and wrapped with `│` side
+  borders and `┌ ┐ └ ┘` corners. The autocomplete list stays outside the frame and
+  is indented to line up with the editor interior.
+- Mouse coordinates are translated by one column so click-to-position keeps working.
+- **bottom-left** — thinking level, context usage, and cost.
+  - Format: `─ <thinking> | <percent> (<tokens>, <cost>)`.
+  - `thinking`: current thinking level abbreviated to 3-4 uppercase symbols
+    (`OFF`, `MIN`, `LOW`, `MED`, `HIGH`, `XHI`, `MAX`; unknown levels are truncated to 4 chars).
+  - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
+  - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
+  - `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
+    Zero/unavailable renders as `0.00$`; non-zero below half a cent renders as `<0.01$`.
+  - The frame label is independent of the second-line cost whitelist: it always shows
+    accumulated `usage.cost.total` from the active branch.
+  - The label uses the same context-usage color rules as the status-bar context items:
+    `muted` up to 20%, `text` up to 30%, `warning` up to 50%, `error` above 50%.
+    It stays uncolored when context percent is unknown.
+- **bottom-right** — `safe-mode` status content (`[SMART]`, `[READER]`, `[YOLO]`,
+  `[PARANOID]`, plus `+` when outer access is on). Rendered only while the
+  `safe-mode` producer has published content.
+- **top-right** — active model ID (`ctx.model.id`), rendered in the frame border
+  color. Hidden when no model is active.
+- Corner labels are prefixed with a space and followed by one border dash before
+  the corner. They are dropped when the terminal is too narrow; the top-right model
+  label also reserves extra room while the working status is embedded in the top border.
+- The working status spinner stays embedded in the top border (pi >= 0.85).
+- When the editor is scrolled, the `↓ N more` indicator sits to the left of the
+  bottom-right label; the `↑ N more` indicator stays in the top border.
 - On `session_shutdown` the previously configured editor factory is restored.
 
 ## Implementation

@@ -41,6 +41,20 @@ const CONTEXT_WATCHER_IDS = {
 	percent: "context-watcher-percent",
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
+const SAFE_MODE_ID = "safe-mode";
+// Minimum horizontal dashes kept when a corner label is rendered on a frame border.
+const MIN_CORNER_LABEL_GAP = 6;
+// Extra room kept for the working status when the top border already has embedded content.
+const WORKING_STATUS_RESERVE = 30;
+
+// Editor frame side borders.
+const FRAME_BORDER = {
+	topLeft: "┌",
+	topRight: "┐",
+	bottomLeft: "└",
+	bottomRight: "┘",
+	vertical: "│",
+} as const;
 // Providers whose context usage label also shows cumulative session cost.
 const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
 
@@ -82,57 +96,210 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `-| MED | 15.9% (210k, 0.03$) |-`.
-function buildFrameStatusLabel(ctx: ExtensionContext, thinkingLevel: string | undefined): string {
+// Bottom-border label: `MED | 15.9% (210k, 0.03$)` (the frame adds `─`/`└`).
+// Colored with the same context-usage rules as the status-bar context items.
+function buildFrameStatusLabel(
+	ctx: ExtensionContext,
+	thinkingLevel: string | undefined,
+	theme?: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+): string {
 	const usage = ctx.getContextUsage();
 
 	const rawPercent = usage?.percent;
-	const percent =
-		typeof rawPercent === "number" && Number.isFinite(rawPercent)
-			? `${Math.max(0, rawPercent).toFixed(1)}%`
-			: "--";
+	const percentValue =
+		typeof rawPercent === "number" && Number.isFinite(rawPercent) ? Math.max(0, rawPercent) : undefined;
+	const percent = percentValue === undefined ? "--" : `${percentValue.toFixed(1)}%`;
 
 	const rawTokens = usage?.tokens;
 	const tokens = typeof rawTokens === "number" && Number.isFinite(rawTokens) ? formatTokens(rawTokens) : "--";
 
 	const cost = collectUsage(ctx).cost;
 
-	return `${abbreviateThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+	const label = `${abbreviateThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+	if (!theme || percentValue === undefined) return label;
+
+	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
 }
 
 type FrameStatusProvider = () => string | undefined;
 
+interface FrameStatusProviders {
+	/** Bottom-left corner label (thinking level, context usage, cost). */
+	bottomLeft?: FrameStatusProvider;
+	/** Bottom-right corner label (safe-mode status). */
+	bottomRight?: FrameStatusProvider;
+	/** Top-right corner label (active model). */
+	topRight?: FrameStatusProvider;
+}
+
 /**
- * Default editor with the working status embedded in the top border (pi >= 0.85)
- * plus a status label rendered in the bottom-left corner of the frame.
+ * Build a full-width border line with optional left/right segments.
+ * Remaining space is filled with border-colored horizontal dashes.
+ */
+function renderBorderLine(
+	width: number,
+	leftSegment: string,
+	rightSegment: string,
+	borderColor: (text: string) => string,
+): string {
+	if (width <= 0) return "";
+
+	const leftWidth = visibleWidth(leftSegment);
+	const rightWidth = visibleWidth(rightSegment);
+
+	if (leftWidth === 0 && rightWidth === 0) {
+		return borderColor("─".repeat(width));
+	}
+
+	if (leftWidth + rightWidth >= width) {
+		if (leftWidth > 0) return truncateToWidth(leftSegment, width, "");
+		return truncateToWidth(rightSegment, width, "");
+	}
+
+	return `${leftSegment}${borderColor("─".repeat(width - leftWidth - rightWidth))}${rightSegment}`;
+}
+
+/**
+ * Default editor with the working status embedded in the top border (pi >= 0.85),
+ * side borders, and status labels rendered in the frame corners:
+ *
+ * ```
+ * ┌── <working status> ──────────────── <model> ─┐
+ * │ ... input ...                                 │
+ * └─ MED | 15.9% (210k, 0.03$) ──────── [SMART] ─┘
+ * ```
  */
 class FrameStatusEditor extends CustomEditor {
-	private readonly frameStatusProvider: FrameStatusProvider;
+	private readonly bottomLeftProvider?: FrameStatusProvider;
+	private readonly bottomRightProvider?: FrameStatusProvider;
+	private readonly topRightProvider?: FrameStatusProvider;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, frameStatusProvider: FrameStatusProvider) {
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, providers: FrameStatusProviders) {
 		super(tui, theme, keybindings, { embedWorkingStatus: true } as EditorOptions);
-		this.frameStatusProvider = frameStatusProvider;
+		this.bottomLeftProvider = providers.bottomLeft;
+		this.bottomRightProvider = providers.bottomRight;
+		this.topRightProvider = providers.topRight;
+	}
+
+	private rightCornerSegment(label: string, useBorderColor = false): string {
+		const sanitized = sanitizeStatusText(label);
+		const body = useBorderColor ? this.borderColor(sanitized) : sanitized;
+		return ` ${body}${this.borderColor(" ─")}`;
+	}
+
+	/**
+	 * Render the inner editor 2 columns narrower and draw vertical side borders
+	 * plus corner characters around it. Autocomplete lines stay outside the frame.
+	 */
+	render(width: number): string[] {
+		if (width < 3) return super.render(width);
+
+		const innerWidth = width - 2;
+		const lines = super.render(innerWidth);
+		const autocompleteHeight = this.getRenderedAutocompleteHeight();
+		const bodyEnd = Math.max(1, lines.length - autocompleteHeight);
+		const vertical = this.borderColor(FRAME_BORDER.vertical);
+		const out: string[] = [];
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i] ?? "";
+			if (i >= bodyEnd) {
+				// Keep autocomplete aligned with the editor interior.
+				out.push(` ${line}`);
+				continue;
+			}
+			if (i === 0) {
+				out.push(`${this.borderColor(FRAME_BORDER.topLeft)}${line}${this.borderColor(FRAME_BORDER.topRight)}`);
+			} else if (i === bodyEnd - 1) {
+				out.push(
+					`${this.borderColor(FRAME_BORDER.bottomLeft)}${line}${this.borderColor(FRAME_BORDER.bottomRight)}`,
+				);
+			} else {
+				out.push(`${vertical}${line}${vertical}`);
+			}
+		}
+
+		return out;
+	}
+
+	private getRenderedAutocompleteHeight(): number {
+		const internal = this as unknown as { renderedAutocompleteHeight?: number };
+		return typeof internal.renderedAutocompleteHeight === "number" ? internal.renderedAutocompleteHeight : 0;
+	}
+
+	/**
+	 * Content is shifted one column right by the left border, so translate mouse
+	 * coordinates back into the inner editor's coordinate space.
+	 */
+	// biome-ignore lint/suspicious/noExplicitAny: base handleMouse is not in the published types.
+	handleMouse(event: unknown): any {
+		if (event && typeof event === "object") {
+			const original = event as { x?: unknown; width?: unknown };
+			const adjusted: Record<string, unknown> = {
+				...(event as Record<string, unknown>),
+				x: (typeof original.x === "number" ? original.x : 0) - 1,
+				width: Math.max(0, (typeof original.width === "number" ? original.width : 0) - 2),
+			};
+			let proto = Object.getPrototypeOf(this) as { handleMouse?: (e: unknown) => unknown } | null;
+			while (proto) {
+				const handler = proto.handleMouse;
+				if (typeof handler === "function" && handler !== FrameStatusEditor.prototype.handleMouse) {
+					return handler.call(this, adjusted);
+				}
+				proto = Object.getPrototypeOf(proto) as { handleMouse?: (e: unknown) => unknown } | null;
+			}
+		}
+		return undefined;
+	}
+
+	renderTopBorder(width: number, hiddenLineCount: number): string {
+		const base = super.renderTopBorder(width, hiddenLineCount);
+		if (width <= 0) return base;
+
+		const label = this.topRightProvider?.();
+		if (!hasVisibleText(label)) return base;
+
+		const segment = this.rightCornerSegment(label, true);
+		const segmentWidth = visibleWidth(segment);
+		// Keep the working status / scroll indicator from being truncated when present.
+		const hasEmbeddedContent = base !== this.borderColor("─".repeat(width));
+		const minGap = hasEmbeddedContent ? WORKING_STATUS_RESERVE : MIN_CORNER_LABEL_GAP;
+		if (segmentWidth + minGap > width) return base;
+
+		return `${truncateToWidth(base, width - segmentWidth, "")}${segment}`;
 	}
 
 	renderBottomBorder(width: number, hiddenLineCount: number): string {
-		const fallback = super.renderBottomBorder(width, hiddenLineCount);
-		if (width <= 0) return fallback;
+		if (width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
 
-		const label = this.frameStatusProvider();
-		if (!hasVisibleText(label)) return fallback;
+		const leftLabel = this.bottomLeftProvider?.();
+		const rightLabel = this.bottomRightProvider?.();
+		const hasLeft = hasVisibleText(leftLabel);
+		const hasRight = hasVisibleText(rightLabel);
 
-		const left = `-| ${label} |-`;
-		const scrollIndicator = hiddenLineCount > 0 ? ` ↓ ${hiddenLineCount} more ` : "";
-		const leftWidth = visibleWidth(left);
-		const scrollWidth = visibleWidth(scrollIndicator);
-
-		if (leftWidth + scrollWidth + 1 > width) {
-			return this.borderColor(truncateToWidth(left, width, ""));
+		if (!hasLeft && !hasRight) {
+			return super.renderBottomBorder(width, hiddenLineCount);
 		}
 
-		const gap = width - leftWidth - scrollWidth;
-		const head = this.borderColor(`${left}${"─".repeat(gap)}`);
-		return scrollIndicator ? `${head}${this.borderColor(scrollIndicator)}` : head;
+		const leftSegment = hasLeft ? `${this.borderColor("─ ")}${sanitizeStatusText(leftLabel)} ` : "";
+		const rightSegment = hasRight ? this.rightCornerSegment(rightLabel) : "";
+		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
+
+		const borderColor = (text: string) => this.borderColor(text);
+		const candidates: Array<[string, string]> = [
+			[leftSegment, `${scrollSegment}${rightSegment}`],
+			[leftSegment, rightSegment],
+			[leftSegment, ""],
+			["", rightSegment],
+		];
+
+		for (const [left, right] of candidates) {
+			if (visibleWidth(left) + visibleWidth(right) < width) {
+				return renderBorderLine(width, left, right, borderColor);
+			}
+		}
+
+		return renderBorderLine(width, leftSegment, rightSegment, borderColor);
 	}
 }
 
@@ -734,14 +901,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 		previousEditorFactory = ctx.ui.getEditorComponent();
 
-		const provider: FrameStatusProvider = () => {
-			const activeCtx = lastContext ?? ctx;
-			return buildFrameStatusLabel(activeCtx, pi.getThinkingLevel());
+		const activeContext = () => lastContext ?? ctx;
+		const providers: FrameStatusProviders = {
+			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
+			bottomRight: () => contentById.get(SAFE_MODE_ID),
+			topRight: () => activeContext().model?.id,
 		};
 
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			requestEditorRender = () => tui.requestRender();
-			return new FrameStatusEditor(tui, editorTheme, keybindings, provider);
+			return new FrameStatusEditor(tui, editorTheme, keybindings, providers);
 		});
 
 		editorOwnerContext = ctx;

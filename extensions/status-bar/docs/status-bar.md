@@ -96,6 +96,23 @@ Placement priority:
 3. if still too narrow, truncate left/right as needed
 4. last fallback: left-only
 
+## Editor frame
+
+Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
+full frame (`│` sides + `┌ ┐ └ ┘` corners), and renders:
+
+- bottom-left: thinking level, context usage, and cumulative cost (`─ MED | 15.9% (210k, 0.03$)`),
+  colored with the same context-usage rules as the status-bar context items
+  (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%)
+- bottom-right: `safe-mode` producer content (for example `[SMART]`)
+- top-right: active model ID (`ctx.model.id`), colored with the frame border color
+
+The top border keeps the working status spinner from pi (>= 0.85).
+The inner editor renders 2 columns narrower; autocomplete stays outside the frame
+and is indented to match the interior. Mouse coordinates are shifted back by one
+column. Right-corner labels render as ` <label> ─` and are dropped when the terminal
+is too narrow. When the editor is scrolled, `↓ N more` sits left of the bottom-right label.
+
 ## Responsibility split
 
 ### Producer extensions
