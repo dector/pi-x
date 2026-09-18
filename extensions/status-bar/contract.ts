@@ -9,6 +9,12 @@ export const STATUS_BAR_EVENTS = {
 
 export type StatusBarSection = "left" | "center" | "right";
 
+// `new`: info lives on the editor frame border; duplicates are hidden from the
+// status line. `legacy`: info lives on the status line; border labels are hidden.
+export const STATUS_BAR_DISPLAY_MODES = ["new", "legacy"] as const;
+export type StatusBarDisplayMode = (typeof STATUS_BAR_DISPLAY_MODES)[number];
+export const DEFAULT_STATUS_BAR_DISPLAY_MODE: StatusBarDisplayMode = "new";
+
 export interface StatusBarLayout {
 	left: string[];
 	center: string[];
@@ -52,4 +58,12 @@ export const DEFAULT_STATUS_BAR_LAYOUT: StatusBarLayout = {
 	left: ["safe-mode", "switch-thinking"],
 	center: [],
 	right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"],
+};
+
+// New display mode: context/model/safe-mode live on the editor frame border, so
+// they are suppressed on the status line to avoid duplication.
+export const BORDER_PRIORITY_STATUS_BAR_LAYOUT: StatusBarLayout = {
+	left: ["switch-thinking"],
+	center: [],
+	right: [],
 };

@@ -1,3 +1,6 @@
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import {
 	CustomEditor,
 	DynamicBorder,
@@ -19,12 +22,17 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import {
+	BORDER_PRIORITY_STATUS_BAR_LAYOUT,
+	DEFAULT_STATUS_BAR_DISPLAY_MODE,
 	DEFAULT_STATUS_BAR_LAYOUT,
+	STATUS_BAR_DISPLAY_MODES,
 	STATUS_BAR_EVENTS,
 	STATUS_BAR_JOIN_SEPARATOR,
 	type StatusBarClearPayload,
+	type StatusBarDisplayMode,
 	type StatusBarFirstLineClearPayload,
 	type StatusBarFirstLineSetPayload,
+	type StatusBarLayout,
 	type StatusBarPingPayload,
 	type StatusBarSection,
 	type StatusBarSetPayload,
@@ -42,6 +50,7 @@ const CONTEXT_WATCHER_IDS = {
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
+const DISPLAY_MODE_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
 // Extra room kept for the working status when the top border already has embedded content.
@@ -123,7 +132,9 @@ function buildFrameStatusLabel(
 
 type FrameStatusProvider = () => string | undefined;
 
-interface FrameStatusProviders {
+interface FrameStatusEditorOptions {
+	/** Current display mode; `legacy` disables all border labels and the side frame. */
+	getDisplayMode: () => StatusBarDisplayMode;
 	/** Bottom-left corner label (thinking level, context usage, cost). */
 	bottomLeft?: FrameStatusProvider;
 	/** Bottom-right corner label (safe-mode status). */
@@ -170,15 +181,21 @@ function renderBorderLine(
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
+	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: FrameStatusProvider;
 	private readonly bottomRightProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, providers: FrameStatusProviders) {
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: FrameStatusEditorOptions) {
 		super(tui, theme, keybindings, { embedWorkingStatus: true } as EditorOptions);
-		this.bottomLeftProvider = providers.bottomLeft;
-		this.bottomRightProvider = providers.bottomRight;
-		this.topRightProvider = providers.topRight;
+		this.getDisplayMode = options.getDisplayMode;
+		this.bottomLeftProvider = options.bottomLeft;
+		this.bottomRightProvider = options.bottomRight;
+		this.topRightProvider = options.topRight;
+	}
+
+	private isBorderMode(): boolean {
+		return this.getDisplayMode() === "new";
 	}
 
 	private rightCornerSegment(label: string, useBorderColor = false): string {
@@ -192,7 +209,7 @@ class FrameStatusEditor extends CustomEditor {
 	 * plus corner characters around it. Autocomplete lines stay outside the frame.
 	 */
 	render(width: number): string[] {
-		if (width < 3) return super.render(width);
+		if (!this.isBorderMode() || width < 3) return super.render(width);
 
 		const innerWidth = width - 2;
 		const lines = super.render(innerWidth);
@@ -233,28 +250,34 @@ class FrameStatusEditor extends CustomEditor {
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: base handleMouse is not in the published types.
 	handleMouse(event: unknown): any {
-		if (event && typeof event === "object") {
-			const original = event as { x?: unknown; width?: unknown };
-			const adjusted: Record<string, unknown> = {
-				...(event as Record<string, unknown>),
-				x: (typeof original.x === "number" ? original.x : 0) - 1,
-				width: Math.max(0, (typeof original.width === "number" ? original.width : 0) - 2),
-			};
-			let proto = Object.getPrototypeOf(this) as { handleMouse?: (e: unknown) => unknown } | null;
-			while (proto) {
-				const handler = proto.handleMouse;
-				if (typeof handler === "function" && handler !== FrameStatusEditor.prototype.handleMouse) {
-					return handler.call(this, adjusted);
-				}
-				proto = Object.getPrototypeOf(proto) as { handleMouse?: (e: unknown) => unknown } | null;
+		if (!this.isBorderMode() || !event || typeof event !== "object") {
+			return this.callBaseHandleMouse(event);
+		}
+
+		const original = event as { x?: unknown; width?: unknown };
+		const adjusted: Record<string, unknown> = {
+			...(event as Record<string, unknown>),
+			x: (typeof original.x === "number" ? original.x : 0) - 1,
+			width: Math.max(0, (typeof original.width === "number" ? original.width : 0) - 2),
+		};
+		return this.callBaseHandleMouse(adjusted);
+	}
+
+	private callBaseHandleMouse(event: unknown): unknown {
+		let proto = Object.getPrototypeOf(this) as { handleMouse?: (e: unknown) => unknown } | null;
+		while (proto) {
+			const handler = proto.handleMouse;
+			if (typeof handler === "function" && handler !== FrameStatusEditor.prototype.handleMouse) {
+				return handler.call(this, event);
 			}
+			proto = Object.getPrototypeOf(proto) as { handleMouse?: (e: unknown) => unknown } | null;
 		}
 		return undefined;
 	}
 
 	renderTopBorder(width: number, hiddenLineCount: number): string {
 		const base = super.renderTopBorder(width, hiddenLineCount);
-		if (width <= 0) return base;
+		if (!this.isBorderMode() || width <= 0) return base;
 
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return base;
@@ -270,7 +293,7 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	renderBottomBorder(width: number, hiddenLineCount: number): string {
-		if (width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
+		if (!this.isBorderMode() || width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
 
 		const leftLabel = this.bottomLeftProvider?.();
 		const rightLabel = this.bottomRightProvider?.();
@@ -438,6 +461,64 @@ function hasVisibleText(value?: string): value is string {
 	return value.trim().length > 0;
 }
 
+function isDisplayMode(value: unknown): value is StatusBarDisplayMode {
+	return typeof value === "string" && (STATUS_BAR_DISPLAY_MODES as readonly string[]).includes(value);
+}
+
+function normalizeDisplayMode(value: unknown): StatusBarDisplayMode | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	return isDisplayMode(normalized) ? normalized : undefined;
+}
+
+function loadDisplayMode(): StatusBarDisplayMode {
+	const fromEnv = normalizeDisplayMode(process.env.PI_STATUS_BAR_DISPLAY_MODE);
+	if (fromEnv) return fromEnv;
+
+	try {
+		const parsed = JSON.parse(readFileSync(DISPLAY_MODE_SETTINGS_PATH, "utf-8")) as { displayMode?: unknown } | null;
+		const fromFile = normalizeDisplayMode(parsed?.displayMode);
+		if (fromFile) return fromFile;
+	} catch {
+		// Missing or invalid settings file: fall back to the default.
+	}
+
+	return DEFAULT_STATUS_BAR_DISPLAY_MODE;
+}
+
+function saveDisplayMode(mode: StatusBarDisplayMode): { ok: true } | { ok: false; error: string } {
+	let tempPath = "";
+	try {
+		let existing: Record<string, unknown> = {};
+		try {
+			const parsed = JSON.parse(readFileSync(DISPLAY_MODE_SETTINGS_PATH, "utf-8"));
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				existing = parsed as Record<string, unknown>;
+			}
+		} catch {
+			// New or unreadable file: start from an empty object.
+		}
+
+		mkdirSync(dirname(DISPLAY_MODE_SETTINGS_PATH), { recursive: true });
+		tempPath = `${DISPLAY_MODE_SETTINGS_PATH}.tmp-${process.pid}-${Date.now()}`;
+		writeFileSync(tempPath, `${JSON.stringify({ ...existing, displayMode: mode }, null, 2)}\n`, "utf-8");
+		renameSync(tempPath, DISPLAY_MODE_SETTINGS_PATH);
+		return { ok: true };
+	} catch (error) {
+		if (tempPath) {
+			try {
+				rmSync(tempPath, { force: true });
+			} catch {
+				// Ignore cleanup error.
+			}
+		}
+		return {
+			ok: false,
+			error: `Failed to save ${DISPLAY_MODE_SETTINGS_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
 function composeAtPositions(
 	width: number,
 	segments: Array<{ text: string; start: number }>,
@@ -570,10 +651,19 @@ interface StatusBarContractSettingItem {
 	description?: string;
 }
 
-async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
+async function showStatusBarContractUI(ctx: ExtensionContext, displayMode: StatusBarDisplayMode): Promise<void> {
 	if (!ctx.hasUI) return;
 
+	const layout = displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
+
 	const items: StatusBarContractSettingItem[] = [
+		{
+			id: "display-mode",
+			label: "Display mode",
+			value: displayMode,
+			description:
+				"new: info on the editor frame border, duplicates hidden from the status line. legacy: info on the status line, border labels hidden.",
+		},
 		{
 			id: "event-set",
 			label: "Event: set",
@@ -631,19 +721,19 @@ async function showStatusBarContractUI(ctx: ExtensionContext): Promise<void> {
 		{
 			id: "layout-left",
 			label: "Layout: left",
-			value: DEFAULT_STATUS_BAR_LAYOUT.left.join(", "),
+			value: layout.left.join(", "),
 			description: "Producer IDs rendered in the left section.",
 		},
 		{
 			id: "layout-center",
 			label: "Layout: center",
-			value: DEFAULT_STATUS_BAR_LAYOUT.center.join(", ") || "(empty)",
+			value: layout.center.join(", ") || "(empty)",
 			description: "Producer IDs rendered in the center section.",
 		},
 		{
 			id: "layout-right",
 			label: "Layout: right",
-			value: DEFAULT_STATUS_BAR_LAYOUT.right.join(", "),
+			value: layout.right.join(", ") || "(empty)",
 			description: "Producer IDs rendered in the right section.",
 		},
 		{
@@ -755,12 +845,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
 	const firstLineById = new Map<string, FirstLineEntry>();
 	let firstLineOrderCounter = 0;
+	let displayMode: StatusBarDisplayMode = loadDisplayMode();
 	let lastContext: ExtensionContext | undefined;
 	let footerOwnerContext: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
 	let editorOwnerContext: ExtensionContext | undefined;
 	let requestEditorRender: (() => void) | undefined;
 	let previousEditorFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
+
+	const activeLayout = (): StatusBarLayout =>
+		displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
 
 	const renderSection = (
 		ids: string[],
@@ -864,26 +958,27 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const contextOverrides = getContextWatcherOverrides(activeCtx, theme);
+					const layout = activeLayout();
 
 					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
-					let left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
-					let center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
-					let right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, contextOverrides, joinSeparator);
+					let left = renderSection(layout.left, undefined, joinSeparator);
+					let center = renderSection(layout.center, undefined, joinSeparator);
+					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
 					if (isCrowded(width, left, center, right)) {
 						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
-						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, undefined, joinSeparator);
-						center = renderSection(DEFAULT_STATUS_BAR_LAYOUT.center, undefined, joinSeparator);
-						right = renderSection(DEFAULT_STATUS_BAR_LAYOUT.right, contextOverrides, joinSeparator);
+						left = renderSection(layout.left, undefined, joinSeparator);
+						center = renderSection(layout.center, undefined, joinSeparator);
+						right = renderSection(layout.right, contextOverrides, joinSeparator);
 					}
 
-					const hasThinkingSection = DEFAULT_STATUS_BAR_LAYOUT.left.includes(SWITCH_THINKING_ID);
+					const hasThinkingSection = layout.left.includes(SWITCH_THINKING_ID);
 					const activeThinking = contentById.get(SWITCH_THINKING_ACTIVE_ID);
 					const needCompactThinking = hasThinkingSection && hasVisibleText(activeThinking) && isCrowded(width, left, center, right);
 
 					if (needCompactThinking) {
 						const leftOverrides = new Map<string, string | undefined>([[SWITCH_THINKING_ID, activeThinking]]);
-						left = renderSection(DEFAULT_STATUS_BAR_LAYOUT.left, leftOverrides, joinSeparator);
+						left = renderSection(layout.left, leftOverrides, joinSeparator);
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
@@ -902,7 +997,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		previousEditorFactory = ctx.ui.getEditorComponent();
 
 		const activeContext = () => lastContext ?? ctx;
-		const providers: FrameStatusProviders = {
+		const options: FrameStatusEditorOptions = {
+			getDisplayMode: () => displayMode,
 			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
 			bottomRight: () => contentById.get(SAFE_MODE_ID),
 			topRight: () => activeContext().model?.id,
@@ -910,7 +1006,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			requestEditorRender = () => tui.requestRender();
-			return new FrameStatusEditor(tui, editorTheme, keybindings, providers);
+			return new FrameStatusEditor(tui, editorTheme, keybindings, options);
 		});
 
 		editorOwnerContext = ctx;
@@ -1025,7 +1121,31 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
-			await showStatusBarContractUI(ctx);
+			await showStatusBarContractUI(ctx, displayMode);
+		},
+	});
+
+	pi.registerCommand("status-bar-display-mode", {
+		description: "Set status-bar display mode: /status-bar-display-mode new|legacy",
+		handler: async (args, ctx) => {
+			const requested = normalizeDisplayMode(args ?? "");
+			if (!requested) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`status-bar display mode: ${displayMode} (usage: /status-bar-display-mode new|legacy)`, "info");
+				}
+				return;
+			}
+
+			displayMode = requested;
+			bindContextAndRender(ctx);
+
+			const saved = saveDisplayMode(requested);
+			if (!ctx.hasUI) return;
+			if (saved.ok) {
+				ctx.ui.notify(`status-bar display mode: ${requested}`, "info");
+			} else {
+				ctx.ui.notify(`status-bar display mode: ${requested} (${saved.error})`, "warning");
+			}
 		},
 	});
 

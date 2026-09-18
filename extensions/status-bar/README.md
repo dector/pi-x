@@ -16,13 +16,15 @@ Install and enable it first so producer extensions can render their status outpu
 
 When `status-bar` receives a valid ping payload, it emits a pong payload echoing the same `id`.
 
-### Second line sections (unchanged)
+### Second line sections
 
 - Sections: `left`, `center`, `right`
-- Default order:
+- Default order (used by `legacy` display mode):
   - `left: ["safe-mode", "switch-thinking"]`
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
+- `new` display mode uses a reduced layout (see [Display mode](#display-mode)) because
+  the same info is shown on the editor frame border.
 - `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
 - Token label format: `↑<input>/↓<output>/<cacheRead>`.
 - Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
@@ -91,6 +93,24 @@ labels are rendered in the frame corners:
   bottom-right label; the `↑ N more` indicator stays in the top border.
 - On `session_shutdown` the previously configured editor factory is restored.
 
+### Display mode
+
+`displayMode` controls where context/model/safe-mode information lives:
+
+- `new` (default) — border priority.
+  - Editor frame shows the corner labels (bottom-left context, top-right model, bottom-right safe-mode).
+  - Status line uses the reduced layout: `left: ["switch-thinking"]`, `center: []`, `right: []`.
+- `legacy` — status-bar priority.
+  - Editor frame is the plain pi editor (horizontal borders only, no corner labels).
+  - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`,
+    `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`.
+
+Set it with:
+
+- `/status-bar-display-mode new` or `/status-bar-display-mode legacy`
+- `~/.pi/agent/status-bar.json`: `{ "displayMode": "new" }`
+- env override: `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` (takes precedence over the file)
+
 ## Implementation
 
 `status-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
@@ -126,10 +146,12 @@ First-line producers (example):
 - `repo-stats`
 - `attension-core` (special-case: when active, its content is still prefixed before cwd/branch)
 
-## Dev helper commands
+## Commands
 
 - `/status-bar-contract`
-  - Opens a read-only settings-style view with contract, ping/pong availability events, and renderer details.
+  - Opens a read-only settings-style view with contract, ping/pong availability events, renderer details, and the active display mode/layout.
+- `/status-bar-display-mode [new|legacy]`
+  - Shows or sets the display mode and persists it to `~/.pi/agent/status-bar.json`.
 - `/status-bar-set <id> <content>`
   - Sets test content for a second-line ID and re-renders.
 - `/status-bar-clear <id>`

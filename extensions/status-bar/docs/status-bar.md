@@ -10,13 +10,24 @@ Three ordered sections:
 - `center`
 - `right`
 
-Default layout:
+Default layout (`legacy` display mode):
 
 ```ts
 {
   left: ["safe-mode", "switch-thinking"],
   center: [],
   right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"],
+}
+```
+
+`new` display mode (default) uses a reduced layout because context/model/safe-mode
+are shown on the editor frame border:
+
+```ts
+{
+  left: ["switch-thinking"],
+  center: [],
+  right: [],
 }
 ```
 
@@ -95,6 +106,22 @@ Placement priority:
 2. if overlap, render left + right (drop center)
 3. if still too narrow, truncate left/right as needed
 4. last fallback: left-only
+
+## Display mode
+
+`displayMode` (`new` | `legacy`, default `new`) controls which surface owns the
+context/model/safe-mode info:
+
+- `new` (border priority): editor frame shows the corner labels; status line hides
+  `safe-mode` and `context-watcher-*`.
+- `legacy` (status-bar priority): editor frame is the plain pi editor (no side
+  borders, no corner labels); status line uses the default layout.
+
+Setup:
+
+- `/status-bar-display-mode new|legacy`
+- `~/.pi/agent/status-bar.json` -> `{ "displayMode": "new" }`
+- `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` env override (wins over the file)
 
 ## Editor frame
 
