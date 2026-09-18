@@ -36,7 +36,7 @@ Theme files live in [`themes/`](themes/). `./install` syncs them into `~/.pi/age
 
 | name | description |
 | --- | --- |
-| [`dark-blue`](themes/dark-blue.json) | Copy of the built-in `dark` theme with every thinking-level editor border fixed to one dark blue (`#34558b`), so the border no longer changes with thinking effort. |
+| [`dark-purple`](themes/dark-purple.json) | Copy of the built-in `dark` theme with every thinking-level editor border fixed to one purple (`#a78bfa`), so the border no longer changes with thinking effort. |
 
 also check the [skills repo](https://github.com/dector/skills).
 

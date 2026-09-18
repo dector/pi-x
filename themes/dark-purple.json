@@ -1,6 +1,6 @@
 {
 	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
-	"name": "dark-blue",
+	"name": "dark-purple",
 	"vars": {
 		"cyan": "#00d7ff",
 		"blue": "#5f87ff",
@@ -18,7 +18,7 @@
 		"toolSuccessBg": "#283228",
 		"toolErrorBg": "#3c2828",
 		"customMsgBg": "#2d2838",
-		"darkBlue": "#34558b"
+		"borderPurple": "#a78bfa"
 	},
 	"colors": {
 		"accent": "accent",
@@ -74,13 +74,13 @@
 		"syntaxOperator": "#D4D4D4",
 		"syntaxPunctuation": "#D4D4D4",
 
-		"thinkingOff": "darkBlue",
-		"thinkingMinimal": "darkBlue",
-		"thinkingLow": "darkBlue",
-		"thinkingMedium": "darkBlue",
-		"thinkingHigh": "darkBlue",
-		"thinkingXhigh": "darkBlue",
-		"thinkingMax": "darkBlue",
+		"thinkingOff": "borderPurple",
+		"thinkingMinimal": "borderPurple",
+		"thinkingLow": "borderPurple",
+		"thinkingMedium": "borderPurple",
+		"thinkingHigh": "borderPurple",
+		"thinkingXhigh": "borderPurple",
+		"thinkingMax": "borderPurple",
 
 		"bashMode": "green"
 	},
