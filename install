@@ -30,6 +30,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$SCRIPT_DIR/extensions"
 DEST_ROOT="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"
+THEMES_SRC="$SCRIPT_DIR/themes"
+THEMES_DEST="${PI_THEMES_DIR:-$HOME/.pi/agent/themes}"
 
 if [[ ! -d "$SRC_ROOT" ]]; then
   echo "Error: source extensions directory not found: $SRC_ROOT" >&2
@@ -130,4 +132,13 @@ for ext in "${installed_extensions[@]}"; do
   )
 done
 
-echo "Done. Extensions synced and dependencies installed. Reload pi to apply updates (/reload)."
+if [[ -d "$THEMES_SRC" ]]; then
+  echo "Syncing themes into: $THEMES_DEST"
+  mkdir -p "$THEMES_DEST"
+  # No --delete: keep user themes that this repo does not manage.
+  rsync -a "$THEMES_SRC"/ "$THEMES_DEST"/
+else
+  echo "No themes directory found, skipping themes."
+fi
+
+echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."

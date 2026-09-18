@@ -28,6 +28,16 @@ This repo currently contains the following extension(s):
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/notes` composes one, `/notes:list` browses and copies them from a two-pane dialog. | |
 
+## Themes
+
+Theme files live in [`themes/`](themes/). `./install` syncs them into `~/.pi/agent/themes/`
+(override the destination with `PI_THEMES_DIR`). Select one via `/settings` or set
+`"theme": "<name>"` in `settings.json`.
+
+| name | description |
+| --- | --- |
+| [`dark-blue`](themes/dark-blue.json) | Copy of the built-in `dark` theme with every thinking-level editor border fixed to one dark blue (`#34558b`), so the border no longer changes with thinking effort. |
+
 also check the [skills repo](https://github.com/dector/skills).
 
 ## Install policy for pi agents
