@@ -23,9 +23,9 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - `left: ["safe-mode", "switch-thinking"]`
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
-- `new` display mode uses a reduced layout (see [Display mode](#display-mode)) because
-  context/model/safe-mode are shown on the editor frame border; only the
-  `context-watcher-tokens` breakdown stays on the status line.
+- `new` display mode uses an empty second line (see [Display mode](#display-mode)) because
+  context/model/safe-mode are shown on the editor frame border and the token breakdown
+  moves to the first line.
 - `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
 - Token label format: `↑<input>/↓<output>/<cacheRead>`.
 - Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
@@ -51,6 +51,9 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - item delimiter: ` · `
 - If no first-line producer exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
+- `new` display mode appends the context token breakdown (`↑<input>/↓<output>/<cacheRead>`,
+  no cost suffix) to the first-line right section, after the producer items
+  (that is, after the `SKILLS: n/m` counter when present).
 
 ### Editor frame
 
@@ -100,8 +103,10 @@ labels are rendered in the frame corners:
 
 - `new` (default) — border priority.
   - Editor frame shows the corner labels (bottom-left context, top-right model, bottom-right safe-mode).
-  - Status line keeps only the detail the border does not show: the input/output/cache
-    token breakdown. Layout: `left: []`, `center: []`, `right: ["context-watcher-tokens"]`.
+  - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
+  - The input/output/cache token breakdown moves to status line 1, right after the
+    producer items (after the `SKILLS: n/m` counter), and omits the cost suffix
+    because the border already shows cost.
   - `safe-mode`, `switch-thinking` (favorite thinking modes), model, and percent are hidden.
 - `legacy` — status-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).

@@ -359,6 +359,16 @@ function styleContextLabel(
 	return theme.fg("error", label);
 }
 
+function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
+	const usage = collectUsage(ctx);
+	let label = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
+	if (includeCost && ctx.model?.provider && COST_DISPLAY_PROVIDERS.has(ctx.model.provider)) {
+		const costLabel = formatCost(usage.cost);
+		if (costLabel) label = `${label} (${costLabel})`;
+	}
+	return label;
+}
+
 function getContextWatcherOverrides(
 	ctx: ExtensionContext,
 	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
@@ -376,20 +386,26 @@ function getContextWatcherOverrides(
 
 	const safePercent = Math.max(0, percent);
 	const roundedPercent = Number(safePercent.toFixed(1));
-	const usage = collectUsage(ctx);
 	const modelName = ctx.model?.id ?? "no-model";
-	let tokenLabel = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
-	if (ctx.model?.provider && COST_DISPLAY_PROVIDERS.has(ctx.model.provider)) {
-		const costLabel = formatCost(usage.cost);
-		if (costLabel) tokenLabel = `${tokenLabel} (${costLabel})`;
-	}
 	const percentLabel = `${roundedPercent.toFixed(1)}%`;
 
-	overrides.set(CONTEXT_WATCHER_IDS.tokens, styleContextLabel(theme, roundedPercent, tokenLabel));
+	overrides.set(CONTEXT_WATCHER_IDS.tokens, styleContextLabel(theme, roundedPercent, buildContextTokenLabel(ctx, true)));
 	overrides.set(CONTEXT_WATCHER_IDS.model, styleContextLabel(theme, roundedPercent, modelName));
 	overrides.set(CONTEXT_WATCHER_IDS.percent, styleContextLabel(theme, roundedPercent, percentLabel));
 
 	return overrides;
+}
+
+// First-line token breakdown (new display mode), colored like the status-bar context items.
+function buildFirstLineTokenLabel(
+	ctx: ExtensionContext,
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+): string {
+	const percent = ctx.getContextUsage()?.percent;
+	if (typeof percent !== "number" || !Number.isFinite(percent)) {
+		return buildContextTokenLabel(ctx, false);
+	}
+	return styleContextLabel(theme, Number(Math.max(0, percent).toFixed(1)), buildContextTokenLabel(ctx, false));
 }
 
 interface FirstLineEntry {
@@ -943,6 +959,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					if (sessionName) pwd = `${pwd} • ${sessionName}`;
 					const defaultFirstLine = theme.fg("dim", pwd);
 
+					const firstLineTokenLabel = displayMode === "new" ? buildFirstLineTokenLabel(activeCtx, theme) : undefined;
+
 					let line1: string;
 					if (hasFirstLineContent()) {
 						const firstLineJoinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
@@ -951,14 +969,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						const producerLeft = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
 						const left = producerLeft ?? (hasAttensionCore ? undefined : defaultFirstLine);
 						const center = renderFirstLineSection("center", firstLineJoinSeparator, attensionCoreSuffix);
-						const right = renderFirstLineSection("right", firstLineJoinSeparator, attensionCoreSuffix);
+						const producerRight = renderFirstLineSection("right", firstLineJoinSeparator, attensionCoreSuffix);
+						const right = firstLineTokenLabel
+							? producerRight
+								? `${producerRight}${firstLineJoinSeparator}${firstLineTokenLabel}`
+								: firstLineTokenLabel
+							: producerRight;
 						line1 = renderThreeSectionLine(width, left, center, right);
+					} else if (firstLineTokenLabel) {
+						line1 = renderThreeSectionLine(width, defaultFirstLine, undefined, firstLineTokenLabel);
 					} else {
 						line1 = truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 					}
 
-					const contextOverrides = getContextWatcherOverrides(activeCtx, theme);
 					const layout = activeLayout();
+					const contextOverrides = layout.right.length > 0 ? getContextWatcherOverrides(activeCtx, theme) : undefined;
 
 					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
 					let left = renderSection(layout.left, undefined, joinSeparator);
@@ -982,7 +1007,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
-					return [line1, line2];
+					return line2.length > 0 ? [line1, line2] : [line1];
 				},
 			};
 		});

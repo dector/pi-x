@@ -20,16 +20,16 @@ Default layout (`legacy` display mode):
 }
 ```
 
-`new` display mode (default) uses a reduced layout. Context/model/safe-mode are
-shown on the editor frame border, and `switch-thinking` (favorite thinking modes)
-is redundant with the border thinking level. The input/output/cache token breakdown
-stays because the border only shows the total:
+`new` display mode (default) omits status line 2. Context/model/safe-mode
+are shown on the editor frame border, and `switch-thinking` (favorite thinking
+modes) is redundant with the border thinking level. The input/output/cache token
+breakdown moves to status line 1, after the producer items, without a cost suffix:
 
 ```ts
 {
   left: [],
   center: [],
-  right: ["context-watcher-tokens"],
+  right: [],
 }
 ```
 
@@ -61,7 +61,7 @@ Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), no
 
 Footer lines:
 
-1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section
+1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section. In `new` display mode the context token breakdown is appended to the right section after the producers.
 2. status-bar line (left/center/right)
 
 ## Status-line rendering rules
@@ -114,10 +114,10 @@ Placement priority:
 `displayMode` (`new` | `legacy`, default `new`) controls which surface owns the
 context/model/safe-mode info:
 
-- `new` (border priority): editor frame shows the corner labels; status line hides
-  `safe-mode`, `switch-thinking`, `context-watcher-model`, and
-  `context-watcher-percent`. Only `context-watcher-tokens` (the input/output/cache
-  breakdown) stays, since the border shows just the total.
+- `new` (border priority): editor frame shows the corner labels; status line 2 is
+  omitted and the input/output/cache token breakdown moves to status line 1 (after
+  the producer items) with no cost suffix. `safe-mode`, `switch-thinking`,
+  `context-watcher-model`, and `context-watcher-percent` are hidden.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout.
 

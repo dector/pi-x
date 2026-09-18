@@ -62,9 +62,10 @@ export const DEFAULT_STATUS_BAR_LAYOUT: StatusBarLayout = {
 
 // New display mode: context/model/safe-mode live on the editor frame border, so
 // they are suppressed on the status line to avoid duplication. The input/output/
-// cache token breakdown stays because the border only shows the total.
+// cache token breakdown moves to the first line (after the skills counter) and
+// drops the cost suffix, which the border already shows.
 export const BORDER_PRIORITY_STATUS_BAR_LAYOUT: StatusBarLayout = {
 	left: [],
 	center: [],
-	right: ["context-watcher-tokens"],
+	right: [],
 };
