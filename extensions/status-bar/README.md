@@ -62,14 +62,15 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-┌── <working status> ────────────── cdx/5.6-sol ─┐
-│ ... input ...                                   │
-└─ 🡺 | 15.9% (210k, 0.03$) ────────── [SMART] ─┘
+╭── <working status> ──────────────── cdx/5.6-sol ──╮
+│ ... input ...                                     │
+╰─ 🡺 | 15.9% (210k, 0.03$) ────────── [SMART] ──────╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
-  borders and `┌ ┐ └ ┘` corners. The autocomplete list stays outside the frame and
-  is indented to line up with the editor interior.
+  borders and rounded corners (`╭ ╮ ╰ ╯`). The editor uses one column of
+  horizontal padding (`paddingX: 1`), so input sits at `│ <input> │`. The
+  autocomplete list stays outside the frame and is indented to line up.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - **bottom-left** — thinking level, context usage, and cost.
   - Format: `─ <thinking> | <percent> (<tokens>, <cost>)`.

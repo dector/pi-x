@@ -58,12 +58,12 @@ const MIN_CORNER_LABEL_GAP = 6;
 // Extra room kept for the working status when the top border already has embedded content.
 const WORKING_STATUS_RESERVE = 30;
 
-// Editor frame side borders.
+// Editor frame side borders (rounded corners).
 const FRAME_BORDER = {
-	topLeft: "┌",
-	topRight: "┐",
-	bottomLeft: "└",
-	bottomRight: "┘",
+	topLeft: "╭",
+	topRight: "╮",
+	bottomLeft: "╰",
+	bottomRight: "╯",
 	vertical: "│",
 } as const;
 // Providers whose context usage label also shows cumulative session cost.
@@ -108,7 +108,7 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`└`).
+// Bottom-border label: `🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
 	ctx: ExtensionContext,
@@ -175,12 +175,13 @@ function renderBorderLine(
 
 /**
  * Default editor with the working status embedded in the top border (pi >= 0.85),
- * side borders, and status labels rendered in the frame corners:
+ * rounded side borders, and status labels rendered in the frame corners. Editor
+ * content is inset by one column on each side (`│ <input> │`):
  *
  * ```
- * ┌── <working status> ──────────────── <model> ─┐
- * │ ... input ...                                 │
- * └─ 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ─┘
+ * ╭── <working status> ──────────────── <model> ──╮
+ * │ ... input ...                                  │
+ * ╰─ 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -190,7 +191,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly topRightProvider?: FrameStatusProvider;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: FrameStatusEditorOptions) {
-		super(tui, theme, keybindings, { embedWorkingStatus: true } as EditorOptions);
+		super(tui, theme, keybindings, { embedWorkingStatus: true, paddingX: 1 } as EditorOptions);
 		this.getDisplayMode = options.getDisplayMode;
 		this.bottomLeftProvider = options.bottomLeft;
 		this.bottomRightProvider = options.bottomRight;
@@ -209,7 +210,9 @@ class FrameStatusEditor extends CustomEditor {
 
 	/**
 	 * Render the inner editor 2 columns narrower and draw vertical side borders
-	 * plus corner characters around it. Autocomplete lines stay outside the frame.
+	 * plus rounded corners around it. The inner editor applies one column of
+	 * horizontal padding, so content sits at `│ <input> │`. Autocomplete lines stay
+	 * outside the frame.
 	 */
 	render(width: number): string[] {
 		if (!this.isBorderMode() || width < 3) return super.render(width);
@@ -248,8 +251,8 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Content is shifted one column right by the left border, so translate mouse
-	 * coordinates back into the inner editor's coordinate space.
+	 * Content is shifted one column right by the left border (the inner editor
+	 * applies its own horizontal padding), so translate mouse coordinates back.
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: base handleMouse is not in the published types.
 	handleMouse(event: unknown): any {

@@ -151,7 +151,8 @@ Aliases load at session start, so reload/restart after editing the file.
 ## Editor frame
 
 Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
-full frame (`│` sides + `┌ ┐ └ ┘` corners), and renders:
+full frame (`│` sides + rounded `╭ ╮ ╰ ╯` corners), enables one column of horizontal
+editor padding (`paddingX: 1`), and renders:
 
 - bottom-left: thinking level, context usage, and cumulative cost (`─ 🡺 | 15.9% (210k, 0.03$)`),
   colored with the same context-usage rules as the status-bar context items
@@ -160,8 +161,8 @@ full frame (`│` sides + `┌ ┐ └ ┘` corners), and renders:
 - top-right: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color
 
 The top border keeps the working status spinner from pi (>= 0.85).
-The inner editor renders 2 columns narrower; autocomplete stays outside the frame
-and is indented to match the interior. Mouse coordinates are shifted back by one
+The inner editor renders 2 columns narrower and applies `paddingX: 1`; autocomplete
+stays outside the frame and is indented to match. Mouse coordinates are shifted back by one
 column. Right-corner labels render as ` <label> ─` and are dropped when the terminal
 is too narrow. When the editor is scrolled, `↓ N more` sits left of the bottom-right label.
 
