@@ -121,7 +121,7 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `MED 🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
+// Bottom-border label: `MED 🡺 · 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
 	ctx: ExtensionContext,
@@ -140,7 +140,7 @@ function buildFrameStatusLabel(
 
 	const cost = collectUsage(ctx).cost;
 
-	const label = `${formatThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
@@ -194,7 +194,7 @@ function renderBorderLine(
  * ```
  * ╭── <working status> ──────────────── <model> ──╮
  * │ ... input ...                                  │
- * ╰─ MED 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ────╯
+ * ╰─ MED 🡺 · 15.9% (210k, 0.03$) ──────── [SMART] ────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {

@@ -64,7 +64,7 @@ labels are rendered in the frame corners:
 ```
 ╭── <working status> ──────────────── cdx/5.6-sol ──╮
 │ ... input ...                                     │
-╰─ MED 🡺 | 15.9% (210k, 0.03$) ────────── [SMART] ──────╯
+╰─ MED 🡺 · 15.9% (210k, 0.03$) ────────── [SMART] ──────╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
