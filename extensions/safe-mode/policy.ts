@@ -12,6 +12,9 @@ const READ_ONLY_TOOLS = new Set(["read", "ls", "grep"]);
 const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
 const READ_ONLY_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+const PROC_ACTIONS = new Set(["run", "list", "status", "logs", "stop", "kill", "write", "forget"]);
+const PROC_READ_ONLY_ACTIONS = new Set(["list", "status", "logs"]);
+
 export type ToolCallLike = {
 	toolName: string;
 	input: Record<string, unknown>;
@@ -586,7 +589,50 @@ export function describeToolCall(toolName: string, input: Record<string, unknown
 		return summarizeSqliteToolCallForPolicy(input);
 	}
 
+	if (toolName === "proc") {
+		return classifyProcToolCall(input).summary;
+	}
+
 	return toolName;
+}
+
+export interface ProcToolClassification {
+	recognized: boolean;
+	readOnly: boolean;
+	action?: string;
+	summary: string;
+}
+
+// `proc` actions: list/status/logs are read-only, everything else mutates process
+// state. `run` additionally re-validates its shell command with the bash policy.
+export function classifyProcToolCall(input: Record<string, unknown>): ProcToolClassification {
+	const action = typeof input.action === "string" ? input.action.trim() : "";
+	const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : undefined;
+	const suffix = name ? ` ${name}` : "";
+
+	if (!PROC_ACTIONS.has(action)) {
+		return { recognized: false, readOnly: false, summary: "proc" };
+	}
+
+	if (PROC_READ_ONLY_ACTIONS.has(action)) {
+		return { recognized: true, readOnly: true, action, summary: `proc: ${action}${suffix} (read-only)` };
+	}
+
+	if (action === "run") {
+		const command = typeof input.command === "string" ? input.command.trim() : "";
+		return { recognized: true, readOnly: false, action, summary: command ? `proc: run ${command}` : "proc: run" };
+	}
+
+	return { recognized: true, readOnly: false, action, summary: `proc: ${action}${suffix}` };
+}
+
+function isReadOnlyProcToolCall(input: Record<string, unknown>, mode: SafeMode): boolean {
+	const classification = classifyProcToolCall(input);
+	if (classification.readOnly) return true;
+	if (classification.action !== "run") return false;
+	const command = typeof input.command === "string" ? input.command : "";
+	const profile = mode === "smart" ? "smart" : "reader";
+	return validateBashCommand({ command, profile }).action === "allow";
 }
 
 export function decideToolCall(args: {
@@ -679,6 +725,7 @@ function isReaderAllowed(toolName: string, input: Record<string, unknown>, mode:
 	if (isReadOnlyHttpToolCall(toolName, input)) return true;
 	if (isReadOnlyWebSearchToolCall(toolName, input)) return true;
 	if (toolName === "git") return classifyGitToolCall(input).readOnly;
+	if (toolName === "proc") return isReadOnlyProcToolCall(input, mode);
 	if (toolName === "sqlite") {
 		const normalized = normalizeSqliteInputForPolicy(input);
 		if (!normalized) return false;
@@ -915,6 +962,15 @@ function targetsOutsideProject(toolName: string, input: Record<string, unknown>,
 		const files = normalizeCommitToolFiles(input);
 		if (!files || files.length === 0) return false;
 		return files.some((file) => !isPathInsideProject(file, projectRoot));
+	}
+
+	if (toolName === "proc") {
+		const action = typeof input.action === "string" ? input.action : "";
+		if (action !== "run") return false;
+		const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : undefined;
+		if (cwd && !isPathInsideProject(cwd, projectRoot)) return true;
+		const command = typeof input.command === "string" ? input.command : "";
+		return bashTargetsOutsideProject(command, projectRoot);
 	}
 
 	if (toolName !== "bash") return false;

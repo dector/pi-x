@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	classifyGitToolCall,
+	classifyProcToolCall,
 	decideToolCall,
 	describeToolCall,
 	getBashCommandType,
@@ -600,4 +601,59 @@ test("regressions from regex-based behavior", () => {
 	}
 
 	expect(decide("reader", "bash", { command: "grep rm README.md" }).action).toBe("allow");
+});
+
+test("proc classifier: action classification", () => {
+	expect(classifyProcToolCall({ action: "list" })).toEqual({
+		recognized: true,
+		readOnly: true,
+		action: "list",
+		summary: "proc: list (read-only)",
+	});
+	expect(classifyProcToolCall({ action: "logs", name: "vite" })).toEqual({
+		recognized: true,
+		readOnly: true,
+		action: "logs",
+		summary: "proc: logs vite (read-only)",
+	});
+	expect(classifyProcToolCall({ action: "status", name: "vite" }).readOnly).toBe(true);
+	expect(classifyProcToolCall({ action: "stop", name: "vite" })).toEqual({
+		recognized: true,
+		readOnly: false,
+		action: "stop",
+		summary: "proc: stop vite",
+	});
+	expect(classifyProcToolCall({ action: "run", command: "npm run dev" })).toEqual({
+		recognized: true,
+		readOnly: false,
+		action: "run",
+		summary: "proc: run npm run dev",
+	});
+	expect(classifyProcToolCall({ action: "run" }).summary).toBe("proc: run");
+	expect(classifyProcToolCall({ action: "wat" }).recognized).toBe(false);
+	expect(describeToolCall("proc", { action: "status", name: "vite" })).toBe("proc: status vite (read-only)");
+});
+
+test("decideToolCall: proc read-only vs mutating", () => {
+	expect(decide("reader", "proc", { action: "list" }).action).toBe("allow");
+	expect(decide("smart", "proc", { action: "logs", name: "vite" }).action).toBe("allow");
+	expect(decide("smart", "proc", { action: "status", name: "vite" }).action).toBe("allow");
+	expect(decide("reader", "proc", { action: "forget", name: "vite" }).action).toBe("confirm");
+	expect(decide("smart", "proc", { action: "stop", name: "vite" }).action).toBe("confirm");
+	expect(decide("smart", "proc", { action: "kill", name: "vite" }).action).toBe("confirm");
+	expect(decide("smart", "proc", { action: "write", name: "vite", input: "q" }).action).toBe("confirm");
+});
+
+test("decideToolCall: proc run reuses the bash classifier", () => {
+	expect(decide("smart", "proc", { action: "run", command: "ls -la" }).action).toBe("allow");
+	expect(decide("reader", "proc", { action: "run", command: "git status" }).action).toBe("allow");
+	expect(decide("smart", "proc", { action: "run", command: "rm -rf build" }).action).toBe("confirm");
+	expect(decide("paranoid", "proc", { action: "list" }).action).toBe("confirm");
+	expect(decide("yolo", "proc", { action: "run", command: "rm -rf build" }).action).toBe("allow");
+});
+
+test("decideToolCall: proc run outside project requires approval", () => {
+	expect(decide("smart", "proc", { action: "run", command: "ls", cwd: "/etc" }).action).toBe("confirm");
+	expect(decide("smart", "proc", { action: "run", command: "cat /etc/hosts" }).action).toBe("confirm");
+	expect(decide("smart", "proc", { action: "run", command: "ls", cwd: "subdir" }).action).toBe("allow");
 });

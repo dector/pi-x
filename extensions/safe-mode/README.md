@@ -73,6 +73,15 @@ Notes:
 
 So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to outer-access/path scope), while mutating queries require approval.
 
+## `proc` tool auto-allow
+
+`safe-mode` classifies the [`proc`](../proc/README.md) tool:
+
+- `list`, `status`, `logs` are read-only and auto-allow in `reader`/`smart`.
+- `run` re-validates its `command` with the bash classifier, so read-only commands auto-allow while mutating commands require approval. A `cwd` outside the project root requires approval.
+- `stop`, `kill`, `write`, `forget` require approval in `reader`/`smart` (mutating process state).
+- `paranoid` asks for every `proc` call; `yolo` allows in-scope calls.
+
 ## HTTP and memoryfs auto-allow
 
 - Memoryfs reads through `http`, `http_md`, and `web_search` (`memfs: { id, offset?, limit? }`) are auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
