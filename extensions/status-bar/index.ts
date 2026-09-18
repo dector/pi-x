@@ -1,5 +1,23 @@
-import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Key, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CustomEditor,
+	DynamicBorder,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import {
+	Container,
+	type EditorOptions,
+	type EditorTheme,
+	Key,
+	type KeybindingsManager,
+	matchesKey,
+	type SelectItem,
+	SelectList,
+	Text,
+	truncateToWidth,
+	type TUI,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import {
 	DEFAULT_STATUS_BAR_LAYOUT,
 	STATUS_BAR_EVENTS,
@@ -38,6 +56,84 @@ function formatCost(total: number): string {
 	if (!Number.isFinite(total) || total <= 0) return "";
 	if (total < 0.005) return "<$0.01";
 	return `$${total.toFixed(2)}`;
+}
+
+// Thinking level shown in the editor frame label (3-4 symbols, uppercase).
+const THINKING_LEVEL_ABBREVIATIONS: Record<string, string> = {
+	off: "OFF",
+	minimal: "MIN",
+	low: "LOW",
+	medium: "MED",
+	high: "HIGH",
+	xhigh: "XHI",
+	max: "MAX",
+};
+
+function abbreviateThinkingLevel(level: string | undefined): string {
+	if (typeof level !== "string") return "---";
+	const normalized = level.trim().toLowerCase();
+	if (!normalized) return "---";
+	return THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toUpperCase();
+}
+
+function formatCostTrailing(total: number): string {
+	if (!Number.isFinite(total) || total <= 0) return "0.00$";
+	if (total < 0.005) return "<0.01$";
+	return `${total.toFixed(2)}$`;
+}
+
+// Bottom-border label: `-| MED | 15.9% (210k, 0.03$) |-`.
+function buildFrameStatusLabel(ctx: ExtensionContext, thinkingLevel: string | undefined): string {
+	const usage = ctx.getContextUsage();
+
+	const rawPercent = usage?.percent;
+	const percent =
+		typeof rawPercent === "number" && Number.isFinite(rawPercent)
+			? `${Math.max(0, rawPercent).toFixed(1)}%`
+			: "--";
+
+	const rawTokens = usage?.tokens;
+	const tokens = typeof rawTokens === "number" && Number.isFinite(rawTokens) ? formatTokens(rawTokens) : "--";
+
+	const cost = collectUsage(ctx).cost;
+
+	return `${abbreviateThinkingLevel(thinkingLevel)} | ${percent} (${tokens}, ${formatCostTrailing(cost)})`;
+}
+
+type FrameStatusProvider = () => string | undefined;
+
+/**
+ * Default editor with the working status embedded in the top border (pi >= 0.85)
+ * plus a status label rendered in the bottom-left corner of the frame.
+ */
+class FrameStatusEditor extends CustomEditor {
+	private readonly frameStatusProvider: FrameStatusProvider;
+
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, frameStatusProvider: FrameStatusProvider) {
+		super(tui, theme, keybindings, { embedWorkingStatus: true } as EditorOptions);
+		this.frameStatusProvider = frameStatusProvider;
+	}
+
+	renderBottomBorder(width: number, hiddenLineCount: number): string {
+		const fallback = super.renderBottomBorder(width, hiddenLineCount);
+		if (width <= 0) return fallback;
+
+		const label = this.frameStatusProvider();
+		if (!hasVisibleText(label)) return fallback;
+
+		const left = `-| ${label} |-`;
+		const scrollIndicator = hiddenLineCount > 0 ? ` ↓ ${hiddenLineCount} more ` : "";
+		const leftWidth = visibleWidth(left);
+		const scrollWidth = visibleWidth(scrollIndicator);
+
+		if (leftWidth + scrollWidth + 1 > width) {
+			return this.borderColor(truncateToWidth(left, width, ""));
+		}
+
+		const gap = width - leftWidth - scrollWidth;
+		const head = this.borderColor(`${left}${"─".repeat(gap)}`);
+		return scrollIndicator ? `${head}${this.borderColor(scrollIndicator)}` : head;
+	}
 }
 
 function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number; cost: number } {
@@ -495,6 +591,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let lastContext: ExtensionContext | undefined;
 	let footerOwnerContext: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
+	let editorOwnerContext: ExtensionContext | undefined;
+	let requestEditorRender: (() => void) | undefined;
+	let previousEditorFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
 
 	const renderSection = (
 		ids: string[],
@@ -549,6 +648,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	const requestRender = (): void => {
 		requestFooterRender?.();
+		requestEditorRender?.();
 	};
 
 	const installFooter = (ctx: ExtensionContext): void => {
@@ -628,9 +728,31 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		footerOwnerContext = ctx;
 	};
 
+	const installEditorFrameStatus = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI) return;
+		if (editorOwnerContext === ctx) return;
+
+		previousEditorFactory = ctx.ui.getEditorComponent();
+
+		const provider: FrameStatusProvider = () => {
+			const activeCtx = lastContext ?? ctx;
+			return buildFrameStatusLabel(activeCtx, pi.getThinkingLevel());
+		};
+
+		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
+			requestEditorRender = () => tui.requestRender();
+			return new FrameStatusEditor(tui, editorTheme, keybindings, provider);
+		});
+
+		editorOwnerContext = ctx;
+	};
+
 	const bindContextAndRender = (ctx: ExtensionContext): void => {
 		lastContext = ctx;
-		if (ctx.hasUI) installFooter(ctx);
+		if (ctx.hasUI) {
+			installFooter(ctx);
+			installEditorFrameStatus(ctx);
+		}
 		requestRender();
 	};
 
@@ -680,6 +802,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		}
 		if (footerOwnerContext === ctx) {
 			footerOwnerContext = undefined;
+		}
+		if (editorOwnerContext === ctx) {
+			if (ctx.hasUI) ctx.ui.setEditorComponent(previousEditorFactory);
+			editorOwnerContext = undefined;
+			previousEditorFactory = undefined;
+			requestEditorRender = undefined;
 		}
 		if (lastContext === ctx) {
 			lastContext = undefined;

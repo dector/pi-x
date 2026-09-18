@@ -49,6 +49,29 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - If no first-line producer exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
 
+### Editor frame label (bottom-left)
+
+`status-bar` also replaces the editor component with a `CustomEditor` subclass and
+renders a compact label in the bottom-left corner of the input frame:
+
+```
+-| MED | 15.9% (210k, 0.03$) |──────────────────────────
+```
+
+- Format: `-| <thinking> | <percent> (<tokens>, <cost>) |-`.
+- `thinking`: current thinking level abbreviated to 3-4 uppercase symbols
+  (`OFF`, `MIN`, `LOW`, `MED`, `HIGH`, `XHI`, `MAX`; unknown levels are truncated to 4 chars).
+- `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
+- `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
+- `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
+  Zero/unavailable renders as `0.00$`; non-zero below half a cent renders as `<0.01$`.
+- The frame label is independent of the second-line cost whitelist: it always shows
+  accumulated `usage.cost.total` from the active branch.
+- The working status spinner stays embedded in the top border (pi >= 0.85); the label
+  only overrides the bottom border. When the editor is scrolled, the `↓ N more`
+  indicator is kept on the right side of the label.
+- On `session_shutdown` the previously configured editor factory is restored.
+
 ## Implementation
 
 `status-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
