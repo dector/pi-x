@@ -55,6 +55,20 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   no cost suffix) to the first-line right section, after the producer items
   (that is, after the `SKILLS: n/m` counter when present).
 
+### Extra rows
+
+- Events:
+  - `px:status-bar:row:set` with `{ id, content, order? }`
+  - `px:status-bar:row:clear` with `{ id }`
+- Each registered id renders as its own footer line **after** the two built-in
+  lines, sorted by `order` ascending (default: stable first-registration order).
+- Content is rendered verbatim (already colored by the producer); each line is
+  sanitized (newlines/tabs collapsed) and truncated to the terminal width.
+- Empty/whitespace-only content is skipped. Rows are hidden while no producer
+  has published content.
+- Rows are display-mode agnostic (rendered in both `new` and `legacy`).
+- Current producer: [`proc`](../proc/README.md) (id `proc`, order `100`).
+
 ### Editor frame
 
 `status-bar` also replaces the editor component with a `CustomEditor` subclass.
@@ -183,6 +197,10 @@ First-line producers (example):
 
 - `repo-stats`
 - `attension-core` (special-case: when active, its content is still prefixed before cwd/branch)
+
+Extra-row producers:
+
+- `proc` (id `proc`)
 
 ## Commands
 

@@ -36,6 +36,8 @@ import {
 	type StatusBarFirstLineSetPayload,
 	type StatusBarLayout,
 	type StatusBarPingPayload,
+	type StatusBarRowClearPayload,
+	type StatusBarRowSetPayload,
 	type StatusBarSection,
 	type StatusBarSetPayload,
 } from "./contract";
@@ -480,6 +482,11 @@ interface FirstLineEntry {
 	order: number;
 }
 
+interface RowEntry {
+	content: string;
+	order: number;
+}
+
 function isSetPayload(value: unknown): value is StatusBarSetPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarSetPayload>;
@@ -513,6 +520,21 @@ function isFirstLineClearPayload(value: unknown): value is StatusBarFirstLineCle
 function isPingPayload(value: unknown): value is StatusBarPingPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarPingPayload>;
+	return typeof maybe.id === "string";
+}
+
+function isRowSetPayload(value: unknown): value is StatusBarRowSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarRowSetPayload>;
+	if (typeof maybe.id !== "string") return false;
+	if (typeof maybe.content !== "string") return false;
+	if (maybe.order !== undefined && typeof maybe.order !== "number") return false;
+	return true;
+}
+
+function isRowClearPayload(value: unknown): value is StatusBarRowClearPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarRowClearPayload>;
 	return typeof maybe.id === "string";
 }
 
@@ -978,7 +1000,9 @@ async function showStatusBarContractUI(
 export default function statusBarExtension(pi: ExtensionAPI): void {
 	const contentById = new Map<string, string>();
 	const firstLineById = new Map<string, FirstLineEntry>();
+	const rowById = new Map<string, RowEntry>();
 	let firstLineOrderCounter = 0;
+	let rowOrderCounter = 0;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
 	const { providerAliases, modelAliases } = loadAliases();
 	let lastContext: ExtensionContext | undefined;
@@ -1127,7 +1151,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
-					return line2.length > 0 ? [line1, line2] : [line1];
+					const lines = line2.length > 0 ? [line1, line2] : [line1];
+					for (const entry of [...rowById.values()].sort((a, b) => a.order - b.order)) {
+						const content = sanitizeStatusText(entry.content);
+						if (!hasVisibleText(content)) continue;
+						lines.push(truncateToWidth(content, width, theme.fg("dim", "...")));
+					}
+					return lines;
 				},
 			};
 		});
@@ -1253,6 +1283,20 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.events.on(STATUS_BAR_EVENTS.firstLineClear, (payload) => {
 		if (!isFirstLineClearPayload(payload)) return;
 		firstLineById.delete(payload.id);
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.rowSet, (payload) => {
+		if (!isRowSetPayload(payload)) return;
+		const existing = rowById.get(payload.id);
+		const order = Number.isFinite(payload.order) ? (payload.order as number) : (existing?.order ?? rowOrderCounter++);
+		rowById.set(payload.id, { content: payload.content, order });
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.rowClear, (payload) => {
+		if (!isRowClearPayload(payload)) return;
+		rowById.delete(payload.id);
 		requestRender();
 	});
 

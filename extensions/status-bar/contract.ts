@@ -3,6 +3,8 @@ export const STATUS_BAR_EVENTS = {
 	clear: "px:status-bar:clear",
 	firstLineSet: "px:status-bar:first-line:set",
 	firstLineClear: "px:status-bar:first-line:clear",
+	rowSet: "px:status-bar:row:set",
+	rowClear: "px:status-bar:row:clear",
 	ping: "px:status-bar:ping",
 	pong: "px:status-bar:pong",
 } as const;
@@ -48,6 +50,19 @@ export interface StatusBarFirstLineSetPayload {
 }
 
 export interface StatusBarFirstLineClearPayload {
+	id: string;
+}
+
+// Extra footer rows. Each registered id renders as its own line after the two
+// built-in status-bar lines, sorted by `order` (ascending) then registration.
+// Producers publish pre-colored content (the footer does not theme it).
+export interface StatusBarRowSetPayload {
+	id: string;
+	content: string;
+	order?: number;
+}
+
+export interface StatusBarRowClearPayload {
 	id: string;
 }
 
