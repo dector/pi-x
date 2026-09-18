@@ -83,8 +83,19 @@ function formatCost(total: number): string {
 	return `$${total.toFixed(2)}`;
 }
 
-// Thinking level shown in the editor frame label as arrow indicators.
-// Higher levels point up, lower levels point down; extra arrows mark extremes.
+// Thinking level abbreviations shown in the editor frame label (3-4 symbols, uppercase).
+const THINKING_LEVEL_ABBREVIATIONS: Record<string, string> = {
+	off: "OFF",
+	minimal: "MIN",
+	low: "LOW",
+	medium: "MED",
+	high: "HIGH",
+	xhigh: "XHI",
+	max: "MAX",
+};
+
+// Arrow indicators appended to the abbreviation. Higher levels point up, lower
+// levels point down; extra arrows mark extremes.
 const THINKING_LEVEL_INDICATORS: Record<string, string> = {
 	off: "✘",
 	minimal: "🡻🡻",
@@ -99,7 +110,9 @@ function formatThinkingLevel(level: string | undefined): string {
 	if (typeof level !== "string") return "---";
 	const normalized = level.trim().toLowerCase();
 	if (!normalized) return "---";
-	return THINKING_LEVEL_INDICATORS[normalized] ?? normalized.slice(0, 4).toUpperCase();
+	const abbreviation = THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toUpperCase();
+	const indicator = THINKING_LEVEL_INDICATORS[normalized];
+	return indicator ? `${abbreviation} ${indicator}` : abbreviation;
 }
 
 function formatCostTrailing(total: number): string {
@@ -108,7 +121,7 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
-// Bottom-border label: `🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
+// Bottom-border label: `MED 🡺 | 15.9% (210k, 0.03$)` (the frame adds `─`/`╰`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
 	ctx: ExtensionContext,
@@ -181,7 +194,7 @@ function renderBorderLine(
  * ```
  * ╭── <working status> ──────────────── <model> ──╮
  * │ ... input ...                                  │
- * ╰─ 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ────╯
+ * ╰─ MED 🡺 | 15.9% (210k, 0.03$) ──────── [SMART] ────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
