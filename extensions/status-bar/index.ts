@@ -58,11 +58,30 @@ const SAFE_MODE_ID = "safe-mode";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
-// While streaming, a single character of the top-left model label is
-// highlighted and the highlight bounces back and forth across the label. A short
-// fading trail follows behind it (in the direction of motion) to sell the move.
-const WORKING_BOUNCE_INTERVAL_MS = 60;
+// While streaming, the top-left model label is animated. Two styles are available:
+// - `comet`: a single character is highlighted and bounces back and forth across
+//   the label. A short fading trail follows behind it (in the direction of motion).
+// - `glitch`: a few random characters are replaced with matrix-like blocks
+//   (`▓▒░`) for a random number of ticks each.
+const WORKING_COMET_INTERVAL_MS = 60;
 const WORKING_TRAIL_LENGTH = 3;
+const WORKING_GLITCH_INTERVAL_MS = 70;
+// Matrix-like replacement glyphs. Denser glyphs render brighter (see depth map).
+const WORKING_GLITCH_GLYPHS = ["▓", "▒", "░"] as const;
+const WORKING_GLITCH_DEPTH: Record<string, number> = { "▓": 0, "▒": 1, "░": 2 };
+// Glitch cells spawn in this range and live for this many ticks. The cap keeps
+// only a few characters corrupted at once so the label stays readable.
+const WORKING_GLITCH_SPAWN_MIN = 1;
+const WORKING_GLITCH_SPAWN_MAX = 2;
+const WORKING_GLITCH_MAX_ACTIVE = 3;
+const WORKING_GLITCH_STAY_MIN = 1;
+const WORKING_GLITCH_STAY_MAX = 4;
+
+const WORKING_ANIMATIONS = ["comet", "glitch"] as const;
+type WorkingAnimation = (typeof WORKING_ANIMATIONS)[number];
+// Source-level default for the streaming animation. Override for a quick preview
+// with `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`.
+const WORKING_ANIMATION: WorkingAnimation = "comet";
 
 // Editor frame side borders (rounded corners).
 const FRAME_BORDER = {
@@ -178,8 +197,10 @@ interface FrameStatusEditorOptions {
 	bottomRight?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
+	/** Streaming animation style for the top-left model label. */
+	getWorkingAnimation: () => WorkingAnimation;
 	/**
-	 * Color for the bouncing working highlight. `depth` 0 is the leading character
+	 * Color for the working highlight. `depth` 0 is the leading character
 	 * (brightest); higher depths are the trailing fade behind the direction of motion.
 	 */
 	highlightColor?: (text: string, depth: number) => string;
@@ -215,9 +236,9 @@ function renderBorderLine(
 /**
  * Default editor with rounded side borders and status labels rendered in the
  * frame corners. In `new` display mode the top-left corner shows the active
- * provider/model. While streaming, one character of that label is highlighted
- * and the highlight bounces back and forth across the label (no spinner, no
- * `Working` word). Editor content is inset by one column on each side
+ * provider/model. While streaming, the label runs the configured animation
+ * (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
+ * by one column on each side
  * (`│ <input> │`):
  *
  * ```
@@ -231,11 +252,16 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftProvider?: FrameStatusProvider;
 	private readonly bottomRightProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
+	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
 	private working = false;
 	private workingTick = 0;
 	private workingTimer?: ReturnType<typeof setInterval>;
+	/** Active glitch cells keyed by character index, with ticks left to live. */
+	private readonly glitchCells = new Map<number, { glyph: string; remaining: number }>();
+	/** Length of the model label from the last render, used to place glitch cells. */
+	private lastModelLabelLength = 0;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: FrameStatusEditorOptions) {
 		super(tui, theme, keybindings, { embedWorkingStatus: true, paddingX: 1 } as EditorOptions);
@@ -244,10 +270,11 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftProvider = options.bottomLeft;
 		this.bottomRightProvider = options.bottomRight;
 		this.topLeftProvider = options.topLeft;
+		this.getWorkingAnimation = options.getWorkingAnimation;
 		this.highlightColor = options.highlightColor;
 	}
 
-	/** Track streaming state and drive the bouncing highlight animation. */
+	/** Track streaming state and drive the model-label animation. */
 	setWorkingStatusIndicator(indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]): void {
 		super.setWorkingStatusIndicator(indicator);
 		this.working = indicator !== undefined && indicator !== null;
@@ -264,15 +291,44 @@ class FrameStatusEditor extends CustomEditor {
 			clearInterval(this.workingTimer);
 			this.workingTimer = undefined;
 		}
+		this.glitchCells.clear();
 	}
 
 	private startWorkingAnimation(): void {
 		this.stopWorkingAnimation();
 		this.workingTick = 0;
+		const interval =
+			this.getWorkingAnimation() === "glitch" ? WORKING_GLITCH_INTERVAL_MS : WORKING_COMET_INTERVAL_MS;
 		this.workingTimer = setInterval(() => {
 			this.workingTick += 1;
+			if (this.getWorkingAnimation() === "glitch") this.advanceGlitch();
 			if (this.isBorderMode()) this.frameTui.requestRender();
-		}, WORKING_BOUNCE_INTERVAL_MS);
+		}, interval);
+	}
+
+	/**
+	 * Expire finished glitch cells, then corrupt a random few new characters.
+	 * Each cell keeps its own lifetime so cells appear and vanish out of sync.
+	 */
+	private advanceGlitch(): void {
+		for (const [index, cell] of this.glitchCells) {
+			cell.remaining -= 1;
+			if (cell.remaining <= 0) this.glitchCells.delete(index);
+		}
+
+		const length = this.lastModelLabelLength;
+		if (length <= 0) return;
+
+		const spawn = randomInt(WORKING_GLITCH_SPAWN_MIN, WORKING_GLITCH_SPAWN_MAX);
+		for (let i = 0; i < spawn; i++) {
+			if (this.glitchCells.size >= WORKING_GLITCH_MAX_ACTIVE) break;
+			const index = randomInt(0, length - 1);
+			if (this.glitchCells.has(index)) continue;
+			this.glitchCells.set(index, {
+				glyph: WORKING_GLITCH_GLYPHS[randomInt(0, WORKING_GLITCH_GLYPHS.length - 1)]!,
+				remaining: randomInt(WORKING_GLITCH_STAY_MIN, WORKING_GLITCH_STAY_MAX),
+			});
+		}
 	}
 
 	private isBorderMode(): boolean {
@@ -292,16 +348,32 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Color the model label while streaming: a leading highlight bounces 0..n-1..0,
-	 * followed by a fading trail of up to `WORKING_TRAIL_LENGTH` characters behind
-	 * the direction of motion. When idle, every character uses the border color.
+	 * Color the model label while streaming. `comet` moves a leading highlight
+	 * 0..n-1..0 with a fading trail; `glitch` swaps a few characters for matrix
+	 * blocks. When idle, every character uses the border color.
 	 */
 	private renderModelLabel(label: string): string {
 		const chars = Array.from(sanitizeStatusText(label));
 		if (chars.length === 0) return "";
+		this.lastModelLabelLength = chars.length;
+
+		const highlight = this.highlightColor ?? ((text: string) => this.borderColor(text));
+
+		if (this.working && this.getWorkingAnimation() === "glitch") {
+			// Drop cells that no longer point at a character (e.g. after a model switch).
+			for (const index of this.glitchCells.keys()) {
+				if (index >= chars.length) this.glitchCells.delete(index);
+			}
+			return chars
+				.map((ch, i) => {
+					const cell = this.glitchCells.get(i);
+					if (!cell) return this.borderColor(ch);
+					return highlight(cell.glyph, WORKING_GLITCH_DEPTH[cell.glyph] ?? 0);
+				})
+				.join("");
+		}
 
 		const bounce = this.working ? bounceState(chars.length, this.workingTick) : undefined;
-		const highlight = this.highlightColor ?? ((text: string) => this.borderColor(text));
 		return chars
 			.map((ch, i) => {
 				if (!bounce) return this.borderColor(ch);
@@ -313,7 +385,7 @@ class FrameStatusEditor extends CustomEditor {
 
 	/**
 	 * Top-left corner label: the active provider/model inside `-< ... >-` tacks.
-	 * While streaming one character is highlighted and bounces across the label.
+	 * While streaming the label runs the configured animation.
 	 */
 	private topLeftSegment(): string {
 		const modelLabel = this.topLeftProvider?.();
@@ -693,6 +765,11 @@ interface BounceState {
 	direction: 1 | -1;
 }
 
+/** Inclusive random integer in `[min, max]`. */
+function randomInt(min: number, max: number): number {
+	return min + Math.floor(Math.random() * (max - min + 1));
+}
+
 /** Ping-pong state driven by a monotonically increasing tick. */
 function bounceState(length: number, tick: number): BounceState {
 	if (length <= 1) return { index: 0, direction: 1 };
@@ -811,6 +888,18 @@ function normalizeDisplayMode(value: unknown): StatusBarDisplayMode | undefined 
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
 	return isDisplayMode(normalized) ? normalized : undefined;
+}
+
+function normalizeWorkingAnimation(value: unknown): WorkingAnimation | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	return (WORKING_ANIMATIONS as readonly string[]).includes(normalized)
+		? (normalized as WorkingAnimation)
+		: undefined;
+}
+
+function loadWorkingAnimation(): WorkingAnimation {
+	return normalizeWorkingAnimation(process.env.PI_STATUS_BAR_WORKING_ANIMATION) ?? WORKING_ANIMATION;
 }
 
 function loadDisplayMode(): StatusBarDisplayMode {
@@ -1212,6 +1301,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let firstLineOrderCounter = 0;
 	let rowOrderCounter = 0;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
+	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
 	let lastContext: ExtensionContext | undefined;
 	let footerOwnerContext: ExtensionContext | undefined;
@@ -1393,6 +1483,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
 			bottomRight: () => contentById.get(SAFE_MODE_ID),
 			topLeft: () => buildBorderModelLabel(activeContext(), providerAliases, modelAliases),
+			getWorkingAnimation: () => workingAnimation,
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));

@@ -116,13 +116,23 @@ labels are rendered in the frame corners:
   border color. Hidden when no model is active. Both parts go through the exact-name
   alias tables (see [Aliases](#aliases)), so the example above can render as
   `cdx/5.6-sol` or `opencode/4.1-flash`.
-  - While streaming, a leading character of the model label is highlighted in the
-    theme `text` color (bold) and bounces back and forth across the label. A fading
-    3-character trail follows behind the direction of motion, blending from `text`
-    into the label's own border color (the thinking-level color, e.g. purple), so the
-    tail dissolves into the label: `[c]dx/5.6-sol` -> `c[d]x/5.6-sol` -> ... ->
-    `cdx/5.6-so[l]` -> ... -> `[c]dx/5.6-sol`. No spinner is shown and the word
-    `Working` never appears. The highlight advances every 60 ms.
+  - While streaming, the label runs one of two animations (no spinner is shown and
+    the word `Working` never appears):
+    - `comet` — a leading character is highlighted in the theme `text` color
+      (bold) and bounces back and forth across the label. A fading 3-character
+      trail follows behind the direction of motion, blending from `text` into the
+      label's own border color (the thinking-level color, e.g. purple), so the tail
+      dissolves into the label: `[c]dx/5.6-sol` -> `c[d]x/5.6-sol` -> ... ->
+      `cdx/5.6-so[l]` -> ... -> `[c]dx/5.6-sol`. Advances every 60 ms.
+    - `glitch` — a few random characters (up to 3 at once) are swapped for
+      matrix-like blocks (`▓▒░`) for a random number of ticks each. Denser glyphs
+      render brighter, so `▓` uses the same bright lead color as `comet` while
+      `▒`/`░` fade toward the border color. Cells appear and vanish out of sync.
+      Advances every 70 ms.
+
+    The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
+    `comet`) and can be overridden for a quick preview with
+    `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
 - Corner labels are prefixed with a space and followed by one border dash before
   the corner. They are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits to the left of the
