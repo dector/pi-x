@@ -123,6 +123,14 @@ function formatCostTrailing(total: number): string {
 	return `${total.toFixed(2)}$`;
 }
 
+// Three-decimal variant used for the session+subagent total, so small subagent
+// spend stays visible next to the two-decimal session cost.
+function formatCostTrailingPrecise(total: number): string {
+	if (!Number.isFinite(total) || total <= 0) return "0.000$";
+	if (total < 0.0005) return "<0.001$";
+	return `${total.toFixed(3)}$`;
+}
+
 // Bottom-border label: `🢁 HIGH · 15.9% 210k · 0.03$` (the frame adds `─`/`╰`).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameStatusLabel(
@@ -142,9 +150,11 @@ function buildFrameStatusLabel(
 
 	const cost = collectUsage(ctx).cost;
 	const subagentCost = collectSubagentCost(ctx);
+	const totalCost = cost + subagentCost;
+	// Show session | total only when the extra precision actually differs.
 	const costLabel =
-		subagentCost > 0
-			? `${formatCostTrailing(cost)} | ${formatCostTrailing(cost + subagentCost)}`
+		cost.toFixed(3) !== totalCost.toFixed(3)
+			? `${formatCostTrailing(cost)} | ${formatCostTrailingPrecise(totalCost)}`
 			: formatCostTrailing(cost);
 
 	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} ${tokens} · ${costLabel}`;
