@@ -118,10 +118,11 @@ labels are rendered in the frame corners:
   `cdx/5.6-sol` or `opencode/4.1-flash`.
   - While streaming, a leading character of the model label is highlighted in the
     theme `text` color (bold) and bounces back and forth across the label. A fading
-    3-character trail follows behind the direction of motion (`text` -> `muted` ->
-    `dim`), for example `[c]dx/5.6-sol` -> `c[d]x/5.6-sol` -> ... -> `cdx/5.6-so[l]`
-    -> ... -> `[c]dx/5.6-sol`. No spinner is shown and the word `Working` never
-    appears. The highlight advances every 120 ms.
+    3-character trail follows behind the direction of motion, blending from `text`
+    into the label's own border color (the thinking-level color, e.g. purple), so the
+    tail dissolves into the label: `[c]dx/5.6-sol` -> `c[d]x/5.6-sol` -> ... ->
+    `cdx/5.6-so[l]` -> ... -> `[c]dx/5.6-sol`. No spinner is shown and the word
+    `Working` never appears. The highlight advances every 60 ms.
 - Corner labels are prefixed with a space and followed by one border dash before
   the corner. They are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits to the left of the

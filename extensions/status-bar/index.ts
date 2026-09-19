@@ -6,6 +6,7 @@ import {
 	DynamicBorder,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -60,7 +61,7 @@ const MIN_CORNER_LABEL_GAP = 6;
 // While streaming, a single character of the top-left model label is
 // highlighted and the highlight bounces back and forth across the label. A short
 // fading trail follows behind it (in the direction of motion) to sell the move.
-const WORKING_BOUNCE_INTERVAL_MS = 120;
+const WORKING_BOUNCE_INTERVAL_MS = 60;
 const WORKING_TRAIL_LENGTH = 3;
 
 // Editor frame side borders (rounded corners).
@@ -701,6 +702,76 @@ function bounceState(length: number, tick: number): BounceState {
 	return { index: period - position, direction: -1 };
 }
 
+interface Rgb {
+	r: number;
+	g: number;
+	b: number;
+}
+
+/** Theme color token for each thinking level (the editor border color). */
+const THINKING_COLOR_TOKENS: Record<string, ThemeColor> = {
+	off: "thinkingOff",
+	minimal: "thinkingMinimal",
+	low: "thinkingLow",
+	medium: "thinkingMedium",
+	high: "thinkingHigh",
+	xhigh: "thinkingXhigh",
+	max: "thinkingMax",
+};
+
+function rgbFrom256(index: number): Rgb {
+	if (index < 16) {
+		const system: Rgb[] = [
+			{ r: 0, g: 0, b: 0 },
+			{ r: 128, g: 0, b: 0 },
+			{ r: 0, g: 128, b: 0 },
+			{ r: 128, g: 128, b: 0 },
+			{ r: 0, g: 0, b: 128 },
+			{ r: 128, g: 0, b: 128 },
+			{ r: 0, g: 128, b: 128 },
+			{ r: 192, g: 192, b: 192 },
+			{ r: 128, g: 128, b: 128 },
+			{ r: 255, g: 0, b: 0 },
+			{ r: 0, g: 255, b: 0 },
+			{ r: 255, g: 255, b: 0 },
+			{ r: 0, g: 0, b: 255 },
+			{ r: 255, g: 0, b: 255 },
+			{ r: 0, g: 255, b: 255 },
+			{ r: 255, g: 255, b: 255 },
+		];
+		return system[index] ?? { r: 0, g: 0, b: 0 };
+	}
+	if (index < 232) {
+		const steps = [0, 95, 135, 175, 215, 255];
+		const i = index - 16;
+		return { r: steps[Math.floor(i / 36)]!, g: steps[Math.floor(i / 6) % 6]!, b: steps[i % 6]! };
+	}
+	const level = 8 + (index - 232) * 10;
+	return { r: level, g: level, b: level };
+}
+
+/** Parse an ANSI foreground escape (truecolor or 256-color) back to RGB. */
+function parseAnsiRgb(ansi: string): Rgb | undefined {
+	const truecolor = /38;2;(\d+);(\d+);(\d+)/.exec(ansi);
+	if (truecolor) return { r: Number(truecolor[1]), g: Number(truecolor[2]), b: Number(truecolor[3]) };
+	const indexed = /38;5;(\d+)/.exec(ansi);
+	if (indexed) return rgbFrom256(Number(indexed[1]));
+	return undefined;
+}
+
+function mixRgb(from: Rgb, to: Rgb, t: number): Rgb {
+	const clamped = Math.max(0, Math.min(1, t));
+	return {
+		r: Math.round(from.r + (to.r - from.r) * clamped),
+		g: Math.round(from.g + (to.g - from.g) * clamped),
+		b: Math.round(from.b + (to.b - from.b) * clamped),
+	};
+}
+
+function fgRgb(rgb: Rgb, text: string): string {
+	return `\x1b[38;2;${rgb.r};${rgb.g};${rgb.b}m${text}\x1b[39m`;
+}
+
 function isDisplayMode(value: unknown): value is StatusBarDisplayMode {
 	return typeof value === "string" && (STATUS_BAR_DISPLAY_MODES as readonly string[]).includes(value);
 }
@@ -1148,6 +1219,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let editorOwnerContext: ExtensionContext | undefined;
 	let requestEditorRender: (() => void) | undefined;
 	let frameEditor: FrameStatusEditor | undefined;
+	const ansiRgbCache = new Map<string, Rgb | undefined>();
+	const ansiRgb = (ansi: string): Rgb | undefined => {
+		if (ansiRgbCache.has(ansi)) return ansiRgbCache.get(ansi);
+		const rgb = parseAnsiRgb(ansi);
+		ansiRgbCache.set(ansi, rgb);
+		return rgb;
+	};
 	let previousEditorFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
 
 	const activeLayout = (): StatusBarLayout =>
@@ -1318,9 +1396,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));
-				if (depth === 1) return theme.fg("text", text);
-				if (depth === 2) return theme.fg("muted", text);
-				return theme.fg("dim", text);
+				const lead = ansiRgb(theme.getFgAnsi("text"));
+				const baseToken = THINKING_COLOR_TOKENS[pi.getThinkingLevel()] ?? "thinkingOff";
+				const base = ansiRgb(theme.getFgAnsi(baseToken));
+				if (!lead || !base) {
+					if (depth === 1) return theme.fg("text", text);
+					if (depth === 2) return theme.fg("muted", text);
+					return theme.fg("dim", text);
+				}
+				// Fade the trail from the bright lead into the label's own border color.
+				return fgRgb(mixRgb(lead, base, depth / (WORKING_TRAIL_LENGTH + 1)), text);
 			},
 		};
 

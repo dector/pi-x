@@ -162,7 +162,7 @@ editor padding (`paddingX: 1`), and renders:
   includes every subagent in the branch, nested ones included, and is omitted
   while the total rounds to the same three-decimal value as the session cost.
 - bottom-right: `safe-mode` producer content (for example `SMART`)
-- top-left: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. While streaming, a leading character is highlighted in the theme `text` color (bold) and bounces back and forth across the label, followed by a fading 3-character trail (`text` -> `muted` -> `dim`) behind the direction of motion; no spinner and no `Working` word.
+- top-left: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. While streaming, a leading character is highlighted in the theme `text` color (bold) and bounces back and forth across the label, followed by a fading 3-character trail that blends from `text` into the label's border (thinking-level) color so the tail dissolves into the label; no spinner and no `Working` word.
 
 Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
 Labels are dropped when the terminal is too narrow.
