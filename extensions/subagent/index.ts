@@ -40,7 +40,7 @@ const PER_TASK_OUTPUT_CAP = 50 * 1024;
 const HUB_ID = "subagent";
 const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
-const HUB_PERMISSION_TIMEOUT_MS = 5_000;
+const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 const PERM_AGENT = "perm:agent";
 
 function newHubRequestId(): string {

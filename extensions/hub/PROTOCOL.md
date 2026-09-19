@@ -12,7 +12,8 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 | `hub:unregister` | client → hub | `{ id }` |
 | `hub:ask` | client → hub | `{ id, from?, ctx?, cap: CapRequest[] }` |
 | `hub:request` | hub → provider | `{ id, from?, ctx?, cap: CapRequest[], targets: string[] }` |
-| `hub:answer` | provider → client | `{ id, results: CapResult[] }` |
+| `hub:reply` | provider → hub | `{ id, from?, results: CapResult[] }` |
+| `hub:answer` | hub → client | `{ id, results: CapResult[] }` |
 
 - `id` on `hub:ask` is a correlation id; the same `id` comes back on `hub:answer`.
 - Clients may register at any time. Registration is idempotent (upsert by `id`).
@@ -63,12 +64,20 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 
 ```
 requester ──hub:ask──> hub ──hub:request──> provider
-requester <────────────hub:answer────────── provider
+requester <──hub:answer── hub <──hub:reply── provider
 ```
+
+## Arbitration
+
+- Providers answer on `hub:reply`; hub collects and emits one `hub:answer`.
+- Per capability, the most restrictive result wins: `block` > `confirm` > `allow`.
+- A capability no provider answered becomes `block` (`reason: "no provider answered"`).
+- If no provider is registered for any requested capability, hub answers `block`
+  immediately (`reason: "no hub provider"`).
+- Hub finalizes when every requested capability is answered or every target has replied.
+  A pending request is dropped after 30 minutes.
 
 ## Open
 
-- Arbitration when several providers can answer one `what`.
-- Behavior when no provider is registered (deny? prompt? allow?).
-- Timeout and fallback.
 - Is `confirm` handled by the provider (UI there) or returned to the requester?
+- Provider replies are not attributed beyond `from`; no trust check.

@@ -3,6 +3,7 @@ export const HUB_CHANNELS = {
 	unregister: "hub:unregister",
 	ask: "hub:ask",
 	request: "hub:request",
+	reply: "hub:reply",
 	answer: "hub:answer",
 } as const;
 
@@ -44,6 +45,12 @@ export type HubAskPayload = {
 
 export type HubRequestPayload = HubAskPayload & {
 	targets: string[];
+};
+
+export type HubReplyPayload = {
+	id: string;
+	from?: string;
+	results: CapResult[];
 };
 
 export type HubAnswerPayload = {

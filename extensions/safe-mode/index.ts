@@ -40,7 +40,7 @@ const HUB_ID = "safe-mode";
 const HUB_REGISTER_EVENT = "hub:register";
 const HUB_UNREGISTER_EVENT = "hub:unregister";
 const HUB_REQUEST_EVENT = "hub:request";
-const HUB_ANSWER_EVENT = "hub:answer";
+const HUB_REPLY_EVENT = "hub:reply";
 const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:net", "perm:agent"] };
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
@@ -1257,7 +1257,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			}
 		}
 
-		if (results.length > 0) pi.events.emit(HUB_ANSWER_EVENT, { id: request.id, results });
+		pi.events.emit(HUB_REPLY_EVENT, { id: request.id, from: HUB_ID, results });
 	});
 
 	pi.on("before_agent_start", async (event) => {
