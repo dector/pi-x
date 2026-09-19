@@ -94,6 +94,7 @@ extensions=(
   "notes"
   "git"
   "pi-nvim"
+  "subagent"
 )
 
 installed_extensions=()
@@ -141,6 +142,49 @@ if [[ -d "$THEMES_SRC" ]]; then
   rsync -a "$THEMES_SRC"/ "$THEMES_DEST"/
 else
   echo "No themes directory found, skipping themes."
+fi
+
+# Some extensions ship agent definitions and prompt templates in their own
+# subdirectories. Pi loads those from top-level ~/.pi/agent/{agents,prompts},
+# not from the extension directory, so copy them out explicitly.
+AGENTS_DEST="${PI_AGENTS_DIR:-$HOME/.pi/agent/agents}"
+PROMPTS_DEST="${PI_PROMPTS_DIR:-$HOME/.pi/agent/prompts}"
+
+has_agents=0
+has_prompts=0
+for ext_dir in "$SRC_ROOT"/*/; do
+  if [[ -d "$ext_dir/agents" ]]; then
+    has_agents=1
+  fi
+  if [[ -d "$ext_dir/prompts" ]]; then
+    has_prompts=1
+  fi
+done
+
+if [[ $has_agents -eq 1 ]]; then
+  echo "Syncing agent definitions into: $AGENTS_DEST"
+  mkdir -p "$AGENTS_DEST"
+  for ext_dir in "$SRC_ROOT"/*/; do
+    if [[ -d "$ext_dir/agents" ]]; then
+      # No --delete: keep user agents that this repo does not manage.
+      rsync -a "$ext_dir/agents"/ "$AGENTS_DEST"/
+    fi
+  done
+else
+  echo "No extension agent directories found, skipping agents."
+fi
+
+if [[ $has_prompts -eq 1 ]]; then
+  echo "Syncing prompt templates into: $PROMPTS_DEST"
+  mkdir -p "$PROMPTS_DEST"
+  for ext_dir in "$SRC_ROOT"/*/; do
+    if [[ -d "$ext_dir/prompts" ]]; then
+      # No --delete: keep user prompts that this repo does not manage.
+      rsync -a "$ext_dir/prompts"/ "$PROMPTS_DEST"/
+    fi
+  done
+else
+  echo "No extension prompt directories found, skipping prompts."
 fi
 
 echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."
