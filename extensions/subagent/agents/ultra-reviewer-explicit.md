@@ -1,6 +1,7 @@
 ---
 name: ultra-reviewer-explicit
 description: "ULTRA-REVIEW ONLY — the name says 'explicit' on purpose. Never select this agent unless the user EXPLICITLY asks for an ultra-review (e.g. 'ultra-review', 'ultra-review this', 'run the ultra-reviewer'). Do NOT use it for normal/regular review requests or as a stronger default reviewer; use `reviewer` for those. This is an expensive, deep, adversarial review pass powered by gpt-5.6-sol. Only invoke when the user's own words request it."
+short_description: "DEEP adversarial review on gpt-5.6-sol. ONLY when the user explicitly asks for an 'ultra-review'. Never auto-select."
 tools: read, grep, find, ls, bash
 model: openai-codex/gpt-5.6-sol
 thinking: max

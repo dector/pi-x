@@ -29,7 +29,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -480,6 +480,17 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	// Surface agent names + brief descriptions in the tool description so the
+	// model can choose deliberately without trial and error. Important for
+	// opt-in agents like `ultra-reviewer-explicit`. Uses user-scope only, which
+	// matches the default agentScope. Computed once at registration; the agent
+	// list is re-discovered per invocation for actual execution.
+	const registeredAgents = formatAgentList(discoverAgents(process.cwd(), "user").agents, 50);
+	const agentListText =
+		registeredAgents.remaining > 0
+			? `${registeredAgents.text} (+${registeredAgents.remaining} more)`
+			: registeredAgents.text;
+
 	// Ask the hub for a permission decision. Resolves with the returned action,
 	// or undefined when no provider answers within the timeout.
 	const askHubPermission = (
@@ -524,6 +535,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),

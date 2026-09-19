@@ -1,6 +1,7 @@
 ---
 name: reviewer
 description: Code review specialist for quality and security analysis
+short_description: Normal code review (quality/security). Use this for regular review requests.
 tools: read, grep, find, ls, bash
 model: opencode-go/deepseek-v4.1-flash
 thinking: max

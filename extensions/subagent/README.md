@@ -131,6 +131,7 @@ Agents are markdown files with YAML frontmatter:
 ---
 name: my-agent
 description: What this agent does
+short_description: Brief one-liner shown in the subagent tool description
 tools: read, grep, find, ls
 model: opencode-go/deepseek-v4.1-flash
 thinking: high
@@ -138,6 +139,11 @@ thinking: high
 
 System prompt for the agent goes here.
 ```
+
+`description` is the full, human-authored summary. `short_description` is an optional
+brief version surfaced to the parent model in the `subagent` tool description, so it
+knows which agent to pick without trial and error. Keep it short to save tokens; when
+omitted, the full `description` is used instead.
 
 When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
 When `thinking` is omitted but `model` is set, the model's default thinking level is used.

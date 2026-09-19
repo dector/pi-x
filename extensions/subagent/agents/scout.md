@@ -1,6 +1,7 @@
 ---
 name: scout
 description: Fast codebase recon that returns compressed context for handoff to other agents
+short_description: Fast codebase recon; returns compressed context for handoff.
 tools: read, grep, find, ls, bash
 model: opencode-go/deepseek-v4.1-flash
 thinking: low

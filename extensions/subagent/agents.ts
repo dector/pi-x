@@ -12,6 +12,7 @@ export type AgentScope = "user" | "project" | "both";
 export interface AgentConfig {
 	name: string;
 	description: string;
+	shortDescription?: string;
 	tools?: string[];
 	model?: string;
 	thinking?: ThinkingLevel;
@@ -36,6 +37,7 @@ export interface AgentDiscoveryResult {
 type AgentFrontmatter = {
 	name?: unknown;
 	description?: unknown;
+	short_description?: unknown;
 	tools?: unknown;
 	model?: unknown;
 	thinking?: unknown;
@@ -111,6 +113,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
+			shortDescription:
+				typeof frontmatter.short_description === "string" ? frontmatter.short_description : undefined,
 			tools: parseToolList(frontmatter.tools),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 			thinking: parseThinkingLevel(frontmatter.thinking),
@@ -164,12 +168,18 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
 }
 
+/**
+ * Render a compact, token-cheap agent list for the tool description.
+ *
+ * Prefers `short_description` (a frontmatter field meant only for this list)
+ * and falls back to the full `description` when it is absent.
+ */
 export function formatAgentList(agents: AgentConfig[], maxItems: number): { text: string; remaining: number } {
 	if (agents.length === 0) return { text: "none", remaining: 0 };
 	const listed = agents.slice(0, maxItems);
 	const remaining = agents.length - listed.length;
 	return {
-		text: listed.map((a) => `${a.name} (${a.source}): ${a.description}`).join("; "),
+		text: listed.map((a) => `${a.name}: ${a.shortDescription ?? a.description}`).join("; "),
 		remaining,
 	};
 }

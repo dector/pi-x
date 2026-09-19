@@ -1,6 +1,7 @@
 ---
 name: planner
 description: Creates implementation plans from context and requirements
+short_description: Turns context + requirements into a step-by-step implementation plan. Read-only.
 tools: read, grep, find, ls
 model: opencode-go/deepseek-v4.1-flash
 thinking: high
