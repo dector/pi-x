@@ -33,6 +33,7 @@ import { ApprovalQueue } from "./approval-queue.ts";
 import { registerChildControls } from "./control.ts";
 import { applyRpcStreamEvent, emptyUsage, type RpcStreamState } from "./events.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
+import { sendControl, SubagentRegistry } from "./registry.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import type { SingleResult, SubagentDetails } from "./types.ts";
 
@@ -273,6 +274,7 @@ async function runSingleAgent(
 	activeChildren: Set<RpcChild>,
 	approvalQueue: ApprovalQueue,
 	parentContext: ExtensionContext,
+	registry: SubagentRegistry,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -306,7 +308,7 @@ async function runSingleAgent(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1,
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
@@ -468,6 +470,15 @@ async function runSingleAgent(
 			},
 		});
 		activeChildren.add(child);
+		registry.start({
+			runId,
+			agentName: agent.name,
+			task,
+			cwd: cwd ?? defaultCwd,
+			startedAt: Date.now(),
+			result: currentResult,
+			child,
+		});
 
 		const abort = () => {
 			wasAborted = true;
@@ -519,6 +530,7 @@ async function runSingleAgent(
 	} finally {
 		removeAbortListener?.();
 		approvalQueue.cancelRun(runId);
+		registry.complete(runId);
 		if (child) {
 			await child.terminate();
 			activeChildren.delete(child);
@@ -568,7 +580,7 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	registerChildControls(pi);
+	const childControl = registerChildControls(pi);
 	// Surface agent names + brief descriptions in the tool description so the
 	// model can choose deliberately without trial and error. Important for
 	// opt-in agents like `ultra-reviewer-explicit`. Uses user-scope only, which
@@ -577,8 +589,79 @@ export default function (pi: ExtensionAPI) {
 	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
 	const activeChildren = new Set<RpcChild>();
 	const approvalQueue = new ApprovalQueue();
+	const registry = new SubagentRegistry();
 	let nextRunNumber = 1;
 	const newRunId = () => `sa-${nextRunNumber++}`;
+
+	if (!childControl) {
+		pi.registerCommand("px:agents", {
+			description: "Manage active and recent subagent runs",
+			handler: async (_args, ctx) => {
+				if (!ctx.hasUI) return;
+				while (true) {
+					const runs = registry.list();
+					if (runs.length === 0) {
+						ctx.ui.notify("No subagent runs yet.", "info");
+						return;
+					}
+					const labels = runs.map((run) => {
+						const elapsed = Math.max(0, Math.floor(((run.completedAt ?? Date.now()) - run.startedAt) / 1000));
+						const mode = run.result.effectiveMode?.toUpperCase() ?? "UNKNOWN";
+						const state = run.completedAt ? (isFailedResult(run.result) ? "FAILED" : "COMPLETED") : (run.result.state ?? "running").toUpperCase();
+						return `${run.agentName} [${run.runId}]  ${state}  ${mode}  ${Math.floor(elapsed / 60).toString().padStart(2, "0")}:${(elapsed % 60).toString().padStart(2, "0")}`;
+					});
+					labels.push("Close");
+					const selected = await ctx.ui.select("Subagent manager", labels);
+					if (!selected || selected === "Close") return;
+					const run = runs[labels.indexOf(selected)];
+					if (!run) continue;
+					const actions = run.completedAt
+						? ["Details", "Back"]
+						: ["Details", "Configure permissions", "Pause", "Resume", "Abort", "Back"];
+					const action = await ctx.ui.select(`${run.agentName} [${run.runId}]`, actions);
+					if (!action || action === "Back") continue;
+					if (action === "Details") {
+						const details = [
+							`Agent: ${run.agentName} [${run.runId}]`,
+							`State: ${run.result.state ?? "unknown"}`,
+							`PID: ${run.child?.pid ?? "n/a"}`,
+							`CWD: ${run.cwd}`,
+							`Inherited: ${run.result.inheritedMode ?? "unknown"}`,
+							`Effective: ${run.result.effectiveMode ?? "unknown"}${run.result.outerAccess ? "+" : ""}`,
+							`Task: ${run.task}`,
+							...(run.result.diagnostics ?? []).map((item) => `Diagnostic: ${item}`),
+						].join("\n");
+						await ctx.ui.editor(`Subagent details: ${run.runId}`, details);
+						continue;
+					}
+					try {
+						if (action === "Pause") {
+							run.result.state = "pause-requested";
+							await sendControl(run, "pause");
+						} else if (action === "Resume") {
+							run.result.state = "resuming";
+							await sendControl(run, "resume");
+						} else if (action === "Configure permissions") {
+							const mode = await ctx.ui.select("Safe mode", ["paranoid", "reader", "smart", "yolo"]);
+							if (!mode) continue;
+							const outerChoice = await ctx.ui.select("Outer access", ["off", "on"]);
+							if (!outerChoice) continue;
+							if ((mode === "yolo" || outerChoice === "on") && !(await ctx.ui.confirm("Confirm child permissions", `Set ${run.runId} to ${mode}${outerChoice === "on" ? "+" : ""}?`))) continue;
+							await sendControl(run, `mode ${mode} outer-${outerChoice}`);
+						} else if (action === "Abort") {
+							if (!(await ctx.ui.confirm("Abort subagent", `Abort ${run.agentName} [${run.runId}]?`))) continue;
+							run.result.state = "aborting";
+							try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
+							await run.child?.terminate();
+						}
+					} catch (error) {
+						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					}
+				}
+			},
+		});
+	}
+
 	pi.on("session_shutdown", async () => {
 		await Promise.all([...activeChildren].map((child) => child.terminate()));
 		activeChildren.clear();
@@ -745,6 +828,7 @@ export default function (pi: ExtensionAPI) {
 						activeChildren,
 						approvalQueue,
 						ctx,
+						registry,
 					);
 					results.push(result);
 
@@ -829,6 +913,7 @@ export default function (pi: ExtensionAPI) {
 						activeChildren,
 						approvalQueue,
 						ctx,
+						registry,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -871,6 +956,7 @@ export default function (pi: ExtensionAPI) {
 					activeChildren,
 					approvalQueue,
 					ctx,
+					registry,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {
@@ -965,14 +1051,16 @@ export default function (pi: ExtensionAPI) {
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
-				const isError = isFailedResult(r);
-				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+				const isActive = r.exitCode === -1;
+				const isError = !isActive && isFailedResult(r);
+				const icon = isActive ? theme.fg("warning", "⏳") : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getFinalOutput(r.messages);
 
 				if (expanded) {
 					const container = new Container();
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+					if (isActive) header += ` ${theme.fg("warning", `[${r.state ?? "running"}]`)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
 					if (isError && r.errorMessage)
@@ -1009,6 +1097,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+				if (isActive) text += ` ${theme.fg("warning", `[${r.state ?? "running"}]`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
