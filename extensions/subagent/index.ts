@@ -31,12 +31,18 @@ import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
 import { registerChildControls } from "./control.ts";
-import { applyRpcStreamEvent, emptyUsage, type RpcStreamState } from "./events.ts";
+import {
+	applyRpcStreamEvent,
+	emptyUsage,
+	interruptActiveTools,
+	setLatestToolApprovalState,
+	type RpcStreamState,
+} from "./events.ts";
 import { interpolatePrevious, mapWithConcurrencyLimit } from "./execution.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { sendControl, SubagentRegistry } from "./registry.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
-import type { SingleResult, SubagentDetails } from "./types.ts";
+import type { SingleResult, SubagentDetails, ToolRunStatus } from "./types.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -191,15 +197,20 @@ function truncateParallelOutput(output: string): string {
 	return `${truncated}\n\n[Output truncated: ${byteLength - Buffer.byteLength(truncated, "utf8")} bytes omitted. Full output preserved in tool details.]`;
 }
 
-type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
+type DisplayItem =
+	| { type: "text"; text: string }
+	| { type: "toolCall"; name: string; args: Record<string, any>; status?: ToolRunStatus; summary?: string };
 
-function getDisplayItems(messages: Message[]): DisplayItem[] {
+function getDisplayItems(result: SingleResult): DisplayItem[] {
 	const items: DisplayItem[] = [];
-	for (const msg of messages) {
+	for (const msg of result.messages) {
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
 				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
+				else if (part.type === "toolCall") {
+					const run = result.toolRuns?.find((item) => item.toolCallId === part.id);
+					items.push({ type: "toolCall", name: part.name, args: part.arguments, status: run?.status, summary: run?.summary });
+				}
 			}
 		}
 	}
@@ -404,7 +415,10 @@ async function runSingleAgent(
 							return { type: "extension_ui_response" as const, id: request.id, cancelled: true as const };
 						};
 						uiDialogCount++;
+						setLatestToolApprovalState(currentResult, "waiting");
 						if (!parentContext.hasUI || uiDialogCount > 20) {
+							setLatestToolApprovalState(currentResult, "denied");
+							emitUpdate();
 							try {
 								child?.respondUi(denyWithoutUi());
 							} catch {}
@@ -447,9 +461,15 @@ async function runSingleAgent(
 						}).catch(() => undefined);
 						currentResult.pendingApproval = undefined;
 						if (currentResult.state === "waiting-approval") currentResult.state = "running";
+						const finalResponse = response ?? denyWithoutUi();
+						const denied =
+							("cancelled" in finalResponse && finalResponse.cancelled) ||
+							("confirmed" in finalResponse && !finalResponse.confirmed) ||
+							("value" in finalResponse && finalResponse.value === "[N]o");
+						setLatestToolApprovalState(currentResult, denied ? "denied" : "approved");
 						emitUpdate();
 						try {
-							child?.respondUi(response ?? denyWithoutUi());
+							child?.respondUi(finalResponse);
 						} catch {
 							// Child exit races with queued dialog completion.
 						}
@@ -478,6 +498,7 @@ async function runSingleAgent(
 		const abort = () => {
 			wasAborted = true;
 			currentResult.state = "aborting";
+			interruptActiveTools(currentResult, "Parent aborted the subagent");
 			emitUpdate();
 			try {
 				child?.send({ id: `abort-${runId}`, type: "abort" });
@@ -510,12 +531,14 @@ async function runSingleAgent(
 				currentResult.exitCode = 0;
 			} else {
 				const exited = await child.exit;
+				interruptActiveTools(currentResult, "Child exited before the tool completed");
 				currentResult.exitCode = exited.code ?? 1;
 				currentResult.state = "failed";
 				currentResult.errorMessage ||= child.stderr || "RPC child exited before settling";
 			}
 		} catch (error) {
 			if (wasAborted) throw new Error("Subagent was aborted");
+			interruptActiveTools(currentResult, "Subagent failed before the tool completed");
 			currentResult.exitCode = 1;
 			currentResult.state = "failed";
 			currentResult.errorMessage = error instanceof Error ? error.message : String(error);
@@ -1036,6 +1059,27 @@ export default function (pi: ExtensionAPI) {
 
 			const mdTheme = getMarkdownTheme();
 
+			const renderToolItem = (item: Extract<DisplayItem, { type: "toolCall" }>): string => {
+				const call = theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme));
+				const status = item.status ?? "running";
+				const outcome =
+					status === "completed"
+						? theme.fg("success", "✓ completed")
+						: status === "blocked"
+							? theme.fg("warning", "⊘ blocked")
+							: status === "failed"
+								? theme.fg("error", "✗ failed")
+								: status === "interrupted"
+									? theme.fg("error", "⚠ interrupted")
+									: status === "waiting-approval"
+										? theme.fg("warning", "⏸ waiting approval")
+										: status === "approved"
+											? theme.fg("success", "✓ approved, running")
+											: theme.fg("warning", "⏳ running");
+				const reason = item.summary && status !== "completed" ? ` — ${theme.fg("dim", item.summary)}` : "";
+				return `${call}  ${outcome}${reason}`;
+			};
+
 			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
 				const toShow = limit ? items.slice(-limit) : items;
 				const skipped = limit && items.length > limit ? items.length - limit : 0;
@@ -1046,7 +1090,7 @@ export default function (pi: ExtensionAPI) {
 						const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
 						text += `${theme.fg("toolOutput", preview)}\n`;
 					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+						text += `${renderToolItem(item)}\n`;
 					}
 				}
 				return text.trimEnd();
@@ -1057,7 +1101,7 @@ export default function (pi: ExtensionAPI) {
 				const isActive = r.exitCode === -1;
 				const isError = !isActive && isFailedResult(r);
 				const icon = isActive ? theme.fg("warning", "⏳") : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-				const displayItems = getDisplayItems(r.messages);
+				const displayItems = getDisplayItems(r);
 				const finalOutput = getFinalOutput(r.messages);
 
 				if (expanded) {
@@ -1077,14 +1121,7 @@ export default function (pi: ExtensionAPI) {
 						container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
 					} else {
 						for (const item of displayItems) {
-							if (item.type === "toolCall")
-								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
-								);
+							if (item.type === "toolCall") container.addChild(new Text(renderToolItem(item), 0, 0));
 						}
 						if (finalOutput) {
 							container.addChild(new Spacer(1));
@@ -1150,7 +1187,7 @@ export default function (pi: ExtensionAPI) {
 
 					for (const r of details.results) {
 						const rIcon = r.exitCode === -1 ? theme.fg("warning", "⏳") : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-						const displayItems = getDisplayItems(r.messages);
+						const displayItems = getDisplayItems(r);
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
@@ -1163,17 +1200,9 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show tool calls
+						// Show tool calls and their outcomes.
 						for (const item of displayItems) {
-							if (item.type === "toolCall") {
-								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
-								);
-							}
+							if (item.type === "toolCall") container.addChild(new Text(renderToolItem(item), 0, 0));
 						}
 
 						// Show final output as markdown
@@ -1202,7 +1231,7 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("accent", `${successCount}/${details.results.length} steps`);
 				for (const r of details.results) {
 					const rIcon = r.exitCode === -1 ? theme.fg("warning", "⏳") : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-					const displayItems = getDisplayItems(r.messages);
+					const displayItems = getDisplayItems(r);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
@@ -1239,7 +1268,7 @@ export default function (pi: ExtensionAPI) {
 
 					for (const r of details.results) {
 						const rIcon = isFailedResult(r) ? theme.fg("error", "✗") : theme.fg("success", "✓");
-						const displayItems = getDisplayItems(r.messages);
+						const displayItems = getDisplayItems(r);
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
@@ -1248,17 +1277,9 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show tool calls
+						// Show tool calls and their outcomes.
 						for (const item of displayItems) {
-							if (item.type === "toolCall") {
-								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
-								);
-							}
+							if (item.type === "toolCall") container.addChild(new Text(renderToolItem(item), 0, 0));
 						}
 
 						// Show final output as markdown
@@ -1288,7 +1309,7 @@ export default function (pi: ExtensionAPI) {
 							: isFailedResult(r)
 								? theme.fg("error", "✗")
 								: theme.fg("success", "✓");
-					const displayItems = getDisplayItems(r.messages);
+					const displayItems = getDisplayItems(r);
 					const stateLabel = r.exitCode === -1 ? ` ${theme.fg("warning", `[${r.state ?? "running"}]`)}` : "";
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}${stateLabel}`;
 					if (displayItems.length === 0)

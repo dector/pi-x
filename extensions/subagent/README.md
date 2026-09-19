@@ -125,6 +125,7 @@ Pause takes effect at the next safe boundary, before a provider turn or tool cal
 **Collapsed view** (default):
 - Status icon (✓/✗/⏳) and agent name
 - Last 5-10 items (tool calls and text)
+- Per-tool outcomes: running, waiting approval, approved, completed, blocked, failed, or interrupted, with a short failure reason
 - Usage stats: `3 turns ↑input ↓output RcacheRead WcacheWrite $cost ctx:contextTokens model`
 
 **Expanded view** (Ctrl+O):

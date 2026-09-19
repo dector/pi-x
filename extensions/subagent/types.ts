@@ -24,6 +24,16 @@ export type SubagentRunState =
 	| "aborting"
 	| "failed";
 
+export type ToolRunStatus = "running" | "waiting-approval" | "approved" | "completed" | "blocked" | "failed" | "interrupted";
+
+export interface ToolRunRecord {
+	toolCallId: string;
+	toolName: string;
+	args: Record<string, unknown>;
+	status: ToolRunStatus;
+	summary?: string;
+}
+
 export interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
@@ -45,6 +55,7 @@ export interface SingleResult {
 	diagnostics?: string[];
 	liveText?: string;
 	activeTool?: string;
+	toolRuns?: ToolRunRecord[];
 	pendingApproval?: { requestId: string; method: string; title?: string };
 }
 
