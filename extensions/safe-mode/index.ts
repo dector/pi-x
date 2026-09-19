@@ -36,6 +36,10 @@ const HERDR_BLOCKED_EVENT = "px:herdr:blocked";
 const TOGGLE_READER_EVENT = "px:safe-mode:toggle-reader";
 const TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
 const SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
+const HUB_ID = "safe-mode";
+const HUB_REGISTER_EVENT = "hub:register";
+const HUB_UNREGISTER_EVENT = "hub:unregister";
+const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:net"] };
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";
@@ -1192,6 +1196,18 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		await refreshDefaults(ctx);
 		applyResolvedState(ctx);
 		await loadProjectApprovals(ctx);
+	});
+
+	pi.on("session_start", () => {
+		pi.events.emit(HUB_REGISTER_EVENT, { id: HUB_ID, caps: HUB_CAPS });
+	});
+
+	pi.on("session_tree", () => {
+		pi.events.emit(HUB_REGISTER_EVENT, { id: HUB_ID, caps: HUB_CAPS });
+	});
+
+	pi.on("session_shutdown", () => {
+		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
 	});
 
 	pi.on("before_agent_start", async (event) => {

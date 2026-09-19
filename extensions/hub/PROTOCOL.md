@@ -10,8 +10,9 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 | --- | --- | --- |
 | `hub:register` | client → hub | `{ id, caps: { provide: string[] } }` |
 | `hub:unregister` | client → hub | `{ id }` |
-| `hub:ask` | client → hub | `{ id, cap: CapRequest[] }` |
-| `hub:answer` | hub/provider → client | `{ id, results: CapResult[] }` |
+| `hub:ask` | client → hub | `{ id, from?, cap: CapRequest[] }` |
+| `hub:request` | hub → provider | `{ id, from?, cap: CapRequest[], targets: string[] }` |
+| `hub:answer` | provider → client | `{ id, results: CapResult[] }` |
 
 - `id` on `hub:ask` is a correlation id; the same `id` comes back on `hub:answer`.
 - Clients may register at any time. Registration is idempotent (upsert by `id`).
@@ -54,13 +55,12 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 ## Flow
 
 ```
-requester ──hub:ask──> hub ──(route)──> provider
-requester <──hub:answer── hub <──verdict── provider
+requester ──hub:ask──> hub ──hub:request──> provider
+requester <────────────hub:answer────────── provider
 ```
 
 ## Open
 
-- Route channel for hub → provider, and verdict channel provider → hub.
 - Arbitration when several providers can answer one `what`.
 - Behavior when no provider is registered (deny? prompt? allow?).
 - Timeout and fallback.
