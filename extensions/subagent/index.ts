@@ -30,6 +30,7 @@ import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
+import { registerChildControls } from "./control.ts";
 import { applyRpcStreamEvent, emptyUsage, type RpcStreamState } from "./events.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
@@ -365,6 +366,31 @@ async function runSingleAgent(
 					void (async () => {
 						const fireAndForget = new Set(["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]);
 						if (fireAndForget.has(request.method)) {
+							if (
+								request.method === "setStatus" &&
+								request.statusKey === "px:subagent-control" &&
+								typeof request.statusText === "string"
+							) {
+								try {
+									const status = JSON.parse(request.statusText) as {
+										kind?: string;
+										state?: { mode?: string; outerAccess?: boolean } | string;
+										error?: string;
+									};
+									if (status.kind === "pause" && typeof status.state === "string") {
+										currentResult.state = status.state === "pause-requested" ? "pause-requested" : status.state === "paused" ? "paused" : "running";
+									} else if (status.kind === "state" && typeof status.state === "object" && status.state) {
+										if (["paranoid", "reader", "smart", "yolo"].includes(status.state.mode ?? "")) currentResult.effectiveMode = status.state.mode as typeof currentResult.effectiveMode;
+										if (typeof status.state.outerAccess === "boolean") currentResult.outerAccess = status.state.outerAccess;
+									} else if (status.kind === "error" && status.error) {
+										(currentResult.diagnostics ??= []).push(status.error);
+									}
+									emitUpdate();
+								} catch {
+									(currentResult.diagnostics ??= []).push("Malformed child control status");
+								}
+								return;
+							}
 							if (request.method === "notify" && typeof request.message === "string" && parentContext.hasUI) {
 								const kind = request.notifyType === "warning" || request.notifyType === "error" ? request.notifyType : "info";
 								parentContext.ui.notify(`[${agent.name} ${runId}] ${request.message.slice(0, 1000)}`, kind);
@@ -542,6 +568,7 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	registerChildControls(pi);
 	// Surface agent names + brief descriptions in the tool description so the
 	// model can choose deliberately without trial and error. Important for
 	// opt-in agents like `ultra-reviewer-explicit`. Uses user-scope only, which
