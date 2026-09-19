@@ -156,7 +156,10 @@ editor padding (`paddingX: 1`), and renders:
 
 - bottom-left: thinking level, context usage, and cumulative cost (`-< 🢁 HIGH · 15.9% 210k · 0.03$ >-`),
   colored with the same context-usage rules as the status-bar context items
-  (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%)
+  (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%). When subagent
+  usage is present, cost renders as session | total (`0.01$ | 0.13$`); the total
+  includes every subagent in the branch, nested ones included, and the suffix is
+  omitted while it equals the session cost.
 - bottom-right: `safe-mode` producer content (for example `SMART`)
 - top-right: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color
 

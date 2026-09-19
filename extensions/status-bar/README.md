@@ -98,6 +98,9 @@ labels are rendered in the frame corners:
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
   - `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
     Zero/unavailable renders as `0.00$`; non-zero below half a cent renders as `<0.01$`.
+    When subagent usage is present, the label shows session | total: `0.01$ | 0.13$`.
+    The total adds every subagent cost found in the branch, including nested
+    subagents. The suffix is omitted while the total equals the session cost.
   - The frame label is independent of the second-line cost whitelist: it always shows
     accumulated `usage.cost.total` from the active branch.
   - The label uses the same context-usage color rules as the status-bar context items:

@@ -141,8 +141,13 @@ function buildFrameStatusLabel(
 	const tokens = typeof rawTokens === "number" && Number.isFinite(rawTokens) ? formatTokens(rawTokens) : "--";
 
 	const cost = collectUsage(ctx).cost;
+	const subagentCost = collectSubagentCost(ctx);
+	const costLabel =
+		subagentCost > 0
+			? `${formatCostTrailing(cost)} | ${formatCostTrailing(cost + subagentCost)}`
+			: formatCostTrailing(cost);
 
-	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} ${tokens} · ${formatCostTrailing(cost)}`;
+	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} ${tokens} · ${costLabel}`;
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
@@ -397,6 +402,49 @@ function collectUsage(ctx: ExtensionContext): { input: number; output: number; c
 	}
 
 	return { input, output, cacheRead, cost };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function readCost(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+// Subagents run with `--no-session`, so their cost is only durable inside the
+// parent's persisted tool results (`details.results[].usage.cost`). Children may
+// spawn their own subagents, so recurse through the child messages as well.
+function collectSubagentCost(ctx: ExtensionContext): number {
+	let cost = 0;
+	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
+		if (entry.type !== "message") continue;
+		cost += collectSubagentCostFromMessage(entry.message);
+	}
+	return cost;
+}
+
+function collectSubagentCostFromMessage(message: unknown): number {
+	if (!isRecord(message) || message.role !== "toolResult") return 0;
+	return collectSubagentCostFromDetails(message.details);
+}
+
+function collectSubagentCostFromDetails(details: unknown): number {
+	if (!isRecord(details) || !Array.isArray(details.results)) return 0;
+	let cost = 0;
+	for (const result of details.results) {
+		if (!isRecord(result)) continue;
+		if (isRecord(result.usage)) cost += readCost(result.usage.cost);
+		cost += collectSubagentCostFromMessages(result.messages);
+	}
+	return cost;
+}
+
+function collectSubagentCostFromMessages(messages: unknown): number {
+	if (!Array.isArray(messages)) return 0;
+	let cost = 0;
+	for (const message of messages) cost += collectSubagentCostFromMessage(message);
+	return cost;
 }
 
 function styleContextLabel(
