@@ -33,6 +33,7 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 | `perm:io` | read/write/edit/delete a path | safe-mode |
 | `perm:net` | outbound network request | safe-mode |
 | `perm:agent` | run project-local subagents | safe-mode |
+| `perm:tool` | classify a tool call (`allow`/`confirm`/`block`) | tool extensions |
 
 ## Payloads
 
@@ -59,6 +60,17 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 ```ts
 { agents: string; source: string; cwd?: string }
 ```
+
+`perm:tool`
+
+```ts
+{ toolName: string; input: Record<string, unknown> }
+```
+
+`perm:tool` providers **classify only** and must answer quickly. Prompting is
+left to the requester (`safe-mode`), which treats a `confirm` result as its
+normal approval flow. `safe-mode` is the fallback when no `perm:tool` provider
+is registered.
 
 ## Flow
 

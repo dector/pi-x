@@ -41,6 +41,10 @@ const HUB_REGISTER_EVENT = "hub:register";
 const HUB_UNREGISTER_EVENT = "hub:unregister";
 const HUB_REQUEST_EVENT = "hub:request";
 const HUB_REPLY_EVENT = "hub:reply";
+const HUB_ASK_EVENT = "hub:ask";
+const HUB_ANSWER_EVENT = "hub:answer";
+const PERM_TOOL = "perm:tool";
+const HUB_TOOL_TIMEOUT_MS = 300;
 const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:net", "perm:agent"] };
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
@@ -797,6 +801,81 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	type HubAction = "allow" | "confirm" | "block";
+
+	// Ask hub for a tool-call classification. Resolves with the answer for
+	// `perm:tool`, or undefined when hub is absent or nobody answers in time.
+	const askHubForToolDecision = (
+		toolName: string,
+		input: Record<string, unknown>,
+	): Promise<{ action: HubAction; reason?: string } | undefined> => {
+		const id = `safe-mode-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+		return new Promise((resolve) => {
+			let settled = false;
+
+			const finish = (result: { action: HubAction; reason?: string } | undefined): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				off();
+				resolve(result);
+			};
+
+			const off = pi.events.on(HUB_ANSWER_EVENT, (payload) => {
+				if (typeof payload !== "object" || payload === null) return;
+				const answer = payload as { id?: unknown; results?: unknown };
+				if (answer.id !== id || !Array.isArray(answer.results)) return;
+
+				const match = answer.results.find(
+					(result) => typeof result === "object" && result !== null && (result as { what?: unknown }).what === PERM_TOOL,
+				) as { action?: unknown; reason?: unknown } | undefined;
+				if (!match) {
+					finish(undefined);
+					return;
+				}
+
+				const action = match.action;
+				if (action !== "allow" && action !== "confirm" && action !== "block") {
+					finish(undefined);
+					return;
+				}
+				finish({ action, reason: typeof match.reason === "string" ? match.reason : undefined });
+			});
+
+			const timer = setTimeout(() => finish(undefined), HUB_TOOL_TIMEOUT_MS);
+
+			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what: PERM_TOOL, data: { toolName, input } }] });
+		});
+	};
+
+	const ACTION_RANK: Record<HubAction, number> = { allow: 0, confirm: 1, block: 2 };
+
+	// Built-in policy decides by default; hub providers can only make it stricter.
+	const decideToolCallWithHub = async (
+		toolName: string,
+		input: Record<string, unknown>,
+		ctx: ExtensionContext,
+	) => {
+		const builtin = decideToolCall({
+			mode,
+			toolName,
+			input,
+			projectRoot: ctx.cwd,
+			outerAccess,
+			trustedReadRoots: getTrustedReadRoots(),
+		});
+
+		const hub = await askHubForToolDecision(toolName, input);
+		if (!hub) return builtin;
+		if (hub.action === "block" && hub.reason === "no hub provider") return builtin;
+
+		if (ACTION_RANK[hub.action] > ACTION_RANK[builtin.action]) {
+			return { action: hub.action, reason: hub.reason ?? builtin.reason, summary: builtin.summary };
+		}
+		return builtin;
+	};
+
 	function updateStatus(ctx: ExtensionContext): void {
 		const content = ctx.hasUI ? styleMode(ctx, mode, outerAccess) : statusLabel();
 		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
@@ -1285,14 +1364,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const decision = decideToolCall({
-			mode,
-			toolName: event.toolName,
-			input,
-			projectRoot: ctx.cwd,
-			outerAccess,
-			trustedReadRoots: getTrustedReadRoots(),
-		});
+		const decision = await decideToolCallWithHub(event.toolName, input, ctx);
 
 		if (decision.action === "allow") return;
 		if (decision.action === "block") {
