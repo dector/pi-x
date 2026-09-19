@@ -31,6 +31,7 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 | `perm:shell` | run a shell command | safe-mode |
 | `perm:io` | read/write/edit/delete a path | safe-mode |
 | `perm:net` | outbound network request | safe-mode |
+| `perm:agent` | run project-local subagents | safe-mode |
 
 ## Payloads
 
@@ -50,6 +51,12 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 
 ```ts
 { url: string; method?: string }
+```
+
+`perm:agent`
+
+```ts
+{ agents: string; source: string; cwd?: string }
 ```
 
 ## Flow

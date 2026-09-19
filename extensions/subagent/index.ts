@@ -35,6 +35,17 @@ const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
+// hub permission protocol (see extensions/hub/PROTOCOL.md)
+const HUB_ID = "subagent";
+const HUB_ASK_EVENT = "hub:ask";
+const HUB_ANSWER_EVENT = "hub:answer";
+const HUB_PERMISSION_TIMEOUT_MS = 5_000;
+const PERM_AGENT = "perm:agent";
+
+function newHubRequestId(): string {
+	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -469,6 +480,40 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	// Ask the hub for a permission decision. Resolves with the returned action,
+	// or undefined when no provider answers within the timeout.
+	const askHubPermission = (what: string, data: Record<string, unknown>): Promise<string | undefined> => {
+		const id = newHubRequestId();
+
+		return new Promise((resolve) => {
+			let settled = false;
+
+			const finish = (action: string | undefined): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				off();
+				resolve(action);
+			};
+
+			const off = pi.events.on(HUB_ANSWER_EVENT, (payload) => {
+				if (typeof payload !== "object" || payload === null) return;
+				const answer = payload as { id?: unknown; results?: unknown };
+				if (answer.id !== id || !Array.isArray(answer.results)) return;
+
+				const match = answer.results.find(
+					(result) => typeof result === "object" && result !== null && (result as { what?: unknown }).what === what,
+				);
+				const action = (match as { action?: unknown } | undefined)?.action;
+				finish(typeof action === "string" ? action : undefined);
+			});
+
+			const timer = setTimeout(() => finish(undefined), HUB_PERMISSION_TIMEOUT_MS);
+
+			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what, data }] });
+		});
+	};
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
@@ -517,7 +562,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents) {
 				const requestedAgentNames = new Set<string>();
 				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
 				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
@@ -530,11 +575,12 @@ export default function (pi: ExtensionAPI) {
 				if (projectAgentsRequested.length > 0) {
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					);
-					if (!ok)
+					const decision = await askHubPermission(PERM_AGENT, {
+						agents: names,
+						source: dir,
+						cwd: ctx.cwd,
+					});
+					if (decision !== "allow")
 						return {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
 							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),

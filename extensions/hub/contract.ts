@@ -10,6 +10,7 @@ export const HUB_PERMISSIONS = {
 	shell: "perm:shell",
 	io: "perm:io",
 	net: "perm:net",
+	agent: "perm:agent",
 } as const;
 
 export type PermissionAction = "allow" | "confirm" | "block";
