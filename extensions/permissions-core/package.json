@@ -1,0 +1,12 @@
+{
+  "name": "permissions-core",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "test": "bun test policy.test.ts",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck policy.ts"
+  }
+}
