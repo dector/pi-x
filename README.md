@@ -29,6 +29,7 @@ This repo currently contains the following extension(s):
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
 | [`hub`](extensions/hub/README.md) | Central signal hub for cooperating extensions (bootstrap; contract not defined yet). | |
+| [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents with permission inheritance, approval relay, and `/px:agents` runtime controls. | `safe-mode` optional |
 
 ## Themes
 

@@ -37,7 +37,7 @@ each registering as a `perm:tool` provider.
 ## 2. Wire more requesters
 
 - [ ] `interactive-bash` — gate user `!` commands via `perm:shell`
-- [ ] subagent child processes — share permission state with parent
+- [x] subagent child processes — snapshot mode/outer-access through the safe-mode state contract; relay approval UI over child RPC (not through hub)
 - [ ] `proc` spawn actions — ask hub instead of relying on safe-mode's built-in table
 - [ ] any extension spawning a process or writing outside project — use `perm:shell`/`perm:io`
 

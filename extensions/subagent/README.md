@@ -9,7 +9,10 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
-- **Abort support**: Ctrl+C propagates to kill subagent processes
+- **Abort support**: Ctrl+C propagates to child processes
+- **Inherited permissions**: Each child snapshots the parent's safe mode and outer-access setting at spawn
+- **Approval relay**: Child dialogs are labeled and serialized through the parent UI
+- **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
 
 ## Structure
 
@@ -18,6 +21,10 @@ subagent/
 ├── README.md            # This file
 ├── index.ts             # The extension (entry point)
 ├── agents.ts            # Agent discovery logic
+├── rpc-client.ts        # RPC process transport and JSONL framing
+├── approval-queue.ts    # Global serialized child-dialog queue
+├── control.ts           # Child permission and cooperative pause controls
+├── registry.ts          # Active/recent run registry
 ├── agents/              # Sample agent definitions
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans
@@ -66,6 +73,10 @@ To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only
 
 When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
 
+Children use pi RPC mode. Safe-mode approvals appear in the parent UI with the agent name and stable run ID. Parallel approval dialogs are shown one at a time. In a non-interactive parent, requests fail closed instead of hanging.
+
+Safe mode is a spawn-time snapshot. Parent changes affect later children only. Session-only approvals remain local to the child that received them; project-persistent approvals continue to use the repository allowlist.
+
 ## Usage
 
 ### Single agent
@@ -97,6 +108,17 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 | Single | `{ agent, task }` | One agent, one task |
 | Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
 | Chain | `{ chain: [...] }` | Sequential with `{previous}` placeholder |
+
+## Runtime manager
+
+Run `/px:agents` to list active and recent children. Select a run to:
+
+- inspect its task, PID, state, working directory, diagnostics, and inherited/effective mode;
+- configure that child's safe mode and outer access;
+- request cooperative pause or resume;
+- abort it after confirmation.
+
+Pause takes effect at the next safe boundary, before a provider turn or tool call. It does not interrupt a provider request or tool already in progress, so the state may remain `pause-requested` briefly.
 
 ## Output Display
 
@@ -180,7 +202,7 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 - **Exit code != 0**: Tool returns error with stderr/output
 - **stopReason "error"**: LLM error propagated with error message
-- **stopReason "aborted"**: User abort (Ctrl+C) kills subprocess, throws error
+- **stopReason "aborted"**: User abort (Ctrl+C) asks the child to abort, then terminates it with bounded escalation
 - **Chain mode**: Stops at first failing step, reports which step failed
 
 ## Limitations
@@ -189,3 +211,5 @@ Project agents override user agents with the same name when `agentScope: "both"`
 - Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
 - Agents discovered fresh on each invocation (allows editing mid-session)
 - Parallel mode limited to 8 tasks, 4 concurrent
+- Cooperative pause waits for the next turn/tool boundary; it is not hard process suspension
+- Completed manager records are retained only as a bounded recent history

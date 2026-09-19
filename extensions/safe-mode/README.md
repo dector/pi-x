@@ -196,9 +196,15 @@ When approval is required:
   - For shell chains, every parsed command segment must match either an exact `allow` entry or an `allowAny` executable name. Redirects, dynamic arguments, command substitution, and path executables like `./flutter` still require approval unless normal policy allows them.
   - file is created only when project-level approvals are actually saved; if absent, built-in default rules apply
 
+## Subagent integration
+
+Safe-mode publishes its current in-memory mode and outer-access setting on the local `pi.events` channels `px:safe-mode:state:*`. Subagents use this contract to snapshot both values at spawn and to change one running child's effective state without changing parent defaults.
+
+RPC children relay approval dialogs to the parent UI. `[A]ll for this session` remains local to that child process. Project-persistent approvals still update the repository allowlist and can therefore affect later processes normally.
+
 ## Non-interactive behavior
 
-If a tool call requires approval but no UI is available (`ctx.hasUI === false`), the call is blocked fail-safe with an explicit reason.
+If a tool call requires approval but no UI is available (`ctx.hasUI === false`), the call is blocked fail-safe with an explicit reason. A subagent with an RPC UI also fails closed when its parent cannot relay the dialog.
 
 ## Agent visibility
 
