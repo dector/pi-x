@@ -131,13 +131,17 @@ Agents are markdown files with YAML frontmatter:
 name: my-agent
 description: What this agent does
 tools: read, grep, find, ls
-model: claude-haiku-4-5
+model: opencode-go/deepseek-v4.1-flash
+thinking: high
 ---
 
 System prompt for the agent goes here.
 ```
 
 When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
+When `thinking` is omitted but `model` is set, the model's default thinking level is used.
+The `thinking` field accepts pi thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+Levels the chosen model does not support are clamped by pi.
 
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (always loaded)
@@ -147,12 +151,12 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 ## Sample Agents
 
-| Agent | Purpose | Model | Tools |
-|-------|---------|-------|-------|
-| `scout` | Fast codebase recon | Haiku | read, grep, find, ls, bash |
-| `planner` | Implementation plans | Sonnet | read, grep, find, ls |
-| `reviewer` | Code review | Sonnet | read, grep, find, ls, bash |
-| `worker` | General-purpose | Sonnet | (all default) |
+| Agent | Purpose | Model | Thinking | Tools |
+|-------|---------|-------|----------|-------|
+| `scout` | Fast codebase recon | deepseek-v4.1-flash | low | read, grep, find, ls, bash |
+| `planner` | Implementation plans | deepseek-v4.1-flash | high | read, grep, find, ls |
+| `reviewer` | Code review | deepseek-v4.1-flash | max | read, grep, find, ls, bash |
+| `worker` | General-purpose | deepseek-v4.1-flash | high | (all default) |
 
 ## Workflow Prompts
 

@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
@@ -13,6 +14,7 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	thinking?: ThinkingLevel;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -36,7 +38,10 @@ type AgentFrontmatter = {
 	description?: unknown;
 	tools?: unknown;
 	model?: unknown;
+	thinking?: unknown;
 };
+
+const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /**
  * Normalize a frontmatter `tools` value to a list of tool names.
@@ -57,6 +62,18 @@ function parseToolList(value: unknown): string[] | undefined {
 		.map((t) => t.trim())
 		.filter(Boolean);
 	return tools.length > 0 ? tools : undefined;
+}
+
+/**
+ * Normalize a frontmatter `thinking` value to a valid pi thinking level.
+ *
+ * The CLI already clamps unsupported levels, but rejecting junk here keeps
+ * agent discovery from silently passing a typo through as a real level.
+ */
+function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
+	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value)
+		? (value as ThinkingLevel)
+		: undefined;
 }
 
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
@@ -96,6 +113,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			description: frontmatter.description,
 			tools: parseToolList(frontmatter.tools),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
+			thinking: parseThinkingLevel(frontmatter.thinking),
 			systemPrompt: body,
 			source,
 			filePath,
