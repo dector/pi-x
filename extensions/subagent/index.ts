@@ -29,6 +29,7 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
+import { ApprovalQueue } from "./approval-queue.ts";
 import { applyRpcStreamEvent, emptyUsage, type RpcStreamState } from "./events.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
@@ -269,6 +270,8 @@ async function runSingleAgent(
 	getSafeModeSnapshot: () => Promise<SafeModeSnapshot | undefined>,
 	runId: string,
 	activeChildren: Set<RpcChild>,
+	approvalQueue: ApprovalQueue,
+	parentContext: ExtensionContext,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -359,25 +362,75 @@ async function runSingleAgent(
 					if (streamState.settled) resolveCompletion();
 				},
 				onExtensionUiRequest(request) {
-					const dialogMethods = new Set(["select", "confirm", "input", "editor"]);
-					if (!dialogMethods.has(request.method)) return;
-					try {
-						if (
-							request.method === "select" &&
-							Array.isArray(request.options) &&
-							request.options.includes("[N]o")
-						) {
-							child?.respondUi({ type: "extension_ui_response", id: request.id, value: "[N]o" });
-						} else if (request.method === "confirm") {
-							child?.respondUi({ type: "extension_ui_response", id: request.id, confirmed: false });
-						} else {
-							child?.respondUi({ type: "extension_ui_response", id: request.id, cancelled: true });
+					void (async () => {
+						const fireAndForget = new Set(["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]);
+						if (fireAndForget.has(request.method)) {
+							if (request.method === "notify" && typeof request.message === "string" && parentContext.hasUI) {
+								const kind = request.notifyType === "warning" || request.notifyType === "error" ? request.notifyType : "info";
+								parentContext.ui.notify(`[${agent.name} ${runId}] ${request.message.slice(0, 1000)}`, kind);
+							}
+							return;
 						}
-						const diagnostics = (currentResult.diagnostics ??= []);
-						if (diagnostics.length < 20) diagnostics.push("Child UI request denied: parent relay is unavailable");
-					} catch {
-						// Child exit races with fail-safe responses.
-					}
+						if (!["select", "confirm", "input", "editor"].includes(request.method)) return;
+						const denyWithoutUi = () => {
+							if (request.method === "select" && Array.isArray(request.options) && request.options.includes("[N]o")) {
+								return { type: "extension_ui_response" as const, id: request.id, value: "[N]o" };
+							}
+							if (request.method === "confirm") {
+								return { type: "extension_ui_response" as const, id: request.id, confirmed: false };
+							}
+							return { type: "extension_ui_response" as const, id: request.id, cancelled: true as const };
+						};
+						if (!parentContext.hasUI) {
+							try {
+								child?.respondUi(denyWithoutUi());
+							} catch {}
+							return;
+						}
+						currentResult.state = "waiting-approval";
+						currentResult.pendingApproval = {
+							requestId: request.id,
+							method: request.method,
+							title: typeof request.title === "string" ? request.title.slice(0, 300) : undefined,
+						};
+						emitUpdate();
+						const heading = `Subagent: ${agent.name} [${runId}]\nWorking directory: ${cwd ?? defaultCwd}\n\n${typeof request.title === "string" ? request.title.slice(0, 500) : "Approval requested"}`;
+						const timeout = typeof request.timeout === "number" ? Math.min(Math.max(request.timeout, 0), 300_000) : undefined;
+						const response = await approvalQueue.enqueue({
+							runId,
+							requestId: request.id,
+							async run(dialogSignal) {
+								if (request.method === "select") {
+									const options = Array.isArray(request.options)
+										? request.options.filter((item): item is string => typeof item === "string").slice(0, 50).map((item) => item.slice(0, 500))
+										: [];
+									const value = await parentContext.ui.select(heading, options, { signal: dialogSignal, timeout });
+									return value === undefined ? denyWithoutUi() : { type: "extension_ui_response" as const, id: request.id, value };
+								}
+								if (request.method === "confirm") {
+									const message = typeof request.message === "string" ? request.message.slice(0, 4000) : "Confirm?";
+									const confirmed = await parentContext.ui.confirm(heading, message, { signal: dialogSignal, timeout });
+									return { type: "extension_ui_response" as const, id: request.id, confirmed };
+								}
+								if (request.method === "input") {
+									const placeholder = typeof request.placeholder === "string" ? request.placeholder.slice(0, 1000) : undefined;
+									const value = await parentContext.ui.input(heading, placeholder, { signal: dialogSignal, timeout });
+									return value === undefined ? denyWithoutUi() : { type: "extension_ui_response" as const, id: request.id, value };
+								}
+								const prefill = typeof request.prefill === "string" ? request.prefill.slice(0, 10_000) : undefined;
+								const value = await parentContext.ui.editor(heading, prefill);
+								return value === undefined ? denyWithoutUi() : { type: "extension_ui_response" as const, id: request.id, value };
+							},
+						});
+						currentResult.pendingApproval = undefined;
+						if (currentResult.state === "waiting-approval") currentResult.state = "running";
+						emitUpdate();
+						try {
+							child?.respondUi(response ?? denyWithoutUi());
+						} catch {
+							// Child exit races with queued dialog completion.
+						}
+					})();
 				},
 				onProtocolDiagnostic(message) {
 					const diagnostics = (currentResult.diagnostics ??= []);
@@ -439,6 +492,7 @@ async function runSingleAgent(
 		return currentResult;
 	} finally {
 		removeAbortListener?.();
+		approvalQueue.cancelRun(runId);
 		if (child) {
 			await child.terminate();
 			activeChildren.delete(child);
@@ -495,6 +549,7 @@ export default function (pi: ExtensionAPI) {
 	// list is re-discovered per invocation for actual execution.
 	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
 	const activeChildren = new Set<RpcChild>();
+	const approvalQueue = new ApprovalQueue();
 	let nextRunNumber = 1;
 	const newRunId = () => `sa-${nextRunNumber++}`;
 	pi.on("session_shutdown", async () => {
@@ -661,6 +716,8 @@ export default function (pi: ExtensionAPI) {
 						getSafeModeSnapshot,
 						newRunId(),
 						activeChildren,
+						approvalQueue,
+						ctx,
 					);
 					results.push(result);
 
@@ -743,6 +800,8 @@ export default function (pi: ExtensionAPI) {
 						getSafeModeSnapshot,
 						newRunId(),
 						activeChildren,
+						approvalQueue,
+						ctx,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -783,6 +842,8 @@ export default function (pi: ExtensionAPI) {
 					getSafeModeSnapshot,
 					newRunId(),
 					activeChildren,
+					approvalQueue,
+					ctx,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {

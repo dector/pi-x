@@ -45,6 +45,7 @@ export interface SingleResult {
 	diagnostics?: string[];
 	liveText?: string;
 	activeTool?: string;
+	pendingApproval?: { requestId: string; method: string; title?: string };
 }
 
 export interface SubagentDetails {
