@@ -76,9 +76,9 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-╭-< cdx/5.6-sol >────────────────────────────────────╮
+╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
 │ ... input ...                                         │
-╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
+╰-< SMART >-·-< 15.9% 210k · 0.03$ >──────────────────╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
@@ -86,14 +86,18 @@ labels are rendered in the frame corners:
   horizontal padding (`paddingX: 1`), so input sits at `│ <input> │`. The
   autocomplete list stays outside the frame and is indented to line up.
 - Every border text label is delimited with ASCII angle tacks on both sides:
-  `-< <label> >-`.
+  `-< <label> >-`. When two labels share the bottom-left edge they are joined by
+  the two tacks with a centered dot: `-< <safe-mode> >-·-< <context> >-`.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
-- **bottom-left** — thinking level, context usage, and cost.
-  - Format: `-< <thinking> · <percent> <tokens> · <cost> >-`.
-  - `thinking`: arrow indicator plus the 3-4 uppercase level symbol:
-    `off` → `✘ OFF`, `minimal` → `🡻🡻 MIN`, `low` → `🡻 LOW`, `medium` → `🡺 MED`,
-    `high` → `🢁 HIGH`, `xhigh` → `🢁🢁 XHI`, `max` → `🢁🢁🢁 MAX`; unknown levels are
-    truncated to 4 uppercase chars with no indicator.
+- **top-right** — git dirty totals from `repo-stats`, e.g.
+  `-< +1 -2 M4 · +150 -200 >-`. Rendered only when the repo is dirty. The
+  producer's `[ ]` and `|` are not shown; the file/line groups are separated by
+  a `·` recolored to the frame border color. In `new` mode the totals are hidden
+  from the first line to avoid duplication; in `legacy` mode they stay on the
+  first line.
+- **bottom-left** — safe-mode status followed by context usage and cost.
+  - Format: `-< <safe-mode> >-·-< <percent> <tokens> · <cost> >-`. The safe-mode
+    part is omitted when the producer has published nothing.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
   - `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
@@ -108,14 +112,21 @@ labels are rendered in the frame corners:
   - The label uses the same context-usage color rules as the status-bar context items:
     `muted` up to 20%, `text` up to 30%, `warning` up to 50%, `error` above 50%.
     It stays uncolored when context percent is unknown.
-- **bottom-right** — `safe-mode` status content (`SMART`, `READER`, `YOLO`,
-  `PARANOID`, plus `+` when outer access is on). Rendered only while the
-  `safe-mode` producer has published content.
-- **top-left** — active provider + model (`<ctx.model.provider>/<ctx.model.id>`, e.g.
-  `deepseek/deepseek-chat`; id-only when provider is missing), rendered in the frame
+- **safe-mode** (bottom-left, before context) — `SMART`, `READER`, `YOLO`,
+  `PARANOID`, plus `+` when outer access is on. Rendered only while the
+  `safe-mode` producer has published content. `SMART` is colored with the frame
+  border color; other modes keep the producer's own color.
+- **top-left** — active provider + model + effort (`<provider>/<model> (<effort>)`, e.g.
+  `deepseek/deepseek-chat (high)`; id-only when provider is missing), rendered in the frame
   border color. Hidden when no model is active. Both parts go through the exact-name
   alias tables (see [Aliases](#aliases)), so the example above can render as
   `cdx/5.6-sol` or `opencode/4.1-flash`.
+  - `effort`: 3-4 lowercase level symbol (`off` → `off`, `minimal` → `min`,
+    `low` → `low`, `medium` → `med`, `high` → `high`, `xhigh` → `xhi`,
+    `max` → `max`; unknown levels truncated to 4 lowercase chars). On narrow
+    screens (e.g. a phone) the text is dropped and only the arrow indicator is
+    shown: `off` → `✘`, `minimal` → `🡻🡻`, `low` → `🡻`, `medium` → `🡺`,
+    `high` → `🢁`, `xhigh` → `🢁🢁`, `max` → `🢁🢁🢁`.
   - While streaming, the label runs one of two animations (no spinner is shown and
     the word `Working` never appears):
     - `comet` — a leading character is highlighted in the theme `text` color
@@ -133,10 +144,10 @@ labels are rendered in the frame corners:
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
     `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
-- Corner labels are prefixed with a space and followed by one border dash before
-  the corner. They are dropped when the terminal is too narrow.
-- When the editor is scrolled, the `↓ N more` indicator sits to the left of the
-  bottom-right label; the `↑ N more` indicator sits on the right of the top border.
+- Corner labels are wrapped in `-< ... >-` tacks; the rest of the border is
+  filled with dashes. Labels are dropped when the terminal is too narrow.
+- When the editor is scrolled, the `↓ N more` indicator sits on the right of the
+  bottom border; the `↑ N more` indicator sits on the right of the top border.
 - On `session_shutdown` the previously configured editor factory is restored.
 
 ### Display mode
@@ -144,7 +155,7 @@ labels are rendered in the frame corners:
 `displayMode` controls where context/model/safe-mode information lives:
 
 - `new` (default) — border priority.
-  - Editor frame shows the corner labels (bottom-left context, top-left model, bottom-right safe-mode).
+  - Editor frame shows the corner labels (top-left model + effort, top-right git totals, bottom-left safe-mode + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
     producer items (after the `SKILLS: n/m` counter), and omits the cost suffix

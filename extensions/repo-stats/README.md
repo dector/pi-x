@@ -1,6 +1,7 @@
 # repo-stats (pi extension)
 
-Publishes repository summary for the **status-bar first line**.
+Publishes the repository path/branch for the **status-bar first line** and the
+dirty totals for the **editor frame top-right** slot (first line in `legacy` mode).
 
 ## Dependency
 
@@ -16,8 +17,12 @@ For the current `ctx.cwd`:
 
 Examples:
 
-- `~/pi-x (trunk) [+1 -2 M4 | +150 -200]`
+- `~/pi-x (trunk) +1 -2 M4 · +150 -200`
 - `~/pi-x (main)`
+
+In `new` display mode `status-bar` moves the dirty totals to the editor frame
+top-right slot (`-< +1 -2 M4 · +150 -200 >-`); the path and branch stay on the
+first line. In `legacy` mode the totals stay on the first line right section.
 
 ## How it works
 
@@ -37,7 +42,7 @@ Section and priority used:
 
 ## Dirty totals
 
-- combined dirty block format: `[+<new> -<removed> M<modified> | +<added> -<removed>]`
+- combined dirty block format: `+<new> -<removed> M<modified> · +<added> -<removed>`
 - files are shown first, line totals second
 - file counters are always shown when dirty (including `+0 -0 M0`)
 - line counters are always shown when dirty (including `+0 -0`)

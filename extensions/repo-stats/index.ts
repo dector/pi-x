@@ -212,7 +212,7 @@ function renderGitStatsSummary(stats: RepoStats, ctx: ExtensionContext): string 
 	if (!stats.isDirty) return undefined;
 	const fileSummary = renderFileChangeSummary(stats, ctx);
 	const lineSummary = renderLineChangeSummary(stats, ctx);
-	return `[${fileSummary} | ${lineSummary}]`;
+	return `${fileSummary} · ${lineSummary}`;
 }
 
 export default function repoStatsExtension(pi: ExtensionAPI): void {

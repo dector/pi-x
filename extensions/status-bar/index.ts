@@ -55,9 +55,14 @@ const CONTEXT_WATCHER_IDS = {
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
+const REPO_STATS_ID = "repo-stats";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
+// Join two labels on the same border edge: the two tacks with a vertically-centered dot.
+const FRAME_LABEL_JOIN = "-·-";
+// Visible width of the `-< ` + ` >-` tack wrappers around a border label.
+const FRAME_LABEL_TACK_WIDTH = 6;
 // While streaming, the top-left model label is animated. Two styles are available:
 // - `comet`: a single character is highlighted and bounces back and forth across
 //   the label. A short fading trail follows behind it (in the direction of motion).
@@ -108,15 +113,15 @@ function formatCost(total: number): string {
 	return `$${total.toFixed(2)}`;
 }
 
-// Thinking level abbreviations shown in the editor frame label (3-4 symbols, uppercase).
+// Thinking level abbreviations shown in the editor frame label (3-4 symbols, lowercase).
 const THINKING_LEVEL_ABBREVIATIONS: Record<string, string> = {
-	off: "OFF",
-	minimal: "MIN",
-	low: "LOW",
-	medium: "MED",
-	high: "HIGH",
-	xhigh: "XHI",
-	max: "MAX",
+	off: "off",
+	minimal: "min",
+	low: "low",
+	medium: "med",
+	high: "high",
+	xhigh: "xhi",
+	max: "max",
 };
 
 // Arrow indicators appended to the abbreviation. Higher levels point up, lower
@@ -131,13 +136,15 @@ const THINKING_LEVEL_INDICATORS: Record<string, string> = {
 	max: "🢁🢁🢁",
 };
 
-function formatThinkingLevel(level: string | undefined): string {
+// Wide screens show only the abbreviation; compact (narrow) screens fall back
+// to the arrow indicator without text.
+function formatThinkingLevel(level: string | undefined, options?: { compact?: boolean }): string {
 	if (typeof level !== "string") return "---";
 	const normalized = level.trim().toLowerCase();
 	if (!normalized) return "---";
-	const abbreviation = THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toUpperCase();
-	const indicator = THINKING_LEVEL_INDICATORS[normalized];
-	return indicator ? `${indicator} ${abbreviation}` : abbreviation;
+	const abbreviation = THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toLowerCase();
+	if (options?.compact) return THINKING_LEVEL_INDICATORS[normalized] ?? abbreviation;
+	return abbreviation;
 }
 
 function formatCostTrailing(total: number): string {
@@ -154,11 +161,10 @@ function formatCostTrailingPrecise(total: number): string {
 	return `${total.toFixed(3)}$`;
 }
 
-// Bottom-border label: `🢁 HIGH · 15.9% 210k · 0.03$` (the frame adds `─`/`╰`).
+// Bottom-border context label: `15.9% 210k · 0.03$` (the frame adds the tacks).
 // Colored with the same context-usage rules as the status-bar context items.
-function buildFrameStatusLabel(
+function buildFrameContextLabel(
 	ctx: ExtensionContext,
-	thinkingLevel: string | undefined,
 	theme?: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
 ): string {
 	const usage = ctx.getContextUsage();
@@ -180,23 +186,25 @@ function buildFrameStatusLabel(
 			? `${formatCostTrailing(cost)} | ${formatCostTrailingPrecise(totalCost)}`
 			: formatCostTrailing(cost);
 
-	const label = `${formatThinkingLevel(thinkingLevel)} · ${percent} ${tokens} · ${costLabel}`;
+	const label = `${percent} ${tokens} · ${costLabel}`;
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
 }
 
-type FrameStatusProvider = () => string | undefined;
+type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefined;
 
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
 	getDisplayMode: () => StatusBarDisplayMode;
-	/** Bottom-left corner label (thinking level, context usage, cost). */
+	/** Bottom-left corner label (context usage and cost). */
 	bottomLeft?: FrameStatusProvider;
-	/** Bottom-right corner label (safe-mode status). */
-	bottomRight?: FrameStatusProvider;
-	/** Top-left corner label (active provider/model), with the working highlight while streaming. */
+	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
+	bottomLeftStatus?: FrameStatusProvider;
+	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
+	/** Top-right corner label (git dirty totals). */
+	topRight?: FrameStatusProvider;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
 	/**
@@ -236,22 +244,25 @@ function renderBorderLine(
 /**
  * Default editor with rounded side borders and status labels rendered in the
  * frame corners. In `new` display mode the top-left corner shows the active
- * provider/model. While streaming, the label runs the configured animation
+ * provider/model plus effort (abbreviation, or arrows-only on narrow screens)
+ * and the top-right corner shows the git dirty totals. While streaming, the
+ * label runs the configured animation
  * (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
  * by one column on each side
  * (`│ <input> │`):
  *
  * ```
- * ╭-< cdx/5.6-sol >──────────────────────────────────╮
- * │ ... input ...                                   │
- * ╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
+ * ╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
+ * │ ... input ...                                         │
+ * ╰-< SMART >-·-< 15.9% 210k · 0.03$ >────────────────────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: FrameStatusProvider;
-	private readonly bottomRightProvider?: FrameStatusProvider;
+	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
+	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
@@ -268,8 +279,9 @@ class FrameStatusEditor extends CustomEditor {
 		this.frameTui = tui;
 		this.getDisplayMode = options.getDisplayMode;
 		this.bottomLeftProvider = options.bottomLeft;
-		this.bottomRightProvider = options.bottomRight;
+		this.bottomLeftStatusProvider = options.bottomLeftStatus;
 		this.topLeftProvider = options.topLeft;
+		this.topRightProvider = options.topRight;
 		this.getWorkingAnimation = options.getWorkingAnimation;
 		this.highlightColor = options.highlightColor;
 	}
@@ -335,18 +347,6 @@ class FrameStatusEditor extends CustomEditor {
 		return this.getDisplayMode() === "new";
 	}
 
-	private rightCornerSegment(
-		label: string,
-		useBorderColor = false,
-		options?: { leftCap?: string; rightCap?: string },
-	): string {
-		const sanitized = sanitizeStatusText(label);
-		const body = useBorderColor ? this.borderColor(sanitized) : sanitized;
-		const leftConnector = options?.leftCap ? `${this.borderColor(options.leftCap)} ` : " ";
-		const rightConnector = options?.rightCap ? ` ${options.rightCap}` : " ";
-		return `${leftConnector}${body}${this.borderColor(`${rightConnector}─`)}`;
-	}
-
 	/**
 	 * Color the model label while streaming. `comet` moves a leading highlight
 	 * 0..n-1..0 with a fading trail; `glitch` swaps a few characters for matrix
@@ -383,15 +383,31 @@ class FrameStatusEditor extends CustomEditor {
 			.join("");
 	}
 
+	/** Resolve the top-left model/effort label, optionally in compact (arrows-only) form. */
+	private topLeftLabel(compact: boolean): string | undefined {
+		const label = this.topLeftProvider?.({ compact });
+		return hasVisibleText(label) ? label : undefined;
+	}
+
 	/**
-	 * Top-left corner label: the active provider/model inside `-< ... >-` tacks.
+	 * Top-left corner label: model plus effort inside `-< ... >-` tacks.
 	 * While streaming the label runs the configured animation.
 	 */
-	private topLeftSegment(): string {
-		const modelLabel = this.topLeftProvider?.();
-		if (!hasVisibleText(modelLabel)) return "";
+	private topLeftSegment(label: string): string {
+		const body = this.renderModelLabel(label);
+		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
+	}
 
-		const body = this.renderModelLabel(modelLabel);
+	/**
+	 * Top-right corner label: git dirty totals inside `-< ... >-` tacks. The
+	 * producer's group separator dot is recolored to match the frame border.
+	 */
+	private topRightSegment(): string {
+		const label = this.topRightProvider?.();
+		if (!hasVisibleText(label)) return "";
+		const body = sanitizeStatusText(label)
+			.split("·")
+			.join(this.borderColor("·"));
 		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
 	}
 
@@ -474,48 +490,27 @@ class FrameStatusEditor extends CustomEditor {
 	renderTopBorder(width: number, hiddenLineCount: number): string {
 		if (!this.isBorderMode() || width <= 0) return super.renderTopBorder(width, hiddenLineCount);
 
-		const leftSegment = this.topLeftSegment();
+		const rightSegment = this.topRightSegment();
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		if (leftSegment && visibleWidth(leftSegment) + MIN_CORNER_LABEL_GAP <= width) {
-			if (visibleWidth(leftSegment) + visibleWidth(scrollSegment) < width) {
-				return renderBorderLine(width, leftSegment, scrollSegment, borderColor);
-			}
-			return renderBorderLine(width, leftSegment, "", borderColor);
-		}
+		// Prefer the full label; fall back to arrows-only effort on narrow screens.
+		// Leave room for the top-right label and the inter-label gap.
+		const leftBudget = Math.max(0, width - visibleWidth(rightSegment) - MIN_CORNER_LABEL_GAP);
+		const fits = (label: string) => visibleWidth(label) + FRAME_LABEL_TACK_WIDTH + MIN_CORNER_LABEL_GAP <= leftBudget;
+		const fullLabel = this.topLeftLabel(false);
+		const compactLabel = this.topLeftLabel(true);
+		const chosenLabel =
+			fullLabel && fits(fullLabel) ? fullLabel : compactLabel && fits(compactLabel) ? compactLabel : undefined;
+		const leftSegment = chosenLabel ? this.topLeftSegment(chosenLabel) : "";
 
-		if (scrollSegment && visibleWidth(scrollSegment) < width) {
-			return renderBorderLine(width, "", scrollSegment, borderColor);
-		}
-
-		return renderBorderLine(width, "", "", borderColor);
-	}
-
-	renderBottomBorder(width: number, hiddenLineCount: number): string {
-		if (!this.isBorderMode() || width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
-
-		const leftLabel = this.bottomLeftProvider?.();
-		const rightLabel = this.bottomRightProvider?.();
-		const hasLeft = hasVisibleText(leftLabel);
-		const hasRight = hasVisibleText(rightLabel);
-
-		if (!hasLeft && !hasRight) {
-			return super.renderBottomBorder(width, hiddenLineCount);
-		}
-
-		const leftSegment = hasLeft
-			? `${this.borderColor("-< ")}${sanitizeStatusText(leftLabel)}${this.borderColor(" >-")}`
-			: "";
-		const rightSegment = hasRight ? this.rightCornerSegment(rightLabel, false, { leftCap: "-<", rightCap: ">-" }) : "";
-		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
-
-		const borderColor = (text: string) => this.borderColor(text);
 		const candidates: Array<[string, string]> = [
 			[leftSegment, `${scrollSegment}${rightSegment}`],
 			[leftSegment, rightSegment],
 			[leftSegment, ""],
+			["", `${scrollSegment}${rightSegment}`],
 			["", rightSegment],
+			["", scrollSegment],
 		];
 
 		for (const [left, right] of candidates) {
@@ -525,6 +520,63 @@ class FrameStatusEditor extends CustomEditor {
 		}
 
 		return renderBorderLine(width, leftSegment, rightSegment, borderColor);
+	}
+
+	renderBottomBorder(width: number, hiddenLineCount: number): string {
+		if (!this.isBorderMode() || width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
+
+		const contextLabel = this.bottomLeftProvider?.();
+		const statusLabel = this.bottomLeftStatusProvider?.();
+		const leftSegment = this.bottomLeftSegment(contextLabel, statusLabel);
+
+		if (!leftSegment) {
+			return super.renderBottomBorder(width, hiddenLineCount);
+		}
+
+		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
+		const borderColor = (text: string) => this.borderColor(text);
+
+		if (visibleWidth(leftSegment) + visibleWidth(scrollSegment) < width) {
+			return renderBorderLine(width, leftSegment, scrollSegment, borderColor);
+		}
+		if (visibleWidth(leftSegment) < width) {
+			return renderBorderLine(width, leftSegment, "", borderColor);
+		}
+		if (scrollSegment && visibleWidth(scrollSegment) < width) {
+			return renderBorderLine(width, "", scrollSegment, borderColor);
+		}
+
+		return renderBorderLine(width, "", "", borderColor);
+	}
+
+	/**
+	 * Combined bottom-left segment. Safe-mode status comes first, context info
+	 * second, joined by the two tacks with a centered dot: `-< SMART >-·-< 15.9% 210k >-`.
+	 */
+	private bottomLeftSegment(contextLabel?: string, statusLabel?: string): string {
+		const hasContext = hasVisibleText(contextLabel);
+		const hasStatus = hasVisibleText(statusLabel);
+		if (!hasContext && !hasStatus) return "";
+
+		const open = this.borderColor("-< ");
+		const close = this.borderColor(" >-");
+
+		if (hasStatus && hasContext) {
+			const join = this.borderColor(`${FRAME_LABEL_JOIN}< `);
+			return `${open}${this.safeModeText(statusLabel)}${this.borderColor(" >")}${join}${sanitizeStatusText(contextLabel)}${close}`;
+		}
+		if (hasStatus) return `${open}${this.safeModeText(statusLabel)}${close}`;
+		return `${open}${sanitizeStatusText(contextLabel)}${close}`;
+	}
+
+	/**
+	 * Safe-mode label. SMART matches the frame border color; other modes keep the
+	 * producer's own color.
+	 */
+	private safeModeText(label: string): string {
+		const plain = stripAnsi(sanitizeStatusText(label));
+		if (/^SMART\+?$/.test(plain)) return this.borderColor(plain);
+		return sanitizeStatusText(label);
 	}
 }
 
@@ -604,18 +656,23 @@ function styleContextLabel(
 	return theme.fg("error", label);
 }
 
-// Border (top-left) model label: "provider/model-id" with alias tables applied,
-// id-only when provider is missing.
+// Border (top-left) model label: "provider/model-id (EFFORT)" with alias tables
+// applied, id-only when provider is missing. Effort is the abbreviation on wide
+// screens and the arrow indicator on narrow ones.
 function buildBorderModelLabel(
 	ctx: ExtensionContext,
 	providerAliases: StatusBarAliasMap,
 	modelAliases: StatusBarAliasMap,
+	thinkingLevel: string | undefined,
+	compactEffort: boolean,
 ): string | undefined {
 	const model = ctx.model;
 	if (!model?.id) return undefined;
 	const modelLabel = modelAliases[model.id] ?? model.id;
 	const providerLabel = model.provider ? (providerAliases[model.provider] ?? model.provider) : undefined;
-	return providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
+	const base = providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
+	if (typeof thinkingLevel !== "string" || !thinkingLevel.trim()) return base;
+	return `${base} (${formatThinkingLevel(thinkingLevel, { compact: compactEffort })})`;
 }
 
 function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
@@ -751,6 +808,10 @@ function parseClearArgs(args: string): StatusBarClearPayload | undefined {
 
 function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(/\u001B\[[0-9;]*m/g, "");
 }
 
 function hasVisibleText(value?: string): value is string {
@@ -1345,13 +1406,20 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return false;
 	};
 
+	// In `new` mode the repo dirty totals live on the editor frame top-right, so
+	// they are hidden from the first line to avoid duplication.
+	const isFirstLineSuppressed = (id: string): boolean => displayMode === "new" && id === REPO_STATS_ID;
+
 	const renderFirstLineSection = (
 		section: StatusBarSection,
 		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
 		attensionCoreSuffix?: string,
 	): string | undefined => {
 		const items = [...firstLineById.entries()]
-			.filter(([, entry]) => entry.section === section && hasVisibleText(entry.content))
+			.filter(
+				([id, entry]) =>
+					entry.section === section && hasVisibleText(entry.content) && !isFirstLineSuppressed(id),
+			)
 			.sort(([, a], [, b]) => b.priority - a.priority || a.order - b.order)
 			.map(([id, entry]) => {
 				const content = sanitizeStatusText(entry.content);
@@ -1366,8 +1434,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	const hasFirstLineContent = (): boolean => {
-		for (const entry of firstLineById.values()) {
-			if (hasVisibleText(entry.content)) return true;
+		for (const [id, entry] of firstLineById.entries()) {
+			if (hasVisibleText(entry.content) && !isFirstLineSuppressed(id)) return true;
 		}
 		return false;
 	};
@@ -1480,9 +1548,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		const activeContext = () => lastContext ?? ctx;
 		const options: FrameStatusEditorOptions = {
 			getDisplayMode: () => displayMode,
-			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
-			bottomRight: () => contentById.get(SAFE_MODE_ID),
-			topLeft: () => buildBorderModelLabel(activeContext(), providerAliases, modelAliases),
+			bottomLeft: () => buildFrameContextLabel(activeContext(), activeContext().ui.theme),
+			bottomLeftStatus: () => contentById.get(SAFE_MODE_ID),
+			topLeft: (opts) =>
+				buildBorderModelLabel(
+					activeContext(),
+					providerAliases,
+					modelAliases,
+					pi.getThinkingLevel(),
+					opts?.compact ?? false,
+				),
+			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
 			getWorkingAnimation: () => workingAnimation,
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;

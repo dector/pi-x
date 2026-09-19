@@ -117,7 +117,8 @@ context/model/safe-mode info:
 - `new` (border priority): editor frame shows the corner labels; status line 2 is
   omitted and the input/output/cache token breakdown moves to status line 1 (after
   the producer items) with no cost suffix. `safe-mode`, `switch-thinking`,
-  `context-watcher-model`, and `context-watcher-percent` are hidden.
+  `context-watcher-model`, and `context-watcher-percent` are hidden. The
+  `repo-stats` dirty totals also move from the first line to the frame top-right.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout.
 
@@ -154,22 +155,26 @@ Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
 full frame (`│` sides + rounded `╭ ╮ ╰ ╯` corners), enables one column of horizontal
 editor padding (`paddingX: 1`), and renders:
 
-- bottom-left: thinking level, context usage, and cumulative cost (`-< 🢁 HIGH · 15.9% 210k · 0.03$ >-`),
+- top-left: active provider + model ID + effort (`<ctx.model.provider>/<ctx.model.id> (<effort>)`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. The effort is the 3-4 lowercase level symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown. While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
+- top-right: `repo-stats` git dirty totals (`-< +1 -2 M4 · +150 -200 >-`), rendered only when the repo is dirty. The producer's `[ ]`/`|` are stripped and the file/line groups are separated by a `·` recolored to the frame border color. In `new` mode these totals are hidden from the first line; in `legacy` mode they stay there.
+- bottom-left: context usage and cumulative cost (`-< 15.9% 210k · 0.03$ >-`),
   colored with the same context-usage rules as the status-bar context items
   (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%). When subagent
   usage changes the total, cost renders as session | total (`0.01$ | 0.013$`),
   the total with three decimals so small subagent spend stays visible. It
   includes every subagent in the branch, nested ones included, and is omitted
   while the total rounds to the same three-decimal value as the session cost.
-- bottom-right: `safe-mode` producer content (for example `SMART`)
-- top-left: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
+- bottom-left, before context: `safe-mode` producer content (for example `SMART`),
+  joined to the context label by the two tacks with a centered dot (`-< SMART >-·-< 15.9% >-`). `SMART`
+  uses the frame border color; other modes keep the producer's own color.
 
 Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
+Two labels on the same edge are joined by the two tacks with a centered dot (`-< A >-·-< B >-`).
 Labels are dropped when the terminal is too narrow.
 The inner editor renders 2 columns narrower and applies `paddingX: 1`; autocomplete
 stays outside the frame and is indented to match. Mouse coordinates are shifted back by one
-column. When the editor is scrolled, `↓ N more` sits left of the bottom-right label and
-`↑ N more` sits on the right of the top border.
+column. When the editor is scrolled, `↓ N more` sits on the right of the bottom border
+and `↑ N more` sits on the right of the top border.
 
 ## Responsibility split
 
