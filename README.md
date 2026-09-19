@@ -28,6 +28,7 @@ This repo currently contains the following extension(s):
 | [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/px file.md`). | |
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
+| [`hub`](extensions/hub/README.md) | Central signal hub for cooperating extensions (bootstrap; contract not defined yet). | |
 
 ## Themes
 
