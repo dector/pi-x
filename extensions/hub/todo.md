@@ -71,5 +71,4 @@ each registering as a `perm:tool` provider.
 - [ ] No runtime/end-to-end tests; only unit tests (`safe-mode`, `http`, `sqlite`) and bundles
 - [ ] Without an http provider, read-only HTTP now `confirm`s (stricter than before)
 - [ ] Without a sqlite provider, read-only `sqlite` queries now `confirm` (stricter than before)
-- [ ] safe-mode approval prompts for `sqlite` (and `http`) now show raw JSON instead of a tool summary
 - [ ] Repeated event-constant duplication across extensions (no shared contract imports)

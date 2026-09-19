@@ -85,6 +85,7 @@ function parseReply(payload: unknown): HubReplyPayload | undefined {
 			what: item.what,
 			action,
 			reason: typeof item.reason === "string" ? item.reason : undefined,
+			summary: typeof item.summary === "string" ? item.summary : undefined,
 		});
 	}
 

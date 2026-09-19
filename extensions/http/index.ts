@@ -537,6 +537,12 @@ function buildWebSearchCallSummary(input: WebSearchToolParamsInput): string {
 	return `"${query}" (pages ${startPage}-${startPage + pages - 1})`;
 }
 
+function summarizeHttpPermissionCall(toolName: string, input: Record<string, unknown>): string {
+	const typed = input as HttpBaseParamsInput & WebSearchToolParamsInput;
+	if (toolName === "web_search") return buildWebSearchCallSummary(typed);
+	return buildCallSummary(typed);
+}
+
 const COLLAPSED_PREVIEW_LINES = 12;
 const COLLAPSED_PREVIEW_BYTES = 1600;
 
@@ -1428,7 +1434,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		if (Array.isArray(request.targets) && !request.targets.includes(HUB_ID)) return;
 		if (!Array.isArray(request.cap)) return;
 
-		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string }> = [];
+		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string; summary?: string }> = [];
 		for (const item of request.cap) {
 			if (typeof item !== "object" || item === null) continue;
 			const entry = item as { what?: unknown; data?: unknown };
@@ -1445,7 +1451,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 				mode: typeof data.mode === "string" ? data.mode : "smart",
 				projectRoot: typeof data.projectRoot === "string" ? data.projectRoot : process.cwd(),
 			});
-			if (decision) results.push({ what: "perm:tool", ...decision });
+			if (decision) results.push({ what: "perm:tool", ...decision, summary: summarizeHttpPermissionCall(toolName, input) });
 		}
 
 		pi.events.emit(HUB_REPLY_EVENT, { id: request.id, from: HUB_ID, results });

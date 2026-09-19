@@ -25,6 +25,9 @@ export type CapResult = {
 	what: string;
 	action: PermissionAction;
 	reason?: string;
+	// Optional human-readable one-line description of the classified call.
+	// Requesters (e.g. safe-mode) may use it for approval prompts.
+	summary?: string;
 };
 
 export type HubRegisterPayload = {

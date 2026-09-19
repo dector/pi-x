@@ -369,7 +369,7 @@ function getPersistedStateFromBranch(ctx: ExtensionContext): Partial<SafeModeSta
 	return { mode, outerAccess };
 }
 
-function getToolRequestText(toolName: string, input: Record<string, unknown>): string {
+function getToolRequestText(toolName: string, input: Record<string, unknown>, summaryOverride?: string): string {
 	if (toolName === "bash") {
 		const command = typeof input.command === "string" ? input.command.trim() : "";
 		return command.length > 0 ? command : "(empty command)";
@@ -387,7 +387,7 @@ function getToolRequestText(toolName: string, input: Record<string, unknown>): s
 		return `message: ${message || "(empty)"}\nfiles:\n${fileLines}`;
 	}
 
-	const summary = describeToolCall(toolName, input);
+	const summary = summaryOverride ?? describeToolCall(toolName, input);
 	const prefix = `${toolName}: `;
 	if (summary.startsWith(prefix)) {
 		return summary.slice(prefix.length);
@@ -406,14 +406,14 @@ function getExactBashCommand(input: Record<string, unknown>): string | undefined
 	return input.command;
 }
 
-function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): {
+function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, summaryOverride?: string): {
 	title: string;
 	message: string;
 } {
 	const theme = ctx.ui.theme;
 	const title = theme.fg("muted", "Approve?");
 	const toolLine = theme.fg("text", `[${toolName}]:`);
-	const request = getToolRequestText(toolName, input)
+	const request = getToolRequestText(toolName, input, summaryOverride)
 		.split("\n")
 		.map((line) => theme.bg("toolPendingBg", theme.fg("warning", theme.bold(line))))
 		.join("\n");
@@ -809,13 +809,13 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		toolName: string,
 		input: Record<string, unknown>,
 		projectRoot: string,
-	): Promise<{ action: HubAction; reason?: string } | undefined> => {
+	): Promise<{ action: HubAction; reason?: string; summary?: string } | undefined> => {
 		const id = `safe-mode-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 		return new Promise((resolve) => {
 			let settled = false;
 
-			const finish = (result: { action: HubAction; reason?: string } | undefined): void => {
+			const finish = (result: { action: HubAction; reason?: string; summary?: string } | undefined): void => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
@@ -830,7 +830,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 				const match = answer.results.find(
 					(result) => typeof result === "object" && result !== null && (result as { what?: unknown }).what === PERM_TOOL,
-				) as { action?: unknown; reason?: unknown } | undefined;
+				) as { action?: unknown; reason?: unknown; summary?: unknown } | undefined;
 				if (!match) {
 					finish(undefined);
 					return;
@@ -841,7 +841,11 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 					finish(undefined);
 					return;
 				}
-				finish({ action, reason: typeof match.reason === "string" ? match.reason : undefined });
+				finish({
+					action,
+					reason: typeof match.reason === "string" ? match.reason : undefined,
+					summary: typeof match.summary === "string" ? match.summary : undefined,
+				});
 			});
 
 			const timer = setTimeout(() => finish(undefined), HUB_TOOL_TIMEOUT_MS);
@@ -1381,7 +1385,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			};
 		}
 
-		const prompt = formatApprovalPrompt(ctx, event.toolName, input);
+		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary);
 		const approval = await withHerdrBlocked(`safe-mode approval: ${event.toolName}`, () =>
 			confirmApproval(ctx, prompt.title, prompt.message, {
 				allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),

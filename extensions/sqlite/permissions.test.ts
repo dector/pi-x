@@ -73,3 +73,10 @@ test("classifySqliteToolCall: malformed input requires approval", () => {
 	expect(decide("yolo", { action: "query", database: IN_REPO_DB, memory: true, sql: "select 1" })).toBe("confirm");
 	expect(decide("yolo", { action: "query", database: IN_REPO_DB, sql: "   " })).toBe("confirm");
 });
+
+test("summarizeSqliteToolCall: used for hub perm:tool replies", async () => {
+	const { summarizeSqliteToolCall } = await import("./sql.ts");
+	expect(summarizeSqliteToolCall({ action: "query", memory: true, sql: "select 1" })).toBe(
+		"sqlite: memory (read-only) — select 1",
+	);
+});

@@ -44,6 +44,28 @@ function decide(
 	return decideToolCall({ mode, toolName, input, projectRoot, outerAccess, trustedReadRoots });
 }
 
+test("decideToolCall: provider summary is used when present", () => {
+	const withSummary = decideToolCall({
+		mode: "smart",
+		toolName: "sqlite",
+		input: { action: "query", memory: true, sql: "select 1" },
+		projectRoot: PROJECT_ROOT,
+		outerAccess: false,
+		providerDecision: { action: "confirm", reason: "needs approval", summary: "sqlite: memory (read-only) — select 1" },
+	});
+	expect(withSummary.summary).toBe("sqlite: memory (read-only) — select 1");
+
+	const withoutSummary = decideToolCall({
+		mode: "smart",
+		toolName: "sqlite",
+		input: { action: "query", memory: true, sql: "select 1" },
+		projectRoot: PROJECT_ROOT,
+		outerAccess: false,
+		providerDecision: { action: "confirm", reason: "needs approval" },
+	});
+	expect(withoutSummary.summary).toBe("sqlite");
+});
+
 test("git classifier: normalize + classify", () => {
 	expect(normalizeGitToolArgs({})).toEqual([]);
 	expect(normalizeGitToolArgs({ args: [" status "] })).toEqual(["status"]);

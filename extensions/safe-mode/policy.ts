@@ -481,12 +481,13 @@ export function decideToolCall(args: {
 	trustedReadRoots?: string[];
 	// Classification supplied by a hub `perm:tool` provider. When present it
 	// replaces safe-mode's built-in per-tool rules; global constraints below
-	// (paranoid, outer access) still apply.
-	providerDecision?: { action: "allow" | "confirm" | "block"; reason?: string };
+	// (paranoid, outer access) still apply. `summary` is an optional one-line
+	// description from the provider, used for approval prompts.
+	providerDecision?: { action: "allow" | "confirm" | "block"; reason?: string; summary?: string };
 }): ToolDecision {
 	const { mode, toolName, input, projectRoot, outerAccess, trustedReadRoots, providerDecision } = args;
 	const gitClassification = toolName === "git" ? classifyGitToolCall(input) : undefined;
-	const summary = gitClassification?.summary ?? describeToolCall(toolName, input);
+	const summary = gitClassification?.summary ?? providerDecision?.summary ?? describeToolCall(toolName, input);
 
 	if (mode === "paranoid") {
 		return {

@@ -20,10 +20,10 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 
 ```ts
 type CapRequest = { what: string; data: Record<string, unknown> };
-type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?: string };
+type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?: string; summary?: string };
 ```
 
-`action` mirrors `safe-mode`'s `ToolDecision` so a provider can pass its verdict through unchanged.
+`action` mirrors `safe-mode`'s `ToolDecision` so a provider can pass its verdict through unchanged. `summary` is an optional one-line description of the classified call; requesters may use it for approval prompts.
 
 ## Capabilities
 
