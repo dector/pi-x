@@ -13,6 +13,15 @@ import {
 import { Type } from "@mariozechner/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { load as loadHtml } from "cheerio";
+import { classifyHttpToolCall, isHttpPermissionTool } from "./permissions";
+
+// hub permission protocol (see extensions/hub/PROTOCOL.md)
+const HUB_ID = "http";
+const HUB_REGISTER_EVENT = "hub:register";
+const HUB_UNREGISTER_EVENT = "hub:unregister";
+const HUB_REQUEST_EVENT = "hub:request";
+const HUB_REPLY_EVENT = "hub:reply";
+const HUB_CAPS = { provide: ["perm:tool"] };
 
 const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;
 const WEB_TO_MD_BASE_DIR = "/tmp/pi-http";
@@ -1400,4 +1409,45 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	// Register as a hub `perm:tool` provider so safe-mode defers HTTP risk rules
+	// to this extension instead of hardcoding them.
+	const registerWithHub = (): void => {
+		pi.events.emit(HUB_REGISTER_EVENT, { id: HUB_ID, caps: HUB_CAPS });
+	};
+
+	pi.on("session_start", registerWithHub);
+	pi.on("session_tree", registerWithHub);
+	pi.on("session_shutdown", () => {
+		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
+	});
+
+	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
+		if (typeof payload !== "object" || payload === null) return;
+		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown };
+		if (typeof request.id !== "string") return;
+		if (Array.isArray(request.targets) && !request.targets.includes(HUB_ID)) return;
+		if (!Array.isArray(request.cap)) return;
+
+		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string }> = [];
+		for (const item of request.cap) {
+			if (typeof item !== "object" || item === null) continue;
+			const entry = item as { what?: unknown; data?: unknown };
+			if (entry.what !== "perm:tool") continue;
+
+			const data = typeof entry.data === "object" && entry.data !== null ? (entry.data as Record<string, unknown>) : {};
+			const toolName = typeof data.toolName === "string" ? data.toolName : undefined;
+			if (!toolName || !isHttpPermissionTool(toolName)) continue;
+
+			const input = typeof data.input === "object" && data.input !== null ? (data.input as Record<string, unknown>) : {};
+			const decision = classifyHttpToolCall({
+				toolName,
+				input,
+				mode: typeof data.mode === "string" ? data.mode : "smart",
+				projectRoot: typeof data.projectRoot === "string" ? data.projectRoot : process.cwd(),
+			});
+			if (decision) results.push({ what: "perm:tool", ...decision });
+		}
+
+		pi.events.emit(HUB_REPLY_EVENT, { id: request.id, from: HUB_ID, results });
+	});
 }

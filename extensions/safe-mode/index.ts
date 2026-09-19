@@ -808,6 +808,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	const askHubForToolDecision = (
 		toolName: string,
 		input: Record<string, unknown>,
+		projectRoot: string,
 	): Promise<{ action: HubAction; reason?: string } | undefined> => {
 		const id = `safe-mode-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -845,35 +846,34 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 			const timer = setTimeout(() => finish(undefined), HUB_TOOL_TIMEOUT_MS);
 
-			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what: PERM_TOOL, data: { toolName, input } }] });
+			pi.events.emit(HUB_ASK_EVENT, {
+				id,
+				from: HUB_ID,
+				cap: [{ what: PERM_TOOL, data: { toolName, input, mode, projectRoot, outerAccess } }],
+			});
 		});
 	};
 
-	const ACTION_RANK: Record<HubAction, number> = { allow: 0, confirm: 1, block: 2 };
-
-	// Built-in policy decides by default; hub providers can only make it stricter.
+	// Built-in policy is the fallback; a hub `perm:tool` provider is authoritative
+	// for its tools.
 	const decideToolCallWithHub = async (
 		toolName: string,
 		input: Record<string, unknown>,
 		ctx: ExtensionContext,
 	) => {
-		const builtin = decideToolCall({
+		const hub = await askHubForToolDecision(toolName, input, ctx.cwd);
+		const hasProviderDecision =
+			hub !== undefined && hub.reason !== "no hub provider" && hub.reason !== "no provider answered";
+
+		return decideToolCall({
 			mode,
 			toolName,
 			input,
 			projectRoot: ctx.cwd,
 			outerAccess,
 			trustedReadRoots: getTrustedReadRoots(),
+			providerDecision: hasProviderDecision ? hub : undefined,
 		});
-
-		const hub = await askHubForToolDecision(toolName, input);
-		if (!hub) return builtin;
-		if (hub.action === "block" && hub.reason === "no hub provider") return builtin;
-
-		if (ACTION_RANK[hub.action] > ACTION_RANK[builtin.action]) {
-			return { action: hub.action, reason: hub.reason ?? builtin.reason, summary: builtin.summary };
-		}
-		return builtin;
 	};
 
 	function updateStatus(ctx: ExtensionContext): void {

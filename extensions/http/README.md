@@ -143,6 +143,13 @@ Unsupported curl flags fail with explicit errors.
 - Memoryfs eviction policy: entries expire after ~1 hour and total cache is capped at ~30MB (oldest entries evicted first).
 - `insecure` / `--insecure` is ignored in fetch mode and reported as a warning.
 
+## Permissions
+
+`http` registers as a hub `perm:tool` provider and owns the risk rules for
+`http`, `http_md`, and `web_search` (read-only methods, output files, memfs
+reads). `safe-mode` asks hub instead of hardcoding them. See
+[`../hub/PROTOCOL.md`](../hub/PROTOCOL.md).
+
 ## Install
 
 Copy this folder into a standard pi extension location:

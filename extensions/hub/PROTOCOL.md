@@ -64,13 +64,14 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 `perm:tool`
 
 ```ts
-{ toolName: string; input: Record<string, unknown> }
+{ toolName: string; input: Record<string, unknown>; mode: string; projectRoot: string; outerAccess: boolean }
 ```
 
 `perm:tool` providers **classify only** and must answer quickly. Prompting is
 left to the requester (`safe-mode`), which treats a `confirm` result as its
-normal approval flow. `safe-mode` is the fallback when no `perm:tool` provider
-is registered.
+normal approval flow. Safe-mode still applies `paranoid` and outer-access
+constraints; a provider is authoritative for its own tools. `safe-mode` is the
+fallback when no `perm:tool` provider is registered.
 
 ## Flow
 
