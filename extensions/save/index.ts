@@ -69,7 +69,7 @@ function resolveOutputFilename(rawArgs: string): string {
 }
 
 export default function saveExtension(pi: ExtensionAPI): void {
-	pi.registerCommand("px:save", {
+	pi.registerCommand("save", {
 		description: "Save the latest assistant response to a Markdown file",
 		handler: async (args, ctx) => {
 			const latestResponse = getLatestAssistantResponse(ctx);

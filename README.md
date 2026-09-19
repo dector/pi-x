@@ -25,7 +25,7 @@ This repo currently contains the following extension(s):
 | [`pi-ui`](extensions/pi-ui/README.md) | UI tweaks extension (currently a colorful configurable working indicator animation). | |
 | [`pi-nvim`](extensions/pi-nvim/README.md) | Unix-socket bridge for sending prompts into a running pi session from compatible Neovim clients. | compatible Neovim plugin |
 | [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/px:attension-core-test` command. | |
-| [`save`](extensions/save/README.md) | Adds a `/px:save` command to write the latest assistant response to Markdown (`/px:save` or `/px:save file.md`). | |
+| [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/px file.md`). | |
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
 
