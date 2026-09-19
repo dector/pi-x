@@ -22,6 +22,7 @@ subagent/
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans
 │   ├── reviewer.md      # Code review
+│   ├── researcher.md    # Web + local research with citations
 │   ├── ultra-reviewer-explicit.md  # Deep review (gpt-5.6-sol) — only on explicit request
 │   └── worker.md        # General-purpose (full capabilities)
 └── prompts/             # Workflow presets (prompt templates)
@@ -163,6 +164,7 @@ Project agents override user agents with the same name when `agentScope: "both"`
 | `scout` | Fast codebase recon | deepseek-v4.1-flash | low | read, grep, find, ls, bash |
 | `planner` | Implementation plans | deepseek-v4.1-flash | high | read, grep, find, ls |
 | `reviewer` | Code review | deepseek-v4.1-flash | max | read, grep, find, ls, bash |
+| `researcher` | Web + local research with citations | deepseek-v4.1-flash | high | web_search, http_md, http, read, grep, find, ls |
 | `ultra-reviewer-explicit` | Deep adversarial review (only on explicit request) | gpt-5.6-sol | max | read, grep, find, ls, bash |
 | `worker` | General-purpose | deepseek-v4.1-flash | high | (all default) |
 
