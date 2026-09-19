@@ -109,12 +109,46 @@ Optional global config at `~/.pi/agent/proc.json`:
 ## Commands
 
 ```text
-/px:proc                                list processes
+/px:proc                                interactive process manager
+/px:proc list                           plain-text list
 /px:proc logs <name> [lines] [--start]  read logs (user cursor)
 /px:proc stop|kill|forget [name]        manage a process
 ```
 
 When `<name>` is omitted, a picker is shown.
+
+### Interactive manager (`/px:proc`)
+
+Opens a live view of all processes (refreshes every ~300ms).
+
+```text
+────────────────────────────────────────────────
+Processes (2)
+────────────────────────────────────────────────
+▸ ● vite      running  pid 1234  12s      +3
+  ● npm       exited   pid 1222  8s  code 0
+────────────────────────────────────────────────
+↑↓/j k navigate • enter logs • d stop/kill • esc close
+```
+
+- `↑`/`↓` or `j`/`k` — move the cursor.
+- `enter` — open the scrollable log viewer for the selected process.
+- `d` — delete: for a running process, asks `Stop "<name>"? (y/N)` first
+  (`y` confirms, `n`/`esc` cancels), then stops it (SIGTERM, escalates to
+  SIGKILL after ~3s) and removes it from the list once it exits. An already
+  exited process is removed immediately (same as `forget`).
+- `esc` or `q` — close the manager.
+
+Inside the log viewer:
+
+- `↑`/`↓` or `j`/`k` — scroll one line.
+- `pageUp`/`pageDown` — scroll a page.
+- `g`/`home` and `G`/`end` — jump to the top or bottom. New output follows
+  automatically while at the bottom.
+- `esc` or `q` — return to the process list.
+
+Viewing logs in the manager reads the buffered lines directly, so it does not
+consume what the agent sees.
 
 ## Install
 

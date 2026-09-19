@@ -2,8 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const EXTENSION_ID = "proc";
@@ -37,6 +38,13 @@ const USER_READER = "user";
 const DEFAULT_LOG_TAIL = 200;
 const MAX_LOG_TAIL = 2000;
 const MAX_WAIT_SECONDS = 30;
+
+const MANAGER_REFRESH_MS = 300;
+const MANAGER_MIN_ROWS = 5;
+const MANAGER_MAX_ROWS = 18;
+const LOG_MIN_ROWS = 6;
+const LOG_MAX_ROWS = 24;
+const LOG_SCROLL_STEP = 5;
 
 interface ProcConfig {
 	maxProcesses: number;
@@ -140,6 +148,10 @@ function normalizeLine(raw: string): string | undefined {
 	if (clean.trim().length === 0) return undefined;
 	if (clean.length <= MAX_LINE_LENGTH) return clean;
 	return `${clean.slice(0, MAX_LINE_LENGTH)}…(+${clean.length - MAX_LINE_LENGTH})`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
 }
 
 function renderDuration(ms: number): string {
@@ -607,6 +619,333 @@ async function pickName(ctx: ExtensionContext, onlyRunning: boolean): Promise<st
 	return choice.split(" ")[0];
 }
 
+/**
+ * Interactive process manager for `/px:proc`.
+ *
+ * List mode: j/k and arrows move the cursor, enter opens the log viewer,
+ * d stops a running process (or forgets an exited one), esc/q closes.
+ * Log mode: j/k and arrows scroll, g/G jump to top/bottom, esc/q returns.
+ */
+class ProcManager implements Component {
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly done: (result: null) => void;
+	private readonly pendingForget = new Set<string>();
+	private mode: "list" | "logs" = "list";
+	private selectedName?: string;
+	private listOffset = 0;
+	private logName?: string;
+	private logOffset = 0;
+	private follow = true;
+	private status = "";
+	private pendingDelete?: string;
+	private timer?: ReturnType<typeof setInterval>;
+
+	constructor(tui: TUI, theme: Theme, done: (result: null) => void) {
+		this.tui = tui;
+		this.theme = theme;
+		this.done = done;
+		this.timer = setInterval(() => this.tick(), MANAGER_REFRESH_MS);
+	}
+
+	dispose(): void {
+		if (this.timer) clearInterval(this.timer);
+		this.timer = undefined;
+	}
+
+	invalidate(): void {
+		// Rendering is derived from live process state, so nothing is cached here.
+	}
+
+	private currentList(): ProcRecord[] {
+		return [...globalState.records].sort(sortRecords);
+	}
+
+	private selectedIndex(list: ProcRecord[]): number {
+		if (this.selectedName) {
+			const index = list.findIndex((record) => record.name === this.selectedName);
+			if (index >= 0) return index;
+		}
+		return 0;
+	}
+
+	private listRows(): number {
+		return clamp(Math.floor(this.tui.terminal.rows * 0.5), MANAGER_MIN_ROWS, MANAGER_MAX_ROWS);
+	}
+
+	private logRows(): number {
+		return clamp(Math.floor(this.tui.terminal.rows * 0.6), LOG_MIN_ROWS, LOG_MAX_ROWS);
+	}
+
+	/** Remove processes that were killed from the manager once they exited. */
+	private tick(): void {
+		for (const name of [...this.pendingForget]) {
+			const record = findRecord(name);
+			if (!record) {
+				this.pendingForget.delete(name);
+				continue;
+			}
+			if (!isRunning(record)) {
+				removeRecord(record);
+				publishRow();
+				this.pendingForget.delete(name);
+				this.status = `Removed ${name}.`;
+			}
+		}
+		this.tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const renderWidth = Math.max(1, width);
+		const border = this.theme.fg("accent", "─".repeat(renderWidth));
+		if (this.mode === "logs") return this.renderLogs(renderWidth, border);
+		return this.renderList(renderWidth, border);
+	}
+
+	private renderList(width: number, border: string): string[] {
+		const theme = this.theme;
+		const list = this.currentList();
+		const rows = this.listRows();
+		const selectedIndex = this.selectedIndex(list);
+		const lines: string[] = [
+			border,
+			truncateToWidth(theme.fg("accent", theme.bold(`Processes (${list.length})`)), width),
+			theme.fg("dim", "─".repeat(width)),
+		];
+
+		if (list.length === 0) {
+			lines.push(truncateToWidth(theme.fg("muted", "No processes. Start one with proc run."), width));
+			for (let row = 1; row < rows; row += 1) lines.push("");
+		} else {
+			const maxOffset = Math.max(0, list.length - rows);
+			if (selectedIndex < this.listOffset) this.listOffset = selectedIndex;
+			if (selectedIndex >= this.listOffset + rows) this.listOffset = selectedIndex - rows + 1;
+			this.listOffset = clamp(this.listOffset, 0, maxOffset);
+			for (let row = 0; row < rows; row += 1) {
+				const record = list[this.listOffset + row];
+				if (!record) {
+					lines.push("");
+					continue;
+				}
+				lines.push(this.renderListRow(record, this.listOffset + row === selectedIndex, width));
+			}
+		}
+
+		lines.push(theme.fg("dim", "─".repeat(width)));
+		lines.push(truncateToWidth(theme.fg("dim", "↑↓/j k navigate • enter logs • d stop/kill • esc close"), width));
+		if (this.status) lines.push(truncateToWidth(theme.fg(this.pendingDelete ? "warning" : "muted", this.status), width));
+		return lines;
+	}
+
+	private renderListRow(record: ProcRecord, selected: boolean, width: number): string {
+		const theme = this.theme;
+		const marker = selected ? theme.fg("accent", "▸") : " ";
+		const dot = `${statusDot(record)}●${ANSI_RESET}`;
+		const durationMs = (record.state === "exited" && record.endedAt ? record.endedAt : Date.now()) - record.startedAt;
+		const unread = unreadCount(record);
+		const info = [
+			record.state,
+			record.pid ? `pid ${record.pid}` : "",
+			renderDuration(durationMs),
+			record.state === "exited" ? exitLabel(record) : "",
+			unread > 0 ? `+${unread}` : "",
+		]
+			.filter(Boolean)
+			.join("  ");
+		const name = record.name.length > 20 ? `${record.name.slice(0, 19)}…` : record.name.padEnd(20);
+		const body = `${name}  ${info}`;
+		return truncateToWidth(`${marker} ${dot} ${selected ? theme.fg("accent", body) : body}`, width);
+	}
+
+	private renderLogs(width: number, border: string): string[] {
+		const theme = this.theme;
+		const rows = this.logRows();
+		const record = this.logName ? findRecord(this.logName) : undefined;
+		const lines: string[] = [border];
+
+		if (!record) {
+			lines.push(truncateToWidth(theme.fg("warning", `${this.logName ?? "process"} is gone`), width));
+			for (let row = 0; row < rows; row += 1) lines.push("");
+			lines.push(theme.fg("dim", "─".repeat(width)));
+			lines.push(truncateToWidth(theme.fg("dim", "esc/q back"), width));
+			return lines;
+		}
+
+		const durationMs = (record.state === "exited" && record.endedAt ? record.endedAt : Date.now()) - record.startedAt;
+		const header = `${record.name}  ${record.state}${record.pid ? `  pid ${record.pid}` : ""}  ${renderDuration(durationMs)}  ${exitLabel(record)}`;
+		lines.push(truncateToWidth(theme.fg("accent", theme.bold(header)), width));
+		lines.push(truncateToWidth(theme.fg("dim", record.command.replace(/\s+/g, " ")), width));
+		lines.push(theme.fg("dim", "─".repeat(width)));
+
+		const total = record.lines.length;
+		const maxStart = Math.max(0, total - rows);
+		const start = this.follow ? maxStart : clamp(this.logOffset, 0, maxStart);
+		this.logOffset = start;
+		for (let row = 0; row < rows; row += 1) {
+			const line = record.lines[start + row];
+			if (!line) {
+				lines.push("");
+				continue;
+			}
+			const abs = record.baseLine + start + row;
+			const source = line.source === "err" ? theme.fg("error", "err:") : theme.fg("dim", "out:");
+			const text = line.source === "err" ? theme.fg("error", line.text) : line.text;
+			lines.push(truncateToWidth(`${theme.fg("dim", `${String(abs).padStart(4)} `)}${source} ${text}`, width));
+		}
+
+		lines.push(theme.fg("dim", "─".repeat(width)));
+		const position = total > rows ? `${start + 1}-${Math.min(total, start + rows)}/${total}${this.follow ? " follow" : ""}` : `${total} lines`;
+		lines.push(truncateToWidth(theme.fg("dim", `↑↓/j k scroll • g/G top/bottom • esc back    ${position}`), width));
+		if (this.status) lines.push(truncateToWidth(theme.fg("muted", this.status), width));
+		return lines;
+	}
+
+	handleInput(data: string): void {
+		if (this.mode === "logs") {
+			this.handleLogsInput(data);
+			return;
+		}
+		this.handleListInput(data);
+	}
+
+	private handleListInput(data: string): void {
+		if (this.pendingDelete) {
+			if (data === "y" || data === "Y") {
+				const name = this.pendingDelete;
+				this.pendingDelete = undefined;
+				this.deleteByName(name);
+			} else if (data === "n" || data === "N" || data === "q" || matchesKey(data, Key.escape)) {
+				this.pendingDelete = undefined;
+				this.status = "Cancelled.";
+				this.tui.requestRender();
+			}
+			return;
+		}
+
+		const list = this.currentList();
+		if (matchesKey(data, Key.escape) || data === "q") {
+			this.done(null);
+			return;
+		}
+		if (list.length === 0) return;
+
+		const index = this.selectedIndex(list);
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.selectedName = list[Math.max(0, index - 1)]?.name;
+			this.status = "";
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j") {
+			this.selectedName = list[Math.min(list.length - 1, index + 1)]?.name;
+			this.status = "";
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, Key.enter)) {
+			const record = list[index];
+			if (!record) return;
+			this.mode = "logs";
+			this.logName = record.name;
+			this.follow = true;
+			this.logOffset = Number.MAX_SAFE_INTEGER;
+			this.status = "";
+			this.tui.requestRender();
+			return;
+		}
+		if (data === "d") {
+			const record = list[index];
+			if (!record) return;
+			if (isRunning(record)) {
+				this.pendingDelete = record.name;
+				this.status = `Stop "${record.name}"? (y/N)`;
+				this.tui.requestRender();
+			} else {
+				this.deleteByName(record.name);
+			}
+		}
+	}
+
+	private deleteByName(name: string): void {
+		const record = findRecord(name);
+		if (!record) {
+			this.status = "";
+			this.tui.requestRender();
+			return;
+		}
+		try {
+			if (isRunning(record)) {
+				if (record.state !== "stopping") stopProcess(record, undefined, false);
+				this.pendingForget.add(record.name);
+				this.status = `Stopping ${record.name}…`;
+			} else {
+				removeRecord(record);
+				publishRow();
+				this.status = `Removed ${record.name}.`;
+			}
+		} catch (error) {
+			this.status = `Failed: ${error instanceof Error ? error.message : String(error)}`;
+		}
+		this.tui.requestRender();
+	}
+
+	private handleLogsInput(data: string): void {
+		if (matchesKey(data, Key.escape) || data === "q") {
+			this.mode = "list";
+			this.logName = undefined;
+			this.status = "";
+			this.tui.requestRender();
+			return;
+		}
+
+		const record = this.logName ? findRecord(this.logName) : undefined;
+		if (!record) return;
+		const rows = this.logRows();
+		const maxStart = Math.max(0, record.lines.length - rows);
+		const currentStart = this.follow ? maxStart : clamp(this.logOffset, 0, maxStart);
+		const toBottom = (): void => {
+			this.follow = true;
+			this.logOffset = maxStart;
+		};
+
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.follow = false;
+			this.logOffset = clamp(currentStart - 1, 0, maxStart);
+		} else if (matchesKey(data, Key.down) || data === "j") {
+			if (currentStart >= maxStart) toBottom();
+			else {
+				this.follow = false;
+				this.logOffset = currentStart + 1;
+			}
+		} else if (matchesKey(data, Key.pageUp)) {
+			this.follow = false;
+			this.logOffset = clamp(currentStart - LOG_SCROLL_STEP, 0, maxStart);
+		} else if (matchesKey(data, Key.pageDown)) {
+			if (currentStart + LOG_SCROLL_STEP >= maxStart) toBottom();
+			else {
+				this.follow = false;
+				this.logOffset = currentStart + LOG_SCROLL_STEP;
+			}
+		} else if (data === "g" || matchesKey(data, Key.home)) {
+			this.follow = false;
+			this.logOffset = 0;
+		} else if (data === "G" || matchesKey(data, Key.end)) {
+			toBottom();
+		} else {
+			return;
+		}
+		this.tui.requestRender();
+	}
+}
+
+async function openProcManager(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) {
+		notifyText(ctx, formatList());
+		return;
+	}
+	await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new ProcManager(tui, theme, done));
+}
+
 const ProcToolParams = Type.Object({
 	action: StringEnum(PROC_ACTIONS, {
 		description: "run=start a background process; list/status=inspect; logs=read output; stop/kill=terminate; write=send stdin; forget=drop an exited process",
@@ -793,14 +1132,19 @@ export default function procExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("px:proc", {
-		description: "Manage background processes: list, logs <name> [lines] [--start], stop|kill|forget [name]",
+		description: "Manage background processes interactively, or via list/logs/stop/kill/forget",
 		handler: async (rawArgs, ctx) => {
 			globalState.pi = pi;
 			globalState.ctx = ctx;
 			const tokens = (rawArgs ?? "").trim().split(/\s+/).filter(Boolean);
 			const sub = tokens.shift();
 
-			if (!sub || sub === "list") {
+			if (!sub) {
+				await openProcManager(ctx);
+				return;
+			}
+
+			if (sub === "list") {
 				notifyText(ctx, formatList());
 				return;
 			}
@@ -861,7 +1205,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			notifyText(ctx, "Usage: /px:proc [list] | /px:proc logs <name> [lines] [--start] | /px:proc stop|kill|forget [name]", "warning");
+			notifyText(ctx, "Usage: /px:proc | /px:proc list | /px:proc logs <name> [lines] [--start] | /px:proc stop|kill|forget [name]", "warning");
 		},
 	});
 }
