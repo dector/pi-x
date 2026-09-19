@@ -12,8 +12,15 @@ between them (permissions being the first target).
 
 ## Status
 
-Bootstrap only. The extension loads but emits or handles nothing yet. The
-event contract will be added incrementally once the design is agreed.
+Provides the register/ask/reply/answer channels, a capability registry, and
+most-restrictive arbitration. `safe-mode` is the first provider (permissions);
+`subagent` is the first requester (`perm:agent`).
+
+## Commands
+
+- `/px:hub` — show registered providers and pending permission requests.
+
+See [`PROTOCOL.md`](PROTOCOL.md) for the channel and payload contract.
 
 ## Install
 

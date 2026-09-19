@@ -211,4 +211,28 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		const allAnswered = request.cap.every((entry) => (request.resultsByWhat.get(entry.what)?.length ?? 0) > 0);
 		if (allAnswered || request.pendingTargets.size === 0) finalize(reply.id);
 	});
+
+	pi.registerCommand("px:hub", {
+		description: "Show hub providers and pending permission requests",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return;
+
+			const providerLines = [...capsByProvider.entries()]
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([id, caps]) => `- ${id}: ${[...caps].sort().join(", ") || "(none)"}`);
+
+			const pendingLines = [...pending.entries()].map(
+				([id, request]) => `- ${id}: ${request.cap.map((entry) => entry.what).join(", ")}`,
+			);
+
+			const lines = [
+				`hub providers: ${capsByProvider.size}`,
+				...(providerLines.length > 0 ? providerLines : ["- (none)"]),
+				`pending asks: ${pending.size}`,
+				...pendingLines,
+			];
+
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
 }
