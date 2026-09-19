@@ -53,6 +53,7 @@ function parseAsk(payload: unknown): HubAskPayload | undefined {
 	return {
 		id: payload.id,
 		from: typeof payload.from === "string" ? payload.from : undefined,
+		ctx: payload.ctx,
 		cap,
 	};
 }
@@ -108,6 +109,7 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		pi.events.emit(HUB_CHANNELS.request, {
 			id: ask.id,
 			from: ask.from,
+			ctx: ask.ctx,
 			cap: ask.cap,
 			targets: [...targets],
 		});

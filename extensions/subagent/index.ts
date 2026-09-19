@@ -22,6 +22,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
+	type ExtensionContext,
 	getAgentDir,
 	getMarkdownTheme,
 	withFileMutationQueue,
@@ -482,7 +483,11 @@ const SubagentParams = Type.Object({
 export default function (pi: ExtensionAPI) {
 	// Ask the hub for a permission decision. Resolves with the returned action,
 	// or undefined when no provider answers within the timeout.
-	const askHubPermission = (what: string, data: Record<string, unknown>): Promise<string | undefined> => {
+	const askHubPermission = (
+		what: string,
+		data: Record<string, unknown>,
+		ctx: ExtensionContext,
+	): Promise<string | undefined> => {
 		const id = newHubRequestId();
 
 		return new Promise((resolve) => {
@@ -510,7 +515,7 @@ export default function (pi: ExtensionAPI) {
 
 			const timer = setTimeout(() => finish(undefined), HUB_PERMISSION_TIMEOUT_MS);
 
-			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what, data }] });
+			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what, data }], ctx });
 		});
 	};
 
@@ -575,11 +580,15 @@ export default function (pi: ExtensionAPI) {
 				if (projectAgentsRequested.length > 0) {
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const decision = await askHubPermission(PERM_AGENT, {
-						agents: names,
-						source: dir,
-						cwd: ctx.cwd,
-					});
+					const decision = await askHubPermission(
+						PERM_AGENT,
+						{
+							agents: names,
+							source: dir,
+							cwd: ctx.cwd,
+						},
+						ctx,
+					);
 					if (decision !== "allow")
 						return {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],

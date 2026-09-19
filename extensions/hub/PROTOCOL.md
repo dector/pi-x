@@ -10,8 +10,8 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 | --- | --- | --- |
 | `hub:register` | client → hub | `{ id, caps: { provide: string[] } }` |
 | `hub:unregister` | client → hub | `{ id }` |
-| `hub:ask` | client → hub | `{ id, from?, cap: CapRequest[] }` |
-| `hub:request` | hub → provider | `{ id, from?, cap: CapRequest[], targets: string[] }` |
+| `hub:ask` | client → hub | `{ id, from?, ctx?, cap: CapRequest[] }` |
+| `hub:request` | hub → provider | `{ id, from?, ctx?, cap: CapRequest[], targets: string[] }` |
 | `hub:answer` | provider → client | `{ id, results: CapResult[] }` |
 
 - `id` on `hub:ask` is a correlation id; the same `id` comes back on `hub:answer`.
@@ -71,5 +71,4 @@ requester <────────────hub:answer───────�
 - Arbitration when several providers can answer one `what`.
 - Behavior when no provider is registered (deny? prompt? allow?).
 - Timeout and fallback.
-- Does `hub:ask` carry `ctx` so a provider can prompt? (repo convention: yes.)
 - Is `confirm` handled by the provider (UI there) or returned to the requester?

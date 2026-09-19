@@ -1212,25 +1212,48 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
 	});
 
-	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
+	pi.events.on(HUB_REQUEST_EVENT, async (payload) => {
 		if (typeof payload !== "object" || payload === null) return;
-		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown };
+		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown; ctx?: unknown };
 		if (typeof request.id !== "string") return;
 		if (Array.isArray(request.targets) && !request.targets.includes(HUB_ID)) return;
 		if (!Array.isArray(request.cap)) return;
 
+		const ctx = request.ctx as ExtensionContext | undefined;
 		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string }> = [];
+
 		for (const item of request.cap) {
 			if (typeof item !== "object" || item === null) continue;
 			const what = (item as { what?: unknown }).what;
-			if (typeof what !== "string") continue;
-			// TODO: real policy per capability; interactive approval needs ctx.
-			if (what === "perm:agent") {
-				results.push(
-					mode === "yolo"
-						? { what, action: "allow" }
-						: { what, action: "block", reason: "project-local agents need approval (hub approval not wired yet)" },
-				);
+			if (typeof what !== "string" || what !== "perm:agent") continue;
+
+			if (mode === "yolo") {
+				results.push({ what, action: "allow" });
+				continue;
+			}
+
+			if (!ctx?.hasUI) {
+				results.push({ what, action: "block", reason: "project-local agents need approval, but no UI is available" });
+				continue;
+			}
+
+			const rawData = (item as { data?: unknown }).data;
+			const data = typeof rawData === "object" && rawData !== null ? (rawData as Record<string, unknown>) : {};
+			const agents = typeof data.agents === "string" ? data.agents : "project agents";
+			const source = typeof data.source === "string" ? data.source : "(unknown)";
+
+			const decision = await withHerdrBlocked("safe-mode approval: perm:agent", () =>
+				confirmApproval(
+					ctx,
+					"Run project-local agents?",
+					`\nAgents: ${agents}\nSource: ${source}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+				),
+			);
+
+			if (decision === "approve-once" || decision === "approve-all-session" || decision === "approve-project") {
+				results.push({ what, action: "allow" });
+			} else {
+				results.push({ what, action: "block", reason: "project-local agents not approved" });
 			}
 		}
 

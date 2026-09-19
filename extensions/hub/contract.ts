@@ -38,6 +38,7 @@ export type HubUnregisterPayload = {
 export type HubAskPayload = {
 	id: string;
 	from?: string;
+	ctx?: unknown;
 	cap: CapRequest[];
 };
 
