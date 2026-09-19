@@ -17,7 +17,7 @@ Permissions are the first domain. See [`PROTOCOL.md`](PROTOCOL.md).
 
 - [x] hub bootstrap, protocol, registry, routing, arbitration, `/px:hub`
 - [x] `perm:agent`: `subagent` asks, `safe-mode` decides interactively
-- [x] `perm:tool`: `safe-mode` asks, `http` classifies `http`/`http_md`/`web_search`
+- [x] `perm:tool`: `safe-mode` asks, `http` classifies `http`/`http_md`/`web_search`, `sqlite` classifies `sqlite`
 - [x] HTTP risk rules moved out of safe-mode
 
 ## 1. Finish permission migration
@@ -27,7 +27,7 @@ each registering as a `perm:tool` provider.
 
 - [x] `http` — `classifyHttpToolCall`
 - [ ] `git` — `classifyGitToolCall`
-- [ ] `sqlite` — `classifySqliteQueryForPolicy`
+- [x] `sqlite` — `classifySqliteToolCall`
 - [ ] `proc` — `classifyProcToolCall`
 - [ ] `flutter` — tool classification
 - [ ] `commit` (git ext) — file scope rules
@@ -68,6 +68,8 @@ each registering as a `perm:tool` provider.
 
 - [ ] `http` GET still prompted in a manual test — verify hub/http are the loaded copies and the provider replies
 - [ ] `perm:tool` ask adds ~300 ms when hub is absent (short timeout); consider skipping when hub never registered
-- [ ] No runtime/end-to-end tests; only unit tests (`safe-mode`, `http`) and bundles
+- [ ] No runtime/end-to-end tests; only unit tests (`safe-mode`, `http`, `sqlite`) and bundles
 - [ ] Without an http provider, read-only HTTP now `confirm`s (stricter than before)
+- [ ] Without a sqlite provider, read-only `sqlite` queries now `confirm` (stricter than before)
+- [ ] safe-mode approval prompts for `sqlite` (and `http`) now show raw JSON instead of a tool summary
 - [ ] Repeated event-constant duplication across extensions (no shared contract imports)

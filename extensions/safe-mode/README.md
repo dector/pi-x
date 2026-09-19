@@ -64,7 +64,9 @@ Notes:
 
 ## Read-only `sqlite` tool auto-allow
 
-`safe-mode` classifies `sqlite` queries and applies mode rules:
+The [`sqlite`](../sqlite/README.md) extension owns the `sqlite` risk rules and
+registers as a hub `perm:tool` provider; `safe-mode` asks hub instead of
+hardcoding them.
 
 - read-only query (`SELECT`, `WITH ... SELECT`, read `PRAGMA`, `EXPLAIN`, `VALUES`) is treated as a read operation
 - mutating/unknown query (`INSERT`, `UPDATE`, `DELETE`, DDL, transaction control, write `PRAGMA`, etc.) is treated as a write-like operation

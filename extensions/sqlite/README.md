@@ -32,6 +32,13 @@ Notes:
 - output is JSON mode (`sqlite3 -json`)
 - oversized output is truncated with a metadata notice
 
+## Permissions
+
+`sqlite` registers as a hub `perm:tool` provider and owns its own risk rules
+for the `sqlite` tool (read-only vs mutating SQL, project-root scope, outer
+access, trusted read roots). `safe-mode` asks hub instead of hardcoding them.
+See [`../hub/PROTOCOL.md`](../hub/PROTOCOL.md).
+
 ## Install
 
 Copy this folder into a standard pi extension location:

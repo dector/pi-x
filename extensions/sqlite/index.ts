@@ -10,6 +10,15 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
 import { classifySqliteQuery, normalizeSqliteToolInput, summarizeSqliteToolCall, type SqliteScalar } from "./sql";
+import { classifySqliteToolCall, isSqlitePermissionTool } from "./permissions";
+
+// hub permission protocol (see extensions/hub/PROTOCOL.md)
+const HUB_ID = "sqlite";
+const HUB_REGISTER_EVENT = "hub:register";
+const HUB_UNREGISTER_EVENT = "hub:unregister";
+const HUB_REQUEST_EVENT = "hub:request";
+const HUB_REPLY_EVENT = "hub:reply";
+const HUB_CAPS = { provide: ["perm:tool"] };
 
 const SQLITE_ACTIONS = ["query"] as const;
 const DEFAULT_TIMEOUT_SEC = 15;
@@ -141,5 +150,52 @@ export default function sqliteExtension(pi: ExtensionAPI): void {
 				},
 			};
 		},
+	});
+
+	// Register as a hub `perm:tool` provider so safe-mode defers sqlite risk rules
+	// to this extension instead of hardcoding them.
+	const registerWithHub = (): void => {
+		pi.events.emit(HUB_REGISTER_EVENT, { id: HUB_ID, caps: HUB_CAPS });
+	};
+
+	pi.on("session_start", registerWithHub);
+	pi.on("session_tree", registerWithHub);
+	pi.on("session_shutdown", () => {
+		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
+	});
+
+	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
+		if (typeof payload !== "object" || payload === null) return;
+		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown };
+		if (typeof request.id !== "string") return;
+		if (Array.isArray(request.targets) && !request.targets.includes(HUB_ID)) return;
+		if (!Array.isArray(request.cap)) return;
+
+		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string }> = [];
+		for (const item of request.cap) {
+			if (typeof item !== "object" || item === null) continue;
+			const entry = item as { what?: unknown; data?: unknown };
+			if (entry.what !== "perm:tool") continue;
+
+			const data = typeof entry.data === "object" && entry.data !== null ? (entry.data as Record<string, unknown>) : {};
+			const toolName = typeof data.toolName === "string" ? data.toolName : undefined;
+			if (!toolName || !isSqlitePermissionTool(toolName)) continue;
+
+			const input = typeof data.input === "object" && data.input !== null ? (data.input as Record<string, unknown>) : {};
+			const trustedReadRoots = Array.isArray(data.trustedReadRoots)
+				? data.trustedReadRoots.filter((root): root is string => typeof root === "string")
+				: undefined;
+			const decision = classifySqliteToolCall({
+				toolName,
+				input,
+				mode: typeof data.mode === "string" ? data.mode : "smart",
+				projectRoot: typeof data.projectRoot === "string" ? data.projectRoot : process.cwd(),
+				outerAccess: data.outerAccess === true,
+				trustedReadRoots,
+			});
+			if (decision) results.push({ what: "perm:tool", ...decision });
+		}
+
+		pi.events.emit(HUB_REPLY_EVENT, { id: request.id, from: HUB_ID, results });
 	});
 }

@@ -849,7 +849,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			pi.events.emit(HUB_ASK_EVENT, {
 				id,
 				from: HUB_ID,
-				cap: [{ what: PERM_TOOL, data: { toolName, input, mode, projectRoot, outerAccess } }],
+				cap: [{
+					what: PERM_TOOL,
+					data: { toolName, input, mode, projectRoot, outerAccess, trustedReadRoots: getTrustedReadRoots() },
+				}],
 			});
 		});
 	};
