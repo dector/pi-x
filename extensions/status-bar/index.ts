@@ -57,8 +57,11 @@ const SAFE_MODE_ID = "safe-mode";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
-// Extra room kept for the working status when the top border already has embedded content.
-const WORKING_STATUS_RESERVE = 30;
+// While streaming, a single character of the top-left model label is
+// highlighted and the highlight bounces back and forth across the label. A short
+// fading trail follows behind it (in the direction of motion) to sell the move.
+const WORKING_BOUNCE_INTERVAL_MS = 120;
+const WORKING_TRAIL_LENGTH = 3;
 
 // Editor frame side borders (rounded corners).
 const FRAME_BORDER = {
@@ -172,8 +175,13 @@ interface FrameStatusEditorOptions {
 	bottomLeft?: FrameStatusProvider;
 	/** Bottom-right corner label (safe-mode status). */
 	bottomRight?: FrameStatusProvider;
-	/** Top-right corner label (active provider/model). */
-	topRight?: FrameStatusProvider;
+	/** Top-left corner label (active provider/model), with the working highlight while streaming. */
+	topLeft?: FrameStatusProvider;
+	/**
+	 * Color for the bouncing working highlight. `depth` 0 is the leading character
+	 * (brightest); higher depths are the trailing fade behind the direction of motion.
+	 */
+	highlightColor?: (text: string, depth: number) => string;
 }
 
 /**
@@ -204,12 +212,15 @@ function renderBorderLine(
 }
 
 /**
- * Default editor with the working status embedded in the top border (pi >= 0.85),
- * rounded side borders, and status labels rendered in the frame corners. Editor
- * content is inset by one column on each side (`│ <input> │`):
+ * Default editor with rounded side borders and status labels rendered in the
+ * frame corners. In `new` display mode the top-left corner shows the active
+ * provider/model. While streaming, one character of that label is highlighted
+ * and the highlight bounces back and forth across the label (no spinner, no
+ * `Working` word). Editor content is inset by one column on each side
+ * (`│ <input> │`):
  *
  * ```
- * ╭-< <working status> >-----------------< <model> >-╮
+ * ╭-< cdx/5.6-sol >──────────────────────────────────╮
  * │ ... input ...                                   │
  * ╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
  * ```
@@ -218,14 +229,49 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: FrameStatusProvider;
 	private readonly bottomRightProvider?: FrameStatusProvider;
-	private readonly topRightProvider?: FrameStatusProvider;
+	private readonly topLeftProvider?: FrameStatusProvider;
+	private readonly highlightColor?: (text: string, depth: number) => string;
+	private readonly frameTui: TUI;
+	private working = false;
+	private workingTick = 0;
+	private workingTimer?: ReturnType<typeof setInterval>;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: FrameStatusEditorOptions) {
 		super(tui, theme, keybindings, { embedWorkingStatus: true, paddingX: 1 } as EditorOptions);
+		this.frameTui = tui;
 		this.getDisplayMode = options.getDisplayMode;
 		this.bottomLeftProvider = options.bottomLeft;
 		this.bottomRightProvider = options.bottomRight;
-		this.topRightProvider = options.topRight;
+		this.topLeftProvider = options.topLeft;
+		this.highlightColor = options.highlightColor;
+	}
+
+	/** Track streaming state and drive the bouncing highlight animation. */
+	setWorkingStatusIndicator(indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]): void {
+		super.setWorkingStatusIndicator(indicator);
+		this.working = indicator !== undefined && indicator !== null;
+		if (this.working) {
+			this.startWorkingAnimation();
+		} else {
+			this.stopWorkingAnimation();
+		}
+	}
+
+	/** Stop the highlight animation and clear the timer (safe to call repeatedly). */
+	stopWorkingAnimation(): void {
+		if (this.workingTimer) {
+			clearInterval(this.workingTimer);
+			this.workingTimer = undefined;
+		}
+	}
+
+	private startWorkingAnimation(): void {
+		this.stopWorkingAnimation();
+		this.workingTick = 0;
+		this.workingTimer = setInterval(() => {
+			this.workingTick += 1;
+			if (this.isBorderMode()) this.frameTui.requestRender();
+		}, WORKING_BOUNCE_INTERVAL_MS);
 	}
 
 	private isBorderMode(): boolean {
@@ -245,20 +291,35 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Bracket the embedded working status with angle tacks:
-	 * `── <status> ────` -> `-< <status> >----`.
+	 * Color the model label while streaming: a leading highlight bounces 0..n-1..0,
+	 * followed by a fading trail of up to `WORKING_TRAIL_LENGTH` characters behind
+	 * the direction of motion. When idle, every character uses the border color.
 	 */
-	private withTopCaps(border: string): string {
-		const lead = "── ";
-		const leadIndex = border.indexOf(lead);
-		if (leadIndex < 0) return border;
+	private renderModelLabel(label: string): string {
+		const chars = Array.from(sanitizeStatusText(label));
+		if (chars.length === 0) return "";
 
-		const newLead = "-< ";
-		const capped = `${border.slice(0, leadIndex)}${newLead}${border.slice(leadIndex + lead.length)}`;
-		// The first `─` after the lead starts the post-status dash run.
-		const dashIndex = capped.indexOf(" ─", leadIndex + newLead.length);
-		if (dashIndex < 0) return capped;
-		return `${capped.slice(0, dashIndex)} >-${capped.slice(dashIndex + 1)}`;
+		const bounce = this.working ? bounceState(chars.length, this.workingTick) : undefined;
+		const highlight = this.highlightColor ?? ((text: string) => this.borderColor(text));
+		return chars
+			.map((ch, i) => {
+				if (!bounce) return this.borderColor(ch);
+				const depth = (bounce.index - i) * bounce.direction;
+				return depth >= 0 && depth <= WORKING_TRAIL_LENGTH ? highlight(ch, depth) : this.borderColor(ch);
+			})
+			.join("");
+	}
+
+	/**
+	 * Top-left corner label: the active provider/model inside `-< ... >-` tacks.
+	 * While streaming one character is highlighted and bounces across the label.
+	 */
+	private topLeftSegment(): string {
+		const modelLabel = this.topLeftProvider?.();
+		if (!hasVisibleText(modelLabel)) return "";
+
+		const body = this.renderModelLabel(modelLabel);
+		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
 	}
 
 	/**
@@ -338,22 +399,24 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	renderTopBorder(width: number, hiddenLineCount: number): string {
-		const base = super.renderTopBorder(width, hiddenLineCount);
-		if (!this.isBorderMode() || width <= 0) return base;
+		if (!this.isBorderMode() || width <= 0) return super.renderTopBorder(width, hiddenLineCount);
 
-		const capped = this.withTopCaps(base);
+		const leftSegment = this.topLeftSegment();
+		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
+		const borderColor = (text: string) => this.borderColor(text);
 
-		const label = this.topRightProvider?.();
-		if (!hasVisibleText(label)) return capped;
+		if (leftSegment && visibleWidth(leftSegment) + MIN_CORNER_LABEL_GAP <= width) {
+			if (visibleWidth(leftSegment) + visibleWidth(scrollSegment) < width) {
+				return renderBorderLine(width, leftSegment, scrollSegment, borderColor);
+			}
+			return renderBorderLine(width, leftSegment, "", borderColor);
+		}
 
-		const segment = this.rightCornerSegment(label, true, { leftCap: "-<", rightCap: ">-" });
-		const segmentWidth = visibleWidth(segment);
-		// Keep the working status / scroll indicator from being truncated when present.
-		const hasEmbeddedContent = base !== this.borderColor("─".repeat(width));
-		const minGap = hasEmbeddedContent ? WORKING_STATUS_RESERVE : MIN_CORNER_LABEL_GAP;
-		if (segmentWidth + minGap > width) return capped;
+		if (scrollSegment && visibleWidth(scrollSegment) < width) {
+			return renderBorderLine(width, "", scrollSegment, borderColor);
+		}
 
-		return `${truncateToWidth(capped, width - segmentWidth, "")}${segment}`;
+		return renderBorderLine(width, "", "", borderColor);
 	}
 
 	renderBottomBorder(width: number, hiddenLineCount: number): string {
@@ -468,7 +531,7 @@ function styleContextLabel(
 	return theme.fg("error", label);
 }
 
-// Border (top-right) model label: "provider/model-id" with alias tables applied,
+// Border (top-left) model label: "provider/model-id" with alias tables applied,
 // id-only when provider is missing.
 function buildBorderModelLabel(
 	ctx: ExtensionContext,
@@ -620,6 +683,22 @@ function sanitizeStatusText(text: string): string {
 function hasVisibleText(value?: string): value is string {
 	if (typeof value !== "string") return false;
 	return value.trim().length > 0;
+}
+
+/** Bouncing highlight position and its direction of travel. */
+interface BounceState {
+	index: number;
+	/** `1` while moving right, `-1` while moving left. */
+	direction: 1 | -1;
+}
+
+/** Ping-pong state driven by a monotonically increasing tick. */
+function bounceState(length: number, tick: number): BounceState {
+	if (length <= 1) return { index: 0, direction: 1 };
+	const period = 2 * (length - 1);
+	const position = ((tick % period) + period) % period;
+	if (position < length) return { index: position, direction: 1 };
+	return { index: period - position, direction: -1 };
 }
 
 function isDisplayMode(value: unknown): value is StatusBarDisplayMode {
@@ -1068,6 +1147,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let requestFooterRender: (() => void) | undefined;
 	let editorOwnerContext: ExtensionContext | undefined;
 	let requestEditorRender: (() => void) | undefined;
+	let frameEditor: FrameStatusEditor | undefined;
 	let previousEditorFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
 
 	const activeLayout = (): StatusBarLayout =>
@@ -1234,15 +1314,33 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			getDisplayMode: () => displayMode,
 			bottomLeft: () => buildFrameStatusLabel(activeContext(), pi.getThinkingLevel(), activeContext().ui.theme),
 			bottomRight: () => contentById.get(SAFE_MODE_ID),
-			topRight: () => buildBorderModelLabel(activeContext(), providerAliases, modelAliases),
+			topLeft: () => buildBorderModelLabel(activeContext(), providerAliases, modelAliases),
+			highlightColor: (text, depth) => {
+				const theme = activeContext().ui.theme;
+				if (depth <= 0) return theme.bold(theme.fg("text", text));
+				if (depth === 1) return theme.fg("text", text);
+				if (depth === 2) return theme.fg("muted", text);
+				return theme.fg("dim", text);
+			},
 		};
 
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			requestEditorRender = () => tui.requestRender();
-			return new FrameStatusEditor(tui, editorTheme, keybindings, options);
+			frameEditor = new FrameStatusEditor(tui, editorTheme, keybindings, options);
+			return frameEditor;
 		});
 
 		editorOwnerContext = ctx;
+	};
+
+	/**
+	 * Configure pi's working spinner. In `new` mode the top-left label renders its
+	 * own bouncing highlight, so hide pi's built-in spinner to avoid a second
+	 * animation; other modes keep pi's default animated spinner.
+	 */
+	const applyWorkingIndicator = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI) return;
+		ctx.ui.setWorkingIndicator(displayMode === "new" ? { frames: [] } : undefined);
 	};
 
 	const bindContextAndRender = (ctx: ExtensionContext): void => {
@@ -1250,6 +1348,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		if (ctx.hasUI) {
 			installFooter(ctx);
 			installEditorFrameStatus(ctx);
+			applyWorkingIndicator(ctx);
 		}
 		requestRender();
 	};
@@ -1297,11 +1396,14 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (ctx.hasUI) {
 			ctx.ui.setFooter(undefined);
+			ctx.ui.setWorkingIndicator();
 		}
 		if (footerOwnerContext === ctx) {
 			footerOwnerContext = undefined;
 		}
 		if (editorOwnerContext === ctx) {
+			frameEditor?.stopWorkingAnimation();
+			frameEditor = undefined;
 			if (ctx.hasUI) ctx.ui.setEditorComponent(previousEditorFactory);
 			editorOwnerContext = undefined;
 			previousEditorFactory = undefined;

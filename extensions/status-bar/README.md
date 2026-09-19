@@ -76,7 +76,7 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-╭-< <working status> >-----------------< cdx/5.6-sol >-╮
+╭-< cdx/5.6-sol >────────────────────────────────────╮
 │ ... input ...                                         │
 ╰-< 🢁 HIGH · 15.9% 210k · 0.03$ >-------< SMART >-╯
 ```
@@ -111,17 +111,21 @@ labels are rendered in the frame corners:
 - **bottom-right** — `safe-mode` status content (`SMART`, `READER`, `YOLO`,
   `PARANOID`, plus `+` when outer access is on). Rendered only while the
   `safe-mode` producer has published content.
-- **top-right** — active provider + model (`<ctx.model.provider>/<ctx.model.id>`, e.g.
+- **top-left** — active provider + model (`<ctx.model.provider>/<ctx.model.id>`, e.g.
   `deepseek/deepseek-chat`; id-only when provider is missing), rendered in the frame
   border color. Hidden when no model is active. Both parts go through the exact-name
   alias tables (see [Aliases](#aliases)), so the example above can render as
-  `cdx/5.6-sol` or `go/ds-4.1-fl`.
+  `cdx/5.6-sol` or `opencode/4.1-flash`.
+  - While streaming, a leading character of the model label is highlighted in the
+    theme `text` color (bold) and bounces back and forth across the label. A fading
+    3-character trail follows behind the direction of motion (`text` -> `muted` ->
+    `dim`), for example `[c]dx/5.6-sol` -> `c[d]x/5.6-sol` -> ... -> `cdx/5.6-so[l]`
+    -> ... -> `[c]dx/5.6-sol`. No spinner is shown and the word `Working` never
+    appears. The highlight advances every 120 ms.
 - Corner labels are prefixed with a space and followed by one border dash before
-  the corner. They are dropped when the terminal is too narrow; the top-right model
-  label also reserves extra room while the working status is embedded in the top border.
-- The working status spinner stays embedded in the top border (pi >= 0.85).
+  the corner. They are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits to the left of the
-  bottom-right label; the `↑ N more` indicator stays in the top border.
+  bottom-right label; the `↑ N more` indicator sits on the right of the top border.
 - On `session_shutdown` the previously configured editor factory is restored.
 
 ### Display mode
@@ -129,7 +133,7 @@ labels are rendered in the frame corners:
 `displayMode` controls where context/model/safe-mode information lives:
 
 - `new` (default) — border priority.
-  - Editor frame shows the corner labels (bottom-left context, top-right model, bottom-right safe-mode).
+  - Editor frame shows the corner labels (bottom-left context, top-left model, bottom-right safe-mode).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
     producer items (after the `SKILLS: n/m` counter), and omits the cost suffix
@@ -153,11 +157,11 @@ in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
 
 ```json
 {
-  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "go" },
+  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "opencode" },
   "modelAliases": {
     "gpt-5.6-sol": "5.6-sol",
-    "deepseek-v4.1-flash": "ds-4.1-fl",
-    "deepseek-v4-pro": "ds-4-pro"
+    "deepseek-v4.1-flash": "4.1-flash",
+    "deepseek-v4-pro": "4-pro"
   }
 }
 ```

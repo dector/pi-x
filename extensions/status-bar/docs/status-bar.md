@@ -136,11 +136,11 @@ Exact-name alias tables in `~/.pi/agent/status-bar.json` shorten the border labe
 
 ```json
 {
-  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "go" },
+  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "opencode" },
   "modelAliases": {
     "gpt-5.6-sol": "5.6-sol",
-    "deepseek-v4.1-flash": "ds-4.1-fl",
-    "deepseek-v4-pro": "ds-4-pro"
+    "deepseek-v4.1-flash": "4.1-flash",
+    "deepseek-v4-pro": "4-pro"
   }
 }
 ```
@@ -162,14 +162,14 @@ editor padding (`paddingX: 1`), and renders:
   includes every subagent in the branch, nested ones included, and is omitted
   while the total rounds to the same three-decimal value as the session cost.
 - bottom-right: `safe-mode` producer content (for example `SMART`)
-- top-right: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color
+- top-left: active provider + model ID (`<ctx.model.provider>/<ctx.model.id>`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. While streaming, a leading character is highlighted in the theme `text` color (bold) and bounces back and forth across the label, followed by a fading 3-character trail (`text` -> `muted` -> `dim`) behind the direction of motion; no spinner and no `Working` word.
 
-The top border keeps the working status spinner from pi (>= 0.85). Every border
-text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
+Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
 Labels are dropped when the terminal is too narrow.
 The inner editor renders 2 columns narrower and applies `paddingX: 1`; autocomplete
 stays outside the frame and is indented to match. Mouse coordinates are shifted back by one
-column. When the editor is scrolled, `↓ N more` sits left of the bottom-right label.
+column. When the editor is scrolled, `↓ N more` sits left of the bottom-right label and
+`↑ N more` sits on the right of the top border.
 
 ## Responsibility split
 
