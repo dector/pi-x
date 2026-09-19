@@ -39,6 +39,8 @@ const SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
 const HUB_ID = "safe-mode";
 const HUB_REGISTER_EVENT = "hub:register";
 const HUB_UNREGISTER_EVENT = "hub:unregister";
+const HUB_REQUEST_EVENT = "hub:request";
+const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:net", "perm:agent"] };
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
@@ -1208,6 +1210,31 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
+	});
+
+	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
+		if (typeof payload !== "object" || payload === null) return;
+		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown };
+		if (typeof request.id !== "string") return;
+		if (Array.isArray(request.targets) && !request.targets.includes(HUB_ID)) return;
+		if (!Array.isArray(request.cap)) return;
+
+		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string }> = [];
+		for (const item of request.cap) {
+			if (typeof item !== "object" || item === null) continue;
+			const what = (item as { what?: unknown }).what;
+			if (typeof what !== "string") continue;
+			// TODO: real policy per capability; interactive approval needs ctx.
+			if (what === "perm:agent") {
+				results.push(
+					mode === "yolo"
+						? { what, action: "allow" }
+						: { what, action: "block", reason: "project-local agents need approval (hub approval not wired yet)" },
+				);
+			}
+		}
+
+		if (results.length > 0) pi.events.emit(HUB_ANSWER_EVENT, { id: request.id, results });
 	});
 
 	pi.on("before_agent_start", async (event) => {
