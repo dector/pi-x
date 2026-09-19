@@ -54,19 +54,19 @@ describe("subagent safe-mode inheritance", () => {
 	});
 
 	test("adds both flags only when a snapshot is available", () => {
-		const inherited = ["--mode", "json"];
+		const inherited = ["--mode", "rpc"];
 		appendSafeModeArgs(inherited, { mode: "smart", outerAccess: false });
 		expect(inherited).toEqual([
 			"--mode",
-			"json",
+			"rpc",
 			"--safe-mode",
 			"smart",
 			"--safe-mode-outer-access",
 			"false",
 		]);
 
-		const unavailable = ["--mode", "json"];
+		const unavailable = ["--mode", "rpc"];
 		appendSafeModeArgs(unavailable, undefined);
-		expect(unavailable).toEqual(["--mode", "json"]);
+		expect(unavailable).toEqual(["--mode", "rpc"]);
 	});
 });

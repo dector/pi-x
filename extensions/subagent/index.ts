@@ -300,13 +300,22 @@ async function runSingleAgent(
 		state: "starting",
 	};
 
+	let updateTimer: ReturnType<typeof setTimeout> | undefined;
 	const emitUpdate = () => {
+		if (updateTimer) {
+			clearTimeout(updateTimer);
+			updateTimer = undefined;
+		}
 		if (onUpdate) {
 			onUpdate({
 				content: [{ type: "text", text: getFinalOutput(currentResult.messages) || currentResult.liveText || "(running...)" }],
 				details: makeDetails([currentResult]),
 			});
 		}
+	};
+	const emitUpdateThrottled = () => {
+		if (!onUpdate || updateTimer) return;
+		updateTimer = setTimeout(emitUpdate, 50);
 	};
 
 	let child: RpcChild | undefined;
@@ -330,6 +339,7 @@ async function runSingleAgent(
 			resolveCompletion = resolve;
 		});
 		const streamState: RpcStreamState = { liveText: "", settled: false };
+		let uiDialogCount = 0;
 		const invocation = getPiInvocation(args);
 		child = spawnRpcChild({
 			command: invocation.command,
@@ -342,7 +352,10 @@ async function runSingleAgent(
 			},
 			events: {
 				onStreamEvent(event) {
-					if (applyRpcStreamEvent(currentResult, streamState, event)) emitUpdate();
+					if (applyRpcStreamEvent(currentResult, streamState, event)) {
+						if (event.type === "message_update") emitUpdateThrottled();
+						else emitUpdate();
+					}
 					if (streamState.settled) resolveCompletion();
 				},
 				onExtensionUiRequest(request) {
@@ -390,7 +403,8 @@ async function runSingleAgent(
 							}
 							return { type: "extension_ui_response" as const, id: request.id, cancelled: true as const };
 						};
-						if (!parentContext.hasUI) {
+						uiDialogCount++;
+						if (!parentContext.hasUI || uiDialogCount > 20) {
 							try {
 								child?.respondUi(denyWithoutUi());
 							} catch {}
@@ -430,7 +444,7 @@ async function runSingleAgent(
 								const value = await parentContext.ui.editor(heading, prefill);
 								return value === undefined ? denyWithoutUi() : { type: "extension_ui_response" as const, id: request.id, value };
 							},
-						});
+						}).catch(() => undefined);
 						currentResult.pendingApproval = undefined;
 						if (currentResult.state === "waiting-approval") currentResult.state = "running";
 						emitUpdate();
@@ -509,6 +523,7 @@ async function runSingleAgent(
 		currentResult.stderr = child.stderr;
 		return currentResult;
 	} finally {
+		if (updateTimer) clearTimeout(updateTimer);
 		removeAbortListener?.();
 		approvalQueue.cancelRun(runId);
 		registry.complete(runId);
@@ -598,7 +613,13 @@ export default function (pi: ExtensionAPI) {
 					if (!run) continue;
 					const actions = run.completedAt
 						? ["Details", "Back"]
-						: ["Details", "Configure permissions", "Pause", "Resume", "Abort", "Back"];
+						: [
+							"Details",
+							"Configure permissions",
+							...(run.result.state === "paused" || run.result.state === "pause-requested" || run.result.state === "resuming" ? ["Resume"] : ["Pause"]),
+							"Abort",
+							"Back",
+						];
 					const action = await ctx.ui.select(`${run.agentName} [${run.runId}]`, actions);
 					if (!action || action === "Back") continue;
 					if (action === "Details") {
@@ -610,6 +631,7 @@ export default function (pi: ExtensionAPI) {
 							`Inherited: ${run.result.inheritedMode ?? "unknown"}`,
 							`Effective: ${run.result.effectiveMode ?? "unknown"}${run.result.outerAccess ? "+" : ""}`,
 							`Task: ${run.task}`,
+							...(run.result.pendingApproval ? [`Pending approval: ${run.result.pendingApproval.method} — ${run.result.pendingApproval.title ?? "untitled"}`] : []),
 							...(run.result.diagnostics ?? []).map((item) => `Diagnostic: ${item}`),
 						].join("\n");
 						await ctx.ui.editor(`Subagent details: ${run.runId}`, details);

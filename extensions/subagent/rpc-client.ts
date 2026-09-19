@@ -83,7 +83,14 @@ function isRpcResponse(value: Record<string, unknown>): value is RpcResponse {
 }
 
 function isUiRequest(value: Record<string, unknown>): value is RpcExtensionUiRequest {
-	return value.type === "extension_ui_request" && typeof value.id === "string" && typeof value.method === "string";
+	return (
+		value.type === "extension_ui_request" &&
+		typeof value.id === "string" &&
+		value.id.length > 0 &&
+		value.id.length <= 256 &&
+		typeof value.method === "string" &&
+		value.method.length <= 64
+	);
 }
 
 export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
