@@ -30,6 +30,7 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
+import { appendSafeModeArgs, querySafeModeSnapshot, type SafeMode, type SafeModeSnapshot } from "./safe-mode.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -172,6 +173,9 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
+	inheritedMode?: SafeMode;
+	effectiveMode?: SafeMode;
+	outerAccess?: boolean;
 }
 
 interface SubagentDetails {
@@ -294,6 +298,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	getSafeModeSnapshot: () => Promise<SafeModeSnapshot | undefined>,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -312,6 +317,7 @@ async function runSingleAgent(
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	let safeModeSnapshot: SafeModeSnapshot | undefined;
 	const inheritsDispatchConfig = !agent.model;
 	const model = agent.model ?? dispatchDefaults.model;
 	if (model) args.push("--model", model);
@@ -352,6 +358,11 @@ async function runSingleAgent(
 			args.push("--append-system-prompt", tmpPromptPath);
 		}
 
+		safeModeSnapshot = await getSafeModeSnapshot();
+		appendSafeModeArgs(args, safeModeSnapshot);
+		currentResult.inheritedMode = safeModeSnapshot?.mode;
+		currentResult.effectiveMode = safeModeSnapshot?.mode;
+		currentResult.outerAccess = safeModeSnapshot?.outerAccess;
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
 
@@ -488,6 +499,7 @@ export default function (pi: ExtensionAPI) {
 	// opt-in agents like `ultra-reviewer-explicit`. Uses user-scope only, which
 	// matches the default agentScope. Computed once at registration; the agent
 	// list is re-discovered per invocation for actual execution.
+	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
 	const registeredAgents = formatAgentList(discoverAgents(process.cwd(), "user").agents, 50);
 	const agentListText =
 		registeredAgents.remaining > 0
@@ -645,6 +657,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						getSafeModeSnapshot,
 					);
 					results.push(result);
 
@@ -724,6 +737,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						getSafeModeSnapshot,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -761,6 +775,7 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					getSafeModeSnapshot,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {

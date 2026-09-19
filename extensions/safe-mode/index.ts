@@ -15,6 +15,12 @@ import {
 	parseSafeMode,
 	type SafeMode,
 } from "./policy";
+import {
+	SAFE_MODE_STATE_EVENTS,
+	parseSafeModeStateRequest,
+	parseSafeModeStateSet,
+	type SafeModeStateChanged,
+} from "./contract.ts";
 
 interface SafeModeState {
 	mode: SafeMode;
@@ -738,6 +744,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	let configuredDefaultOuterAccess: boolean | undefined;
 	let modeBeforeReaderShortcut: SafeMode | undefined;
 	let stateBeforeYoloPlusShortcut: SafeModeState | undefined;
+	let activeContext: ExtensionContext | undefined;
 	const autoApprovedBashCommandsForSession = new Set<string>();
 	const autoApprovedBashCommandsForProject = new Set<string>();
 	const autoApprovedAnyBashCommandsForProject = new Set<string>();
@@ -888,6 +895,11 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		pi.events.emit(STATUS_BAR_SET_EVENT, { id: STATUS_BAR_ID, content });
 	}
 
+	function emitStateChanged(source?: string): void {
+		const payload: SafeModeStateChanged = { mode, outerAccess, source };
+		pi.events.emit(SAFE_MODE_STATE_EVENTS.changed, payload);
+	}
+
 	function setMode(
 		nextMode: SafeMode,
 		ctx: ExtensionContext,
@@ -906,6 +918,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 		mode = nextMode;
 		updateStatus(ctx);
+		if (changed) emitStateChanged();
 
 		if (persist && changed) {
 			persistState();
@@ -931,6 +944,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 		outerAccess = nextOuterAccess;
 		updateStatus(ctx);
+		if (changed) emitStateChanged();
 
 		if (persist && changed) {
 			persistState();
@@ -945,7 +959,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		nextMode: SafeMode,
 		nextOuterAccess: boolean,
 		ctx: ExtensionContext,
-		options?: { preserveYoloPlusToggleState?: boolean },
+		options?: { preserveYoloPlusToggleState?: boolean; source?: string },
 	): void {
 		const modeChanged = nextMode !== mode;
 		const outerChanged = nextOuterAccess !== outerAccess;
@@ -959,7 +973,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		outerAccess = nextOuterAccess;
 		updateStatus(ctx);
 		if (modeChanged || outerChanged) {
+			emitStateChanged(options?.source);
 			persistState();
+		} else if (options?.source) {
+			emitStateChanged(options.source);
 		}
 		if (ctx.hasUI) {
 			ctx.ui.notify(`Safe mode: ${statusLabel({ ui: true })}`, "info");
@@ -1024,6 +1041,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		mode = modeFlag ?? persisted.mode ?? configuredDefaultMode ?? DEFAULT_SAFE_MODE;
 		outerAccess = outerFlag ?? persisted.outerAccess ?? configuredDefaultOuterAccess ?? false;
 		updateStatus(ctx);
+		emitStateChanged("initialization");
 	}
 
 	pi.registerFlag("safe-mode", {
@@ -1032,8 +1050,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerFlag(OUTER_ACCESS_FLAG, {
-		description: "Apply mode rules to paths outside the project root",
-		type: "boolean",
+		description: "Apply mode rules to paths outside the project root (true/false)",
+		type: "string",
 	});
 
 	const handleSafeCommand = async (args: string | undefined, ctx: ExtensionContext): Promise<void> => {
@@ -1235,6 +1253,21 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.events.on(SAFE_MODE_STATE_EVENTS.request, (payload) => {
+		const request = parseSafeModeStateRequest(payload);
+		if (!request) return;
+		pi.events.emit(SAFE_MODE_STATE_EVENTS.response, {
+			id: request.id,
+			state: { mode, outerAccess },
+		});
+	});
+
+	pi.events.on(SAFE_MODE_STATE_EVENTS.set, (payload) => {
+		const request = parseSafeModeStateSet(payload);
+		if (!request || !activeContext) return;
+		setModeAndOuter(request.state.mode, request.state.outerAccess, activeContext, { source: request.source });
+	});
+
 	pi.events.on(TOGGLE_READER_EVENT, (payload) => {
 		if (!payload || typeof payload !== "object") return;
 		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
@@ -1271,6 +1304,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		activeContext = ctx;
 		resetSessionApprovals();
 		refreshTrustedSkillReadRootsFromCommands(pi);
 		await refreshDefaults(ctx);
@@ -1279,6 +1313,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		activeContext = ctx;
 		resetSessionApprovals();
 		refreshTrustedSkillReadRootsFromCommands(pi);
 		await refreshDefaults(ctx);
@@ -1295,6 +1330,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", () => {
+		activeContext = undefined;
 		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
 	});
 
