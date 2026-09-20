@@ -26,11 +26,13 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { formatAsyncCompletion } from "./completion.ts";
+import { coerceTerminalCompletionDetails, formatAsyncCompletion, SUBAGENT_COMPLETION_CUSTOM_TYPE } from "./completion.ts";
 import { buildDispatchExceptionResult } from "./dispatch.ts";
 import type { PreparedSubagentDispatch, SubagentDetails } from "./types.ts";
 
-export const SUBAGENT_COMPLETION_CUSTOM_TYPE = "subagent-completion";
+// Re-exported for callers/tests that import the completion type from the
+// lifecycle module; the canonical definition lives in `completion.ts`.
+export { SUBAGENT_COMPLETION_CUSTOM_TYPE };
 
 /** Custom context-bearing message injected once when a dispatch settles. */
 export interface SubagentCompletionMessage {
@@ -133,18 +135,26 @@ export class AsyncDispatchManager {
 
 		if (this.stopped || epoch !== this.epoch) return;
 
-		let details: SubagentDetails | undefined;
-		try {
-			details = result?.details;
-		} catch {
-			details = undefined;
-		}
+		// A settled runner must never deliver a non-terminal record. Read the
+		// details defensively (a corrupt getter is treated as missing) and coerce
+		// the status so a runner bug cannot surface a `started` completion. Any
+		// failure here falls back to a terminal record built from the dispatch.
+		let details: SubagentDetails;
 		let content: string;
 		try {
+			const rawDetails = result?.details;
+			details = coerceTerminalCompletionDetails(dispatch, rawDetails, {
+				aborted: controller.signal.aborted,
+				isError: (result as unknown as { isError?: unknown } | undefined)?.isError === true,
+			});
 			content = formatAsyncCompletion(dispatch, result);
 		} catch (error) {
 			// A formatting bug must not strand the dispatch without a completion.
 			const reason = error instanceof Error ? error.message : String(error);
+			details = coerceTerminalCompletionDetails(dispatch, undefined, {
+				aborted: controller.signal.aborted,
+				isError: true,
+			});
 			content = `Subagent dispatch ${dispatch.dispatchId} settled, but its summary could not be formatted: ${reason}`;
 		}
 		const message: SubagentCompletionMessage = {
@@ -188,6 +198,8 @@ export class AsyncDispatchManager {
 					dispatchStatus: "failed",
 					agentScope: dispatch.agentScope,
 					projectAgentsDir: dispatch.projectAgentsDir,
+					plannedItems: dispatch.items,
+					cwd: dispatch.cwd,
 					results: [],
 				},
 				isError: true,

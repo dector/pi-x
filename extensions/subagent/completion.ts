@@ -14,9 +14,10 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { getResultOutput, isFailedResult, type ResultStatusFields } from "./result-output.ts";
+import { getResultOutput, isAbortedResult, isFailedResult, type ResultStatusFields } from "./result-output.ts";
 import type {
 	NormalizedSubagentDetails,
+	PreparedDispatchItem,
 	PreparedSubagentDispatch,
 	SingleResult,
 	SubagentDetails,
@@ -27,6 +28,9 @@ import type {
 
 /** Model-visible output cap per task, in bytes. */
 export const PER_TASK_OUTPUT_CAP = 50 * 1024;
+
+/** Custom message type for the one aggregate completion of an async dispatch. */
+export const SUBAGENT_COMPLETION_CUSTOM_TYPE = "subagent-completion";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -83,14 +87,17 @@ export function normalizeDispatchMetadata(value: unknown): {
  */
 export function normalizeSubagentDetails(value: unknown): NormalizedSubagentDetails | undefined {
 	if (!isRecord(value)) return undefined;
-	if (!isMode(value.mode)) return undefined;
+	// Read the required `results` first so a corrupt getter cannot be skipped by
+	// an earlier short-circuit and silently produce a non-throwing fallback.
 	if (!Array.isArray(value.results)) return undefined;
+	if (!isMode(value.mode)) return undefined;
 
 	const { execution, dispatchStatus } = normalizeDispatchMetadata(value);
 	const agentScope =
 		value.agentScope === "user" || value.agentScope === "project" || value.agentScope === "both"
 			? value.agentScope
 			: "user";
+	const plannedItems = normalizePlannedItems(value.plannedItems);
 
 	return {
 		mode: value.mode,
@@ -99,7 +106,66 @@ export function normalizeSubagentDetails(value: unknown): NormalizedSubagentDeta
 		execution,
 		dispatchId: typeof value.dispatchId === "string" ? value.dispatchId : undefined,
 		dispatchStatus,
+		plannedItems,
+		cwd: typeof value.cwd === "string" ? value.cwd : undefined,
 		results: value.results as SingleResult[],
+	};
+}
+
+/**
+ * Validate persisted planned-item metadata. Entries without a runId, agent, or
+ * task are dropped rather than half-trusted, and `cwd`/`step` are only kept
+ * when they have the right primitive type.
+ */
+export function normalizePlannedItems(value: unknown): PreparedDispatchItem[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const items: PreparedDispatchItem[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry)) continue;
+		if (typeof entry.runId !== "string" || !entry.runId) continue;
+		if (typeof entry.agent !== "string" || typeof entry.task !== "string") continue;
+		items.push({
+			runId: entry.runId,
+			agent: entry.agent,
+			task: entry.task,
+			...(typeof entry.cwd === "string" ? { cwd: entry.cwd } : {}),
+			...(typeof entry.step === "number" ? { step: entry.step } : {}),
+		});
+	}
+	return items.length > 0 ? items : undefined;
+}
+
+/**
+ * Coerce a settled runner's details into a terminal record before it is
+ * delivered or persisted. The dispatch is authoritative for identity, and a
+ * non-terminal (or missing) runner status is replaced by one derived from the
+ * results. This is the last line of defence against a runner bug surfacing a
+ * `"started"` acknowledgement as a completion.
+ */
+export function coerceTerminalCompletionDetails(
+	dispatch: PreparedSubagentDispatch,
+	value: unknown,
+	options: { aborted?: boolean; isError?: boolean } = {},
+): SubagentDetails {
+	const normalized = normalizeSubagentDetails(value);
+	const results = normalized?.results ?? [];
+	const plannedItems = normalized?.plannedItems ?? dispatch.items;
+	let dispatchStatus = normalized?.dispatchStatus;
+	if (!isTerminalDispatchStatus(dispatchStatus)) {
+		const aborted =
+			options.aborted === true || results.some((result) => isAbortedResult(result as ResultStatusFields));
+		dispatchStatus = aggregateDispatchStatus(results, { error: options.isError === true, aborted });
+	}
+	return {
+		mode: dispatch.mode,
+		execution: dispatch.execution,
+		dispatchId: dispatch.dispatchId,
+		dispatchStatus,
+		agentScope: normalized?.agentScope ?? dispatch.agentScope,
+		projectAgentsDir: normalized?.projectAgentsDir ?? dispatch.projectAgentsDir,
+		...(plannedItems.length > 0 ? { plannedItems } : {}),
+		cwd: normalized?.cwd ?? dispatch.cwd,
+		results,
 	};
 }
 
@@ -213,9 +279,130 @@ export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): Agent
 			dispatchStatus: "started",
 			agentScope: dispatch.agentScope,
 			projectAgentsDir: dispatch.projectAgentsDir,
+			plannedItems: dispatch.items,
+			cwd: dispatch.cwd,
 			results: [],
 		},
 	};
+}
+
+/**
+ * Ordered section model for one completion. Planned items come first (so a
+ * stopped chain still shows its unstarted steps); any result without a matching
+ * planned run is appended instead of being dropped.
+ */
+export interface CompletionRenderSection {
+	agent: string;
+	runId?: string;
+	step?: number;
+	status: string;
+	task: string;
+	cwd?: string;
+	output: string;
+	failed: boolean;
+	/** True for a planned chain step that never started. */
+	notRun: boolean;
+}
+
+function sectionFromResult(raw: unknown): CompletionRenderSection | undefined {
+	if (!isRecord(raw)) return undefined;
+	const failed = isFailedResult(raw);
+	return {
+		agent: typeof raw.agent === "string" ? raw.agent : "unknown",
+		runId: typeof raw.runId === "string" && raw.runId ? raw.runId : undefined,
+		step: typeof raw.step === "number" ? raw.step : undefined,
+		status: formatTaskStatus(raw),
+		task: typeof raw.task === "string" ? raw.task : "",
+		cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
+		output: truncateTaskOutput(getResultOutput(raw)),
+		failed,
+		notRun: false,
+	};
+}
+
+function sectionForUnstartedItem(item: PreparedDispatchItem, mode: SubagentMode, fallbackCwd?: string): CompletionRenderSection {
+	const notRun = mode === "chain";
+	return {
+		agent: item.agent,
+		runId: item.runId || undefined,
+		step: item.step,
+		task: item.task,
+		cwd: item.cwd ?? fallbackCwd,
+		status: notRun ? "not run" : "failed (no result)",
+		output: notRun ? "the chain stopped before this step." : "the run produced no result.",
+		failed: !notRun,
+		notRun,
+	};
+}
+
+/**
+ * Merge planned items with the results that actually settled. Results are the
+ * source of truth for output/status; planned items supply the task, step, and
+ * the not-run entries a stopped chain would otherwise hide.
+ */
+export function collectCompletionSections(
+	plannedItems: readonly PreparedDispatchItem[],
+	results: readonly unknown[],
+	mode: SubagentMode,
+	fallbackCwd?: string,
+): CompletionRenderSection[] {
+	const sections: CompletionRenderSection[] = [];
+	const matched = new Set<number>();
+	const indexByRunId = new Map<string, number>();
+	for (let index = 0; index < results.length; index += 1) {
+		const raw = results[index];
+		if (isRecord(raw) && typeof raw.runId === "string" && raw.runId && !indexByRunId.has(raw.runId)) {
+			indexByRunId.set(raw.runId, index);
+		}
+	}
+
+	for (const item of plannedItems) {
+		const index = item.runId ? indexByRunId.get(item.runId) : undefined;
+		if (index !== undefined) {
+			const section = sectionFromResult(results[index]);
+			if (section) {
+				// The planned item carries the original task/step/cwd; fill gaps
+				// rather than dropping them when a runner result is terse.
+				section.task = section.task || item.task;
+				section.cwd = section.cwd ?? item.cwd ?? fallbackCwd;
+				section.step = section.step ?? item.step;
+				matched.add(index);
+				sections.push(section);
+				continue;
+			}
+		}
+		sections.push(sectionForUnstartedItem(item, mode, fallbackCwd));
+	}
+
+	// Include results that have no matching planned item (older records, or an
+	// unexpected extra run) rather than silently dropping them.
+	for (let index = 0; index < results.length; index += 1) {
+		if (matched.has(index)) continue;
+		const section = sectionFromResult(results[index]);
+		if (!section) continue;
+		section.cwd = section.cwd ?? fallbackCwd;
+		sections.push(section);
+	}
+	return sections;
+}
+
+/** `2/3 succeeded` plus an optional `, 1 not run` suffix. */
+export function formatCompletionCounts(succeeded: number, total: number, notRun: number): string {
+	const notRunSuffix = notRun > 0 ? `, ${notRun} not run` : "";
+	return `${succeeded}/${total} succeeded${notRunSuffix}`;
+}
+
+/** `[agent] [runId] step N status` header shared by text and TUI renderers. */
+export function completionSectionHeader(section: CompletionRenderSection): string {
+	const runId = section.runId ? ` [${section.runId}]` : "";
+	const step = section.step !== undefined ? ` step ${section.step}` : "";
+	return `[${section.agent}]${runId}${step} ${section.status}`;
+}
+
+/** Output line label for a section: `Not run`, `Failure`, or `Output`. */
+export function completionOutputLabel(section: CompletionRenderSection): string {
+	if (section.notRun) return "Not run";
+	return section.failed ? "Failure" : "Output";
 }
 
 /**
@@ -228,43 +415,165 @@ export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): Agent
  * The summary denominator is the number of *requested* items, not the number
  * of results, so a chain that stopped early reports `N/M succeeded` rather
  * than a misleading `N/N`. Later chain steps that never started are reported as
- * `not run` instead of as failures.
+ * `not run` instead of as failures. A non-terminal runner status is coerced to
+ * a terminal one here as well, so a runner bug can never surface a `started`
+ * completion to the model.
  */
 export function formatAsyncCompletion(
 	dispatch: PreparedSubagentDispatch,
 	result: AgentToolResult<SubagentDetails>,
 ): string {
-	const results = result.details?.results ?? [];
-	const byRunId = new Map<string, SingleResult>();
-	for (const single of results) {
-		if (single.runId) byRunId.set(single.runId, single);
-	}
+	// Deliberately a direct property read: a null/corrupt result must throw so
+	// the lifecycle fallback message is used instead of a fabricated summary.
+	const details = result.details;
+	const normalized = normalizeSubagentDetails(details);
+	const results = normalized?.results ?? [];
+	const plannedItems = normalized?.plannedItems ?? dispatch.items;
+	const fallbackCwd = normalized?.cwd ?? dispatch.cwd;
+	const dispatchStatus = isTerminalDispatchStatus(normalized?.dispatchStatus)
+		? normalized.dispatchStatus
+		: aggregateDispatchStatus(results, {
+				error: (result as unknown as { isError?: unknown }).isError === true,
+				aborted: results.some((single) => isAbortedResult(single as ResultStatusFields)),
+			});
+	const sections = collectCompletionSections(plannedItems, results, dispatch.mode, fallbackCwd);
+	const succeeded = sections.filter((section) => !section.failed && !section.notRun).length;
+	const notRun = sections.filter((section) => section.notRun).length;
 
-	const dispatchStatus = result.details?.dispatchStatus ?? "completed";
-	const successCount = results.filter((single) => !isFailedResult(single)).length;
-	const notRunCount = dispatch.items.filter((item) => !byRunId.has(item.runId)).length;
 	const lines: string[] = [
 		`Subagent dispatch ${dispatch.dispatchId} ${dispatchStatus} (mode: ${dispatch.mode}, execution: ${dispatch.execution}).`,
 	];
+	for (const section of sections) {
+		const runId = section.runId ? ` [${section.runId}]` : "";
+		lines.push("", `### [${section.agent}]${runId} ${section.status}`, `Task: ${section.task}`);
+		if (section.cwd) lines.push(`Directory: ${section.cwd}`);
+		lines.push(`${completionOutputLabel(section)}: ${section.output}`);
+	}
+	lines.push("", `Summary: ${formatCompletionCounts(succeeded, sections.length, notRun)}.`);
+	return lines.join("\n");
+}
 
-	for (const item of dispatch.items) {
-		const single = byRunId.get(item.runId);
-		const cwd = single?.cwd ?? item.cwd ?? dispatch.cwd;
-		const status = single ? formatTaskStatus(single) : dispatch.mode === "chain" ? "not run" : "failed (no result)";
-		lines.push("", `### [${item.agent}] [${item.runId}] ${status}`, `Task: ${item.task}`);
-		if (cwd) lines.push(`Directory: ${cwd}`);
-		if (single) {
-			const output = truncateTaskOutput(getResultOutput(single));
-			lines.push(isFailedResult(single) ? `Failure: ${output}` : `Output: ${output}`);
-		} else if (dispatch.mode === "chain") {
-			lines.push("Not run: the chain stopped before this step.");
-		} else {
-			lines.push("Failure: the run produced no result.");
+/**
+ * Structured data for the `subagent-completion` message renderer. Pure and
+ * theme-free so it can be unit tested without the TUI runtime; `index.ts` maps
+ * it to `Text`/`Container`/`Markdown` components.
+ */
+export interface CompletionRenderData {
+	dispatchId?: string;
+	mode: SubagentMode;
+	execution: SubagentExecution;
+	dispatchStatus: SubagentDispatchStatus;
+	/** One-line collapsed summary. */
+	title: string;
+	/** Aggregate success summary. */
+	summary: string;
+	succeeded: number;
+	failed: number;
+	notRun: number;
+	total: number;
+	sections: CompletionRenderSection[];
+}
+
+/**
+ * Normalize persisted/runtime completion details into render data. Returns
+ * `undefined` for non-dispatch records so the renderer can fall back to the
+ * raw message content. Planned items (persisted or supplied as a fallback)
+ * keep the totals and sections aligned with what the dispatch actually asked
+ * for, including unstarted chain steps.
+ */
+export function buildCompletionRenderData(
+	value: unknown,
+	plannedFallback?: readonly PreparedDispatchItem[],
+): CompletionRenderData | undefined {
+	const details = normalizeSubagentDetails(value);
+	if (!details) return undefined;
+
+	const plannedItems = details.plannedItems ?? plannedFallback ?? [];
+	const sections = collectCompletionSections(plannedItems, details.results, details.mode, details.cwd);
+	const succeeded = sections.filter((section) => !section.failed && !section.notRun).length;
+	const notRun = sections.filter((section) => section.notRun).length;
+	const failed = sections.length - succeeded - notRun;
+	const dispatchId = details.dispatchId;
+	const counts = formatCompletionCounts(succeeded, sections.length, notRun);
+	return {
+		dispatchId,
+		mode: details.mode,
+		execution: details.execution,
+		dispatchStatus: details.dispatchStatus,
+		title: `Subagent dispatch ${dispatchId ?? "(unknown)"} ${details.dispatchStatus} (${details.mode}, ${details.execution}) — ${counts}`,
+		summary: `Summary: ${counts}.`,
+		succeeded,
+		failed,
+		notRun,
+		total: sections.length,
+		sections,
+	};
+}
+
+/**
+ * Renderer blocks in display order. Both the plain-text helper and the TUI
+ * renderer consume this single model, so collapsed/expanded output and the
+ * themed UI cannot drift apart.
+ */
+export type CompletionRenderBlock =
+	| { kind: "title"; text: string }
+	| { kind: "summary"; text: string }
+	| { kind: "header"; section: CompletionRenderSection; text: string }
+	| { kind: "task"; section: CompletionRenderSection; text: string }
+	| { kind: "directory"; section: CompletionRenderSection; text: string }
+	| { kind: "output"; section: CompletionRenderSection; label: string; text: string };
+
+export function buildCompletionRenderBlocks(data: CompletionRenderData): CompletionRenderBlock[] {
+	const blocks: CompletionRenderBlock[] = [
+		{ kind: "title", text: data.title },
+		{ kind: "summary", text: data.summary },
+	];
+	for (const section of data.sections) {
+		blocks.push({ kind: "header", section, text: completionSectionHeader(section) });
+		blocks.push({ kind: "task", section, text: section.task });
+		if (section.cwd) blocks.push({ kind: "directory", section, text: section.cwd });
+		blocks.push({ kind: "output", section, label: completionOutputLabel(section), text: section.output });
+	}
+	return blocks;
+}
+
+/**
+ * Theme-free text for the completion renderer. Collapsed is the one-line
+ * aggregate; expanded lists every planned run's task, run ID, directory, and
+ * output/error (including not-run chain steps). Returns `undefined` when the
+ * details are not a dispatch.
+ */
+export function formatCompletionRenderText(
+	value: unknown,
+	options: { expanded?: boolean } = {},
+): string | undefined {
+	const data = buildCompletionRenderData(value);
+	if (!data) return undefined;
+	if (!options.expanded) return data.title;
+
+	const lines: string[] = [];
+	for (const block of buildCompletionRenderBlocks(data)) {
+		switch (block.kind) {
+			case "title":
+				lines.push(block.text);
+				break;
+			case "summary":
+				lines.push(block.text);
+				break;
+			case "header":
+				lines.push("", `### ${block.text}`);
+				break;
+			case "task":
+				lines.push(`Task: ${block.text}`);
+				break;
+			case "directory":
+				lines.push(`Directory: ${block.text}`);
+				break;
+			case "output":
+				lines.push(`${block.label}: ${block.text}`);
+				break;
 		}
 	}
-
-	const notRunSuffix = notRunCount > 0 ? `, ${notRunCount} not run` : "";
-	lines.push("", `Summary: ${successCount}/${dispatch.items.length} succeeded${notRunSuffix}.`);
 	return lines.join("\n");
 }
 

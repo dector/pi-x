@@ -11,13 +11,20 @@ import {
 	PER_TASK_OUTPUT_CAP,
 	aggregateDispatchStatus,
 	buildAsyncStartResult,
+	buildCompletionRenderBlocks,
+	buildCompletionRenderData,
+	coerceTerminalCompletionDetails,
+	collectCompletionSections,
 	formatAsyncAcknowledgement,
 	formatAsyncCompletion,
+	formatCompletionCounts,
+	formatCompletionRenderText,
 	formatParallelAggregate,
 	formatTaskStatus,
 	isTerminalDispatchStatus,
 	normalizeDispatchMetadata,
 	normalizeSubagentDetails,
+	SUBAGENT_COMPLETION_CUSTOM_TYPE,
 	truncateTaskOutput,
 } from "./completion.ts";
 import type { PreparedSubagentDispatch, SingleResult } from "./types.ts";
@@ -365,6 +372,28 @@ describe("formatAsyncCompletion", () => {
 		expect(text).toContain("Directory: /parent");
 	});
 
+	test("prefers a prepared item cwd over the dispatch fallback", () => {
+		const dispatch = preparedDispatch({
+			cwd: "/parent",
+			items: [{ runId: "sa-1", agent: "a", task: "one", cwd: "/item" }],
+		});
+		const text = formatAsyncCompletion(dispatch, {
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "single",
+				execution: "async",
+				dispatchId: dispatch.dispatchId,
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [singleResult("a", "a-out", { runId: "sa-1" })],
+			},
+		});
+
+		expect(text).toContain("Directory: /item");
+		expect(text).not.toContain("Directory: /parent");
+	});
+
 	test("uses the requested item count as the summary denominator for a stopped chain", () => {
 		const dispatch = preparedDispatch({
 			mode: "chain",
@@ -401,5 +430,256 @@ describe("formatAsyncCompletion", () => {
 		expect(text).toContain("Not run: the chain stopped before this step.");
 		expect(text).toContain("Summary: 1/3 succeeded, 1 not run.");
 		expect(text).not.toContain("### [c] [sa-3] failed");
+	});
+});
+
+describe("subagent-completion renderer", () => {
+	const details = {
+		mode: "parallel",
+		execution: "async",
+		dispatchId: "dispatch-7",
+		dispatchStatus: "completed",
+		agentScope: "user",
+		projectAgentsDir: null,
+		results: [
+			singleResult("scout", "found it", { runId: "sa-1", task: "find auth code", cwd: "/repo" }),
+			singleResult("worker", undefined, {
+				runId: "sa-2",
+				task: "apply fix",
+				exitCode: 1,
+				stopReason: "error",
+				errorMessage: "boom",
+			}),
+		],
+	};
+
+	test("collapsed renders one aggregate status line without task output", () => {
+		const text = formatCompletionRenderText(details, { expanded: false });
+		expect(text).toContain("dispatch-7");
+		expect(text).toContain("completed");
+		expect(text).toContain("parallel");
+		expect(text).toContain("async");
+		expect(text).toContain("1/2 succeeded");
+		expect(text).not.toContain("found it");
+		expect(text).not.toContain("boom");
+	});
+
+	test("expanded renders every task, run id, directory, output, and error", () => {
+		const text = formatCompletionRenderText(details, { expanded: true }) ?? "";
+		expect(text).toContain("### [scout] [sa-1] completed");
+		expect(text).toContain("Task: find auth code");
+		expect(text).toContain("Directory: /repo");
+		expect(text).toContain("Output: found it");
+		expect(text).toContain("### [worker] [sa-2] failed (error)");
+		expect(text).toContain("Task: apply fix");
+		expect(text).toContain("Failure: boom");
+		expect(text).toContain("Summary: 1/2 succeeded.");
+	});
+
+	test("builds a structured model for the indexed renderer", () => {
+		const data = buildCompletionRenderData(details);
+		expect(data?.sections.map((section) => [section.agent, section.runId, section.failed])).toEqual([
+			["scout", "sa-1", false],
+			["worker", "sa-2", true],
+		]);
+		expect(data).toMatchObject({
+			dispatchId: "dispatch-7",
+			execution: "async",
+			dispatchStatus: "completed",
+			succeeded: 1,
+			failed: 1,
+			total: 2,
+		});
+	});
+
+	test("returns undefined for non-dispatch details", () => {
+		expect(formatCompletionRenderText(undefined)).toBeUndefined();
+		expect(formatCompletionRenderText({ mode: "banana", results: [] })).toBeUndefined();
+		expect(buildCompletionRenderData(null)).toBeUndefined();
+	});
+
+	test("exposes the shared custom-type constant", () => {
+		expect(SUBAGENT_COMPLETION_CUSTOM_TYPE).toBe("subagent-completion");
+	});
+});
+
+describe("stopped-chain completion details", () => {
+	const plannedItems = [
+		{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+		{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+		{ runId: "sa-3", agent: "c", task: "three", step: 3 },
+	];
+	const stoppedChainDetails = {
+		mode: "chain",
+		execution: "async",
+		dispatchId: "chain-1",
+		dispatchStatus: "failed",
+		agentScope: "user",
+		projectAgentsDir: null,
+		cwd: "/parent",
+		plannedItems,
+		results: [
+			singleResult("a", "a-out", { runId: "sa-1", task: "one", step: 1 }),
+			singleResult("b", undefined, {
+				runId: "sa-2",
+				task: "two",
+				step: 2,
+				exitCode: 1,
+				stopReason: "error",
+				errorMessage: "stopped",
+			}),
+		],
+	};
+
+	test("renders planned totals and includes not-run steps in the expanded view", () => {
+		const data = buildCompletionRenderData(stoppedChainDetails);
+		expect(data).toMatchObject({ succeeded: 1, failed: 1, notRun: 1, total: 3 });
+		expect(data?.title).toContain("1/3 succeeded, 1 not run");
+		expect(data?.summary).toBe("Summary: 1/3 succeeded, 1 not run.");
+		expect(data?.sections.map((section) => [section.runId, section.status, section.notRun])).toEqual([
+			["sa-1", "completed", false],
+			["sa-2", "failed (error)", false],
+			["sa-3", "not run", true],
+		]);
+
+		const collapsed = formatCompletionRenderText(stoppedChainDetails, { expanded: false });
+		expect(collapsed).toContain("1/3 succeeded, 1 not run");
+
+		const expanded = formatCompletionRenderText(stoppedChainDetails, { expanded: true }) ?? "";
+		expect(expanded).toContain("### [c] [sa-3] step 3 not run");
+		expect(expanded).toContain("Task: three");
+		expect(expanded).toContain("Not run: the chain stopped before this step.");
+		expect(expanded).toContain("Summary: 1/3 succeeded, 1 not run.");
+	});
+
+	test("block model keeps the planned order and labels", () => {
+		const data = buildCompletionRenderData(stoppedChainDetails);
+		if (!data) throw new Error("expected render data");
+		const blocks = buildCompletionRenderBlocks(data);
+		expect(blocks.map((block) => block.kind)).toEqual([
+			"title",
+			"summary",
+			"header",
+			"task",
+			"directory",
+			"output",
+			"header",
+			"task",
+			"directory",
+			"output",
+			"header",
+			"task",
+			"directory",
+			"output",
+		]);
+		const outputLabels = blocks.filter((block) => block.kind === "output").map((block) => block.label);
+		expect(outputLabels).toEqual(["Output", "Failure", "Not run"]);
+	});
+
+	test("still renders every result when planned items are absent (old records)", () => {
+		const legacy = { ...stoppedChainDetails, plannedItems: undefined };
+		const data = buildCompletionRenderData(legacy);
+		expect(data).toMatchObject({ succeeded: 1, failed: 1, notRun: 0, total: 2 });
+		expect(data?.sections.map((section) => section.runId)).toEqual(["sa-1", "sa-2"]);
+	});
+
+	test("accepts a planned fallback and appends unexpected extra results", () => {
+		const data = buildCompletionRenderData(
+			{
+				mode: "chain",
+				execution: "async",
+				dispatchId: "chain-2",
+				dispatchStatus: "completed",
+				results: [
+					singleResult("a", "a-out", { runId: "sa-1" }),
+					singleResult("extra", "extra-out", { runId: "sa-x" }),
+				],
+			},
+			plannedItems,
+		);
+		expect(data?.sections.map((section) => section.runId)).toEqual(["sa-1", "sa-2", "sa-3", "sa-x"]);
+		expect(data?.notRun).toBe(2);
+	});
+
+	test("collectCompletionSections is stable for empty input", () => {
+		expect(collectCompletionSections([], [], "parallel")).toEqual([]);
+		expect(formatCompletionCounts(0, 0, 0)).toBe("0/0 succeeded");
+	});
+
+	test("drops malformed planned items and keeps valid ones", () => {
+		const details = normalizeSubagentDetails({
+			mode: "chain",
+			results: [],
+			plannedItems: [
+				{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+				{ agent: "missing-run-id", task: "two" },
+				{ runId: "sa-3", agent: "c", task: 42 },
+				null,
+			],
+		});
+		expect(details?.plannedItems).toEqual([{ runId: "sa-1", agent: "a", task: "one", step: 1 }]);
+	});
+});
+
+describe("coerceTerminalCompletionDetails", () => {
+	const dispatch = preparedDispatch({
+		mode: "chain",
+		dispatchId: "d-1",
+		cwd: "/dispatch-cwd",
+		items: [
+			{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+			{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+		],
+	});
+
+	test("replaces a started status with a terminal one derived from the results", () => {
+		const details = coerceTerminalCompletionDetails(dispatch, {
+			mode: "chain",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "started",
+			results: [singleResult("a", "ok", { runId: "sa-1" })],
+		});
+		expect(details.dispatchStatus).toBe("completed");
+		expect(details.plannedItems).toHaveLength(2);
+		expect(details.cwd).toBe("/dispatch-cwd");
+	});
+
+	test("an explicit aborted option wins for a non-terminal record", () => {
+		const details = coerceTerminalCompletionDetails(
+			dispatch,
+			{ dispatchStatus: "started", results: [singleResult("a", "ok", { runId: "sa-1" })] },
+			{ aborted: true },
+		);
+		expect(details.dispatchStatus).toBe("aborted");
+	});
+
+	test("an isError option marks an empty non-terminal record failed", () => {
+		const details = coerceTerminalCompletionDetails(dispatch, { dispatchStatus: "started", results: [] }, { isError: true });
+		expect(details.dispatchStatus).toBe("failed");
+	});
+
+	test("keeps a terminal status and existing metadata", () => {
+		const details = coerceTerminalCompletionDetails(dispatch, {
+			mode: "chain",
+			agentScope: "both",
+			projectAgentsDir: "/agents",
+			dispatchStatus: "aborted",
+			dispatchId: "other",
+			results: [],
+		});
+		expect(details).toMatchObject({
+			dispatchStatus: "aborted",
+			dispatchId: "d-1",
+			agentScope: "both",
+			projectAgentsDir: "/agents",
+		});
+	});
+
+	test("produces a terminal record from missing details", () => {
+		const details = coerceTerminalCompletionDetails(dispatch, undefined);
+		expect(details.dispatchStatus).toBe("completed");
+		expect(details.results).toEqual([]);
+		expect(details.plannedItems).toHaveLength(2);
 	});
 });

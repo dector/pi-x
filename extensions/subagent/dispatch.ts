@@ -147,6 +147,8 @@ function makeDetailsFor(dispatch: PreparedSubagentDispatch, mode: SubagentMode):
 		dispatchStatus,
 		agentScope: dispatch.agentScope,
 		projectAgentsDir: dispatch.projectAgentsDir,
+		plannedItems: dispatch.items,
+		cwd: dispatch.cwd,
 		results,
 	});
 }
@@ -185,6 +187,8 @@ export function buildDispatchExceptionResult(
 		dispatchStatus: aborted ? "aborted" : "failed",
 		agentScope: dispatch.agentScope,
 		projectAgentsDir: dispatch.projectAgentsDir,
+		plannedItems: dispatch.items,
+		cwd: dispatch.cwd,
 		results,
 	};
 	const status = details.dispatchStatus ?? (aborted ? "aborted" : "failed");

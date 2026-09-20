@@ -46,13 +46,20 @@ import {
 	type RpcStreamState,
 } from "./events.ts";
 import {
+	buildAsyncStartResult,
+	buildCompletionRenderBlocks,
+	buildCompletionRenderData,
+	buildNotStartedResult,
+	formatCompletionRenderText,
+	SUBAGENT_COMPLETION_CUSTOM_TYPE,
+} from "./completion.ts";
+import {
 	type DispatchRuntimeDependencies,
 	type SingleRunRequest,
 	buildDispatchExceptionResult,
 	runPreparedDispatch,
 	SubagentAbortError,
 } from "./dispatch.ts";
-import { buildAsyncStartResult, buildNotStartedResult } from "./completion.ts";
 import { AsyncDispatchManager } from "./lifecycle.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
@@ -498,6 +505,8 @@ async function runSingleAgent(
 			startedAt: Date.now(),
 			result: currentResult,
 			child,
+			dispatchId: dispatch.dispatchId,
+			execution: dispatch.execution,
 		});
 
 		const abort = () => {
@@ -718,6 +727,8 @@ export default function (pi: ExtensionAPI) {
 						const details = [
 							`Agent: ${run.agentName} [${run.runId}]`,
 							`State: ${run.result.state ?? "unknown"}`,
+							`Execution: ${run.execution ?? "blocking"}`,
+							...(run.dispatchId ? [`Dispatch: ${run.dispatchId}`] : []),
 							`PID: ${run.child?.pid ?? "n/a"}`,
 							`CWD: ${run.cwd}`,
 							`Inherited: ${run.result.inheritedMode ?? "unknown"}`,
@@ -863,6 +874,76 @@ export default function (pi: ExtensionAPI) {
 			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what, data }], ctx });
 		});
 	};
+
+	// Compact/expanded renderer for the one async aggregate completion message.
+	// Pure data/text/blocks live in `completion.ts`; this adapter only maps them
+	// onto TUI components, so collapsed and expanded output cannot drift from the
+	// tested model. Legacy/malformed details fall back to the model-visible
+	// content so a completion is never hidden.
+	pi.registerMessageRenderer<SubagentDetails>(
+		SUBAGENT_COMPLETION_CUSTOM_TYPE,
+		(message, { expanded, outputPad }, theme) => {
+			const data = buildCompletionRenderData(message.details);
+			if (!data) {
+				const content =
+					typeof message.content === "string"
+						? message.content
+						: message.content
+								.map((part) => (part.type === "text" ? part.text : `[${part.type}]`))
+								.join("\n");
+				return new Text(content, outputPad, 0);
+			}
+
+			const icon =
+				data.dispatchStatus === "completed"
+					? theme.fg("success", "✓")
+					: data.dispatchStatus === "aborted"
+						? theme.fg("warning", "⊘")
+						: theme.fg("error", "✗");
+
+			if (!expanded) {
+				return new Text(
+					`${icon} ${formatCompletionRenderText(message.details, { expanded: false }) ?? data.title}`,
+					outputPad,
+					0,
+				);
+			}
+
+			const container = new Container();
+			const mdTheme = getMarkdownTheme();
+			for (const block of buildCompletionRenderBlocks(data)) {
+				switch (block.kind) {
+					case "title":
+						container.addChild(new Text(`${icon} ${block.text}`, outputPad, 0));
+						break;
+					case "summary":
+						container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
+						break;
+					case "header": {
+						const sectionIcon = block.section.notRun
+							? theme.fg("warning", "⊘")
+							: block.section.failed
+								? theme.fg("error", "✗")
+								: theme.fg("success", "✓");
+						container.addChild(new Spacer(1));
+						container.addChild(new Text(`${sectionIcon} ${theme.fg("accent", block.text)}`, outputPad, 0));
+						break;
+					}
+					case "task":
+						container.addChild(new Text(theme.fg("dim", `Task: ${block.text}`), outputPad, 0));
+						break;
+					case "directory":
+						container.addChild(new Text(theme.fg("dim", `Directory: ${block.text}`), outputPad, 0));
+						break;
+					case "output":
+						container.addChild(new Spacer(1));
+						container.addChild(new Markdown(block.text.trim(), outputPad, 0, mdTheme));
+						break;
+				}
+			}
+			return container;
+		},
+	);
 
 	pi.registerTool({
 		name: "subagent",

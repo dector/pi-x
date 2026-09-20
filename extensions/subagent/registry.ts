@@ -1,5 +1,5 @@
 import type { RpcChild } from "./rpc-client.ts";
-import type { SingleResult } from "./types.ts";
+import type { SingleResult, SubagentExecution } from "./types.ts";
 
 export interface SubagentRunRuntime {
 	runId: string;
@@ -10,6 +10,10 @@ export interface SubagentRunRuntime {
 	completedAt?: number;
 	result: SingleResult;
 	child?: RpcChild;
+	/** Dispatch that owns this run; surfaced by the manager and agent log. */
+	dispatchId?: string;
+	/** Whether the owning dispatch runs detached or blocking. */
+	execution?: SubagentExecution;
 }
 
 export class SubagentRegistry {

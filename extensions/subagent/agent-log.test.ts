@@ -389,3 +389,325 @@ describe("formatAgentLog", () => {
 		expect(text).toContain("────────────");
 	});
 });
+
+function completionBranch(details: unknown, timestamp = "2024-02-01T00:00:00.000Z"): unknown[] {
+	return [
+		{
+			type: "custom_message",
+			customType: "subagent-completion",
+			content: "completion text",
+			display: true,
+			details,
+			timestamp,
+		},
+	];
+}
+
+describe("persisted async completion messages", () => {
+	test("loads completed async runs after resume", () => {
+		const entries = persistedAgentLogEntries(
+			completionBranch({
+				mode: "parallel",
+				execution: "async",
+				dispatchId: "dispatch-7",
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [
+					{ runId: "sa-1", agent: "scout", task: "find code", messages: [assistant("found")], exitCode: 0, usage },
+					{ runId: "sa-2", agent: "worker", task: "fix", exitCode: 1, stderr: "boom", usage },
+				],
+			}),
+		);
+		expect(entries).toHaveLength(2);
+		expect(entries[0]).toMatchObject({
+			runId: "sa-1",
+			agentName: "scout",
+			task: "find code",
+			output: "found",
+			status: "completed",
+			mode: "parallel",
+			source: "persisted",
+			dispatchId: "dispatch-7",
+			execution: "async",
+		});
+		expect(entries[0]?.completedAt).toBe(Date.parse("2024-02-01T00:00:00.000Z"));
+		expect(entries[1]).toMatchObject({ runId: "sa-2", output: "boom", status: "failed" });
+	});
+
+	test("ignores started completion messages and unrelated custom types", () => {
+		const started = completionBranch({
+			mode: "single",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "started",
+			results: [{ runId: "sa-1", agent: "a", task: "t", messages: [], exitCode: -1, usage }],
+		});
+		expect(persistedAgentLogEntries(started)).toEqual([]);
+		expect(persistedAgentLogEntries([{ type: "custom_message", customType: "other" }])).toEqual([]);
+		expect(persistedAgentLogEntries([{ type: "custom_message", customType: "subagent-completion" }])).toEqual([]);
+	});
+
+	test("still ignores async acknowledgement tool results", () => {
+		const ack = branchWithDetails({
+			mode: "single",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "started",
+			results: [],
+		});
+		expect(persistedAgentLogEntries(ack)).toEqual([]);
+	});
+
+	test("fills startedAt from the matching acknowledgement timestamp", () => {
+		const startedAt = Date.parse("2024-02-01T00:00:00.000Z");
+		const completedAt = Date.parse("2024-02-01T00:00:10.000Z");
+		const branch = [
+			{
+				type: "message",
+				timestamp: new Date(startedAt).toISOString(),
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call-1", name: "subagent", arguments: {} }],
+					timestamp: startedAt,
+				},
+			},
+			{
+				type: "message",
+				timestamp: new Date(startedAt + 5).toISOString(),
+				message: {
+					role: "toolResult",
+					toolName: "subagent",
+					toolCallId: "call-1",
+					timestamp: startedAt + 5,
+					details: {
+						mode: "single",
+						execution: "async",
+						dispatchId: "dispatch-7",
+						dispatchStatus: "started",
+						plannedItems: [{ runId: "sa-1", agent: "scout", task: "find code" }],
+						results: [],
+					},
+				},
+			},
+			{
+				type: "custom_message",
+				customType: "subagent-completion",
+				content: "completion text",
+				display: true,
+				timestamp: new Date(completedAt).toISOString(),
+				details: {
+					mode: "single",
+					execution: "async",
+					dispatchId: "dispatch-7",
+					dispatchStatus: "completed",
+					plannedItems: [{ runId: "sa-1", agent: "scout", task: "find code" }],
+					results: [{ runId: "sa-1", agent: "scout", task: "find code", messages: [assistant("found")], exitCode: 0, usage }],
+				},
+			},
+		];
+
+		const [entry] = persistedAgentLogEntries(branch);
+		expect(entry?.startedAt).toBe(startedAt);
+		expect(entry?.completedAt).toBe(completedAt);
+		expect(entry?.dispatchId).toBe("dispatch-7");
+	});
+
+	test("falls back to the acknowledgement result timestamp without a tool call", () => {
+		const startedAt = Date.parse("2024-03-01T00:00:00.000Z");
+		const branch = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "subagent",
+					timestamp: startedAt,
+					details: {
+						mode: "single",
+						execution: "async",
+						dispatchId: "dispatch-8",
+						dispatchStatus: "started",
+						results: [],
+					},
+				},
+			},
+			{
+				type: "custom_message",
+				customType: "subagent-completion",
+				content: "completion text",
+				display: true,
+				timestamp: new Date(startedAt + 1000).toISOString(),
+				details: {
+					mode: "single",
+					execution: "async",
+					dispatchId: "dispatch-8",
+					dispatchStatus: "completed",
+					results: [{ runId: "sa-8", agent: "worker", task: "done", messages: [assistant("ok")], exitCode: 0, usage }],
+				},
+			},
+		];
+
+		const [entry] = persistedAgentLogEntries(branch);
+		expect(entry?.startedAt).toBe(startedAt);
+	});
+
+	test("a real stopped-chain completion only logs steps that ran", () => {
+		const startedAt = Date.parse("2024-04-01T00:00:00.000Z");
+		const branch = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "subagent",
+					timestamp: startedAt,
+					details: {
+						mode: "chain",
+						execution: "async",
+						dispatchId: "chain-1",
+						dispatchStatus: "started",
+						plannedItems: [
+							{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+							{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+							{ runId: "sa-3", agent: "c", task: "three", step: 3 },
+						],
+						results: [],
+					},
+				},
+			},
+			{
+				type: "custom_message",
+				customType: "subagent-completion",
+				content: "completion text",
+				display: true,
+				timestamp: new Date(startedAt + 2000).toISOString(),
+				details: {
+					mode: "chain",
+					execution: "async",
+					dispatchId: "chain-1",
+					dispatchStatus: "failed",
+					plannedItems: [
+						{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+						{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+						{ runId: "sa-3", agent: "c", task: "three", step: 3 },
+					],
+					results: [
+						{ runId: "sa-1", agent: "a", task: "one", step: 1, messages: [assistant("a-out")], exitCode: 0, usage },
+						{ runId: "sa-2", agent: "b", task: "two", step: 2, exitCode: 1, stderr: "stopped", usage },
+					],
+				},
+			},
+		];
+
+		const entries = persistedAgentLogEntries(branch);
+		expect(entries.map((entry) => entry.runId)).toEqual(["sa-1", "sa-2"]);
+		expect(entries.every((entry) => entry.startedAt === startedAt)).toBe(true);
+		expect(entries.some((entry) => entry.runId === "sa-3")).toBe(false);
+	});
+});
+
+describe("live and persisted async deduplication", () => {
+	test("live state wins while persisted completion metadata fills gaps", () => {
+		const registryEntry = registryAgentLogEntries([runtime({ runId: "sa-1", completedAt: Date.now() })]);
+		const persisted = persistedAgentLogEntries(
+			completionBranch({
+				mode: "parallel",
+				execution: "async",
+				dispatchId: "dispatch-7",
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [
+					{
+						runId: "sa-1",
+						agent: "scout",
+						task: "find auth code",
+						messages: [assistant("stale output")],
+						exitCode: 0,
+						step: 2,
+						usage,
+					},
+				],
+			}),
+		);
+		const merged = mergeAgentLogEntries(registryEntry, persisted);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({
+			output: "scout output",
+			source: "registry",
+			mode: "parallel",
+			step: 2,
+			dispatchId: "dispatch-7",
+			execution: "async",
+		});
+	});
+
+	test("keeps a persisted-only async run after registry pruning", () => {
+		const persisted = persistedAgentLogEntries(
+			completionBranch({
+				mode: "single",
+				execution: "async",
+				dispatchId: "dispatch-9",
+				dispatchStatus: "completed",
+				results: [{ runId: "sa-9", agent: "worker", task: "done", messages: [assistant("ok")], exitCode: 0, usage }],
+			}),
+		);
+		const merged = mergeAgentLogEntries([], persisted);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({ runId: "sa-9", output: "ok", dispatchId: "dispatch-9", execution: "async" });
+	});
+
+	test("dedupes a stopped-chain completion without logging not-run steps", () => {
+		const registryEntry = registryAgentLogEntries([runtime({ runId: "sa-1", completedAt: Date.now() })]);
+		const persisted = persistedAgentLogEntries(
+			completionBranch({
+				mode: "chain",
+				execution: "async",
+				dispatchId: "chain-1",
+				dispatchStatus: "failed",
+				plannedItems: [
+					{ runId: "sa-1", agent: "scout", task: "find auth code", step: 1 },
+					{ runId: "sa-2", agent: "worker", task: "apply fix", step: 2 },
+					{ runId: "sa-3", agent: "reviewer", task: "review", step: 3 },
+				],
+				results: [
+					{ runId: "sa-1", agent: "scout", task: "find auth code", step: 1, messages: [assistant("stale")], exitCode: 0, usage },
+					{ runId: "sa-2", agent: "worker", task: "apply fix", step: 2, exitCode: 1, stderr: "boom", usage },
+				],
+			}),
+		);
+		const merged = mergeAgentLogEntries(registryEntry, persisted);
+		expect(merged.map((entry) => entry.runId)).toEqual(["sa-1", "sa-2"]);
+		expect(merged.find((entry) => entry.runId === "sa-1")).toMatchObject({
+			output: "scout output",
+			source: "registry",
+			mode: "chain",
+			step: 1,
+			dispatchId: "chain-1",
+			execution: "async",
+		});
+	});
+});
+
+describe("registry async metadata", () => {
+	test("registryAgentLogEntries carries dispatch id and execution mode", () => {
+		const [entry] = registryAgentLogEntries([runtime({ dispatchId: "dispatch-7", execution: "async" })]);
+		expect(entry).toMatchObject({ dispatchId: "dispatch-7", execution: "async" });
+	});
+
+	test("formatAgentLogEntry shows dispatch and execution metadata", () => {
+		const text = formatAgentLogEntry({
+			runId: "sa-1",
+			agentName: "worker",
+			task: "t",
+			output: "o",
+			status: "completed",
+			source: "persisted",
+			mode: "chain",
+			step: 2,
+			execution: "async",
+			dispatchId: "dispatch-7",
+		});
+		expect(text).toContain("Mode: chain (step 2) [async]");
+		expect(text).toContain("Dispatch: dispatch-7");
+	});
+});

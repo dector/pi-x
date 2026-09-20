@@ -2,20 +2,22 @@
  * Pure helpers for `/px:agent:log`.
  *
  * A run's "log" is its original task prompt plus the final assistant output.
- * Two sources are merged:
+ * Three sources are merged:
  *   - the in-memory `SubagentRegistry` (active runs and recent completed runs);
- *   - persisted `SubagentDetails` tool results in the current session branch,
- *     which survive registry pruning and `/resume`.
+ *   - persisted terminal `SubagentDetails` tool results (blocking runs);
+ *   - persisted `subagent-completion` custom messages (detached async runs).
+ *
+ * The persisted sources survive registry pruning and `/resume`.
  *
  * Duplicates are removed by `runId`, with the registry entry winning because it
  * carries live state. Persisted results without a `runId` (older sessions) fall
  * back to a content signature so they do not double-report registry runs.
  */
 
-import { isTerminalDispatchStatus, normalizeSubagentDetails } from "./completion.ts";
+import { isTerminalDispatchStatus, normalizeSubagentDetails, SUBAGENT_COMPLETION_CUSTOM_TYPE } from "./completion.ts";
 import type { SubagentRunRuntime } from "./registry.ts";
 import { getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
-import type { SubagentDetails } from "./types.ts";
+import type { SubagentDetails, SubagentExecution } from "./types.ts";
 
 export type AgentLogStatus = "running" | "completed" | "failed";
 export type AgentLogSource = "registry" | "persisted";
@@ -32,6 +34,10 @@ export interface AgentLogEntry {
 	step?: number;
 	startedAt?: number;
 	completedAt?: number;
+	/** Owning dispatch, when the record carries async metadata. */
+	dispatchId?: string;
+	/** Whether the run came from a detached async or blocking dispatch. */
+	execution?: SubagentExecution;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,14 +69,22 @@ export function registryAgentLogEntries(runs: SubagentRunRuntime[]): AgentLogEnt
 			source: "registry",
 			startedAt: run.startedAt,
 			completedAt: run.completedAt,
+			dispatchId: run.dispatchId,
+			execution: run.execution,
 		});
 	}
 	return entries;
 }
 
 /**
- * Scan a session branch for persisted `subagent` tool results and flatten them
- * into per-result log entries. Invalid or unrelated entries are ignored.
+ * Scan a session branch for persisted `subagent` tool results and persisted
+ * `subagent-completion` custom messages, then flatten them into per-result log
+ * entries. Invalid or unrelated entries are ignored.
+ *
+ * Async acknowledgement tool results carry `dispatchStatus: "started"` and are
+ * non-terminal, so they are never surfaced as completed history. Terminal async
+ * work is persisted as a `custom_message` whose details rebuild every entry
+ * without parsing display text.
  *
  * When the tool-result message exposes `toolName`, it must be `subagent`; the
  * details shape is only trusted as a fallback for older records that lack it.
@@ -79,27 +93,75 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 	const entries: AgentLogEntry[] = [];
 	if (!Array.isArray(branch)) return entries;
 
-	// Assistant tool-call timestamps let us recover the run start time; the tool
-	// result message/entry timestamp is the completion time.
+	// Pass 1: assistant tool-call timestamps let us recover a run's start time.
 	const callTimestamps = new Map<string, number>();
-
 	for (const entry of branch) {
 		if (!isRecord(entry) || entry.type !== "message") continue;
 		const message = entry.message;
-		if (!isRecord(message)) continue;
+		if (!isRecord(message) || message.role !== "assistant") continue;
+		const timestamp = readTimestamp(message.timestamp);
+		if (timestamp === undefined || !Array.isArray(message.content)) continue;
+		for (const part of message.content) {
+			if (isRecord(part) && part.type === "toolCall" && typeof part.id === "string") {
+				callTimestamps.set(part.id, timestamp);
+			}
+		}
+	}
 
-		if (message.role === "assistant") {
-			const timestamp = readTimestamp(message.timestamp);
-			if (timestamp !== undefined && Array.isArray(message.content)) {
-				for (const part of message.content) {
-					if (isRecord(part) && part.type === "toolCall" && typeof part.id === "string") {
-						callTimestamps.set(part.id, timestamp);
-					}
-				}
+	// Pass 2: the acknowledgement tool result is the timestamp that matches a
+	// later persisted async completion, so record one start time per dispatch.
+	const dispatchStartedAt = new Map<string, number>();
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = entry.message;
+		if (!isRecord(message) || message.role !== "toolResult") continue;
+		if (typeof message.toolName === "string" && message.toolName !== "subagent") continue;
+		const details = normalizeSubagentDetails(message.details);
+		if (!details || isTerminalDispatchStatus(details.dispatchStatus)) continue;
+		if (!details.dispatchId || dispatchStartedAt.has(details.dispatchId)) continue;
+		const ackTimestamp =
+			(typeof message.toolCallId === "string" ? callTimestamps.get(message.toolCallId) : undefined) ??
+			readTimestamp(message.timestamp) ??
+			readTimestamp(entry.timestamp);
+		if (ackTimestamp !== undefined) dispatchStartedAt.set(details.dispatchId, ackTimestamp);
+	}
+
+	for (const entry of branch) {
+		if (!isRecord(entry)) continue;
+
+		// Persisted async completion messages survive registry pruning and resume.
+		if (entry.type === "custom_message") {
+			if (entry.customType !== SUBAGENT_COMPLETION_CUSTOM_TYPE) continue;
+			const details = normalizeSubagentDetails(entry.details);
+			if (!details) continue;
+			// Non-terminal completion messages must never appear as finished history.
+			if (!isTerminalDispatchStatus(details.dispatchStatus)) continue;
+			const completedAt = readTimestamp(entry.timestamp);
+			const startedAt = details.dispatchId ? dispatchStartedAt.get(details.dispatchId) : undefined;
+			for (const result of details.results) {
+				if (!isRecord(result)) continue;
+				entries.push({
+					runId: typeof result.runId === "string" ? result.runId : "",
+					agentName: typeof result.agent === "string" ? result.agent : "unknown",
+					task: typeof result.task === "string" ? result.task : "",
+					output: getResultOutput(result),
+					status: isFailedResult(result) ? "failed" : "completed",
+					source: "persisted",
+					mode: details.mode,
+					step: typeof result.step === "number" ? result.step : undefined,
+					startedAt,
+					completedAt,
+					dispatchId: details.dispatchId,
+					execution: details.execution,
+				});
 			}
 			continue;
 		}
 
+		if (entry.type !== "message") continue;
+		const message = entry.message;
+		if (!isRecord(message)) continue;
+		if (message.role === "assistant") continue;
 		if (message.role !== "toolResult") continue;
 		if (typeof message.toolName === "string" && message.toolName !== "subagent") continue;
 		const details = normalizeSubagentDetails(message.details);
@@ -124,6 +186,8 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 				step: typeof result.step === "number" ? result.step : undefined,
 				startedAt,
 				completedAt,
+				dispatchId: details.dispatchId,
+				execution: details.execution,
 			});
 		}
 	}
@@ -153,6 +217,8 @@ function mergeMetadata(entry: AgentLogEntry, richer: AgentLogEntry): AgentLogEnt
 		step: entry.step ?? richer.step,
 		startedAt: entry.startedAt ?? richer.startedAt,
 		completedAt: entry.completedAt ?? richer.completedAt,
+		dispatchId: entry.dispatchId ?? richer.dispatchId,
+		execution: entry.execution ?? richer.execution,
 	};
 }
 
@@ -197,7 +263,8 @@ export function mergeAgentLogEntries(
 export function describeAgentLogEntry(entry: AgentLogEntry): string {
 	const run = entry.runId ? ` [${entry.runId}]` : "";
 	const mode = entry.mode ? `  ${entry.mode}` : "";
-	return `${entry.agentName}${run}  ${entry.status}${mode}`;
+	const execution = entry.execution ? `  ${entry.execution}` : "";
+	return `${entry.agentName}${run}  ${entry.status}${mode}${execution}`;
 }
 
 /**
@@ -229,7 +296,8 @@ export function buildAgentLogPicker(entries: AgentLogEntry[]): {
 export function formatAgentLogEntry(entry: AgentLogEntry): string {
 	const label = entry.runId ? `${entry.agentName} [${entry.runId}]` : entry.agentName;
 	const lines: string[] = [`Agent: ${label}`];
-	if (entry.mode) lines.push(`Mode: ${entry.mode}${entry.step ? ` (step ${entry.step})` : ""}`);
+	if (entry.mode) lines.push(`Mode: ${entry.mode}${entry.step ? ` (step ${entry.step})` : ""}${entry.execution ? ` [${entry.execution}]` : ""}`);
+	if (entry.dispatchId) lines.push(`Dispatch: ${entry.dispatchId}`);
 	lines.push(`Status: ${entry.status}`);
 	if (entry.startedAt) lines.push(`Started: ${new Date(entry.startedAt).toISOString()}`);
 	if (entry.completedAt) lines.push(`Completed: ${new Date(entry.completedAt).toISOString()}`);

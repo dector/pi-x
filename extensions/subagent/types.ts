@@ -119,6 +119,14 @@ export interface SubagentDetails {
 	execution?: SubagentExecution;
 	dispatchId?: string;
 	dispatchStatus?: SubagentDispatchStatus;
+	/**
+	 * Every item the dispatch was planned to run, including chain steps that
+	 * never started. Optional so records persisted before this field keep
+	 * parsing; readers fall back to `results` when it is absent.
+	 */
+	plannedItems?: PreparedDispatchItem[];
+	/** Parent working directory, used to fill in missing per-result cwd. */
+	cwd?: string;
 	results: SingleResult[];
 }
 

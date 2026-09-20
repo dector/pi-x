@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { buildCompletionRenderData } from "./completion.ts";
 import { buildDispatchExceptionResult, runPreparedDispatch, SubagentAbortError } from "./dispatch.ts";
 import {
 	AsyncDispatchManager,
@@ -572,5 +573,93 @@ describe("delivery guards", () => {
 		expect(delivered).toHaveLength(1);
 		expect(delivered[0]?.message.content).toContain("could not be formatted");
 		expect(manager.size).toBe(0);
+	});
+});
+
+describe("terminal completion coercion", () => {
+	test("coerces a started runner record to a terminal status before delivery", async () => {
+		const { manager, delivered } = createManager();
+		const dispatch = preparedDispatch({ dispatchId: "d-started" });
+		const handle = manager.start(dispatch, async () => ({
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "single",
+				execution: "async",
+				dispatchId: "d-started",
+				dispatchStatus: "started",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [singleResult("worker", "sa-1", "done")],
+			},
+		}));
+		await handle?.promise;
+
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.message.details?.dispatchStatus).toBe("completed");
+		expect(delivered[0]?.message.details?.plannedItems).toHaveLength(1);
+		expect(delivered[0]?.message.content).toContain("d-started completed");
+	});
+
+	test("defaults a started record with no results to completed", async () => {
+		const { manager, delivered } = createManager();
+		const dispatch = preparedDispatch({ dispatchId: "d-empty" });
+		const handle = manager.start(dispatch, async () => ({
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "single",
+				execution: "async",
+				dispatchId: "d-empty",
+				dispatchStatus: "started",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [],
+			},
+		}));
+		await handle?.promise;
+
+		expect(delivered[0]?.message.details?.dispatchStatus).toBe("completed");
+	});
+});
+
+describe("real stopped-chain delivery", () => {
+	test("planned totals and not-run steps match the renderer", async () => {
+		const { manager, delivered } = createManager();
+		const dispatch = preparedDispatch({
+			mode: "chain",
+			dispatchId: "chain-real",
+			items: [
+				{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+				{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+				{ runId: "sa-3", agent: "c", task: "three", step: 3 },
+			],
+		});
+		const handle = manager.start(dispatch, (signal) =>
+			runPreparedDispatch(
+				dispatch,
+				{
+					runSingle: async (request) => {
+						if (request.agent === "b") throw new Error("step two failed");
+						return singleResult(request.agent, request.runId, `${request.agent}-out`, { task: request.task, step: request.step });
+					},
+				},
+				signal,
+				undefined,
+			),
+		);
+		await handle?.promise;
+
+		expect(delivered).toHaveLength(1);
+		const content = delivered[0]?.message.content ?? "";
+		expect(content).toContain("### [c] [sa-3] not run");
+		expect(content).toContain("Not run: the chain stopped before this step.");
+		expect(content).toContain("Summary: 1/3 succeeded, 1 not run.");
+
+		const deliveredDetails = delivered[0]?.message.details;
+		expect(deliveredDetails?.dispatchStatus).toBe("failed");
+		expect(deliveredDetails?.plannedItems).toHaveLength(3);
+
+		const render = buildCompletionRenderData(deliveredDetails);
+		expect(render).toMatchObject({ succeeded: 1, failed: 1, notRun: 1, total: 3 });
+		expect(render?.sections.map((section) => section.runId)).toEqual(["sa-1", "sa-2", "sa-3"]);
 	});
 });
