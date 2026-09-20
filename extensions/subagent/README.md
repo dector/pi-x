@@ -53,17 +53,26 @@ subagent/
 ├── events.ts            # RPC stream-event application to `SingleResult`
 ├── types.ts             # Shared dispatch/result types
 ├── fixtures/            # Test fixtures (fake RPC child, legacy contracts)
-├── agents/              # Sample agent definitions
-│   ├── scout.md         # Fast recon, returns compressed context
-│   ├── planner.md       # Creates implementation plans
-│   ├── reviewer.md      # Code review
-│   ├── researcher.md    # Web + local research with citations
-│   ├── ultra-reviewer-explicit.md  # Deep review (gpt-5.6-sol) — only on explicit request
-│   └── worker.md        # General-purpose (full capabilities)
+├── agents/              # Sample agent definitions (stable <role>-<tier> profiles)
+│   ├── scout-fast.md    # Fast recon, returns compressed context (flash, low)
+│   ├── scout-xfast.md   # Fastest recon (flash, minimal)
+│   ├── planner-fast.md  # Creates implementation plans (flash, high)
+│   ├── planner-strong.md # Stronger implementation plans (gpt-5.6-sol, medium)
+│   ├── planner-ultra-explicit.md # Deep ultra plan (gpt-5.6-sol) — only on explicit request
+│   ├── reviewer-fast.md # Code review (flash, high)
+│   ├── reviewer-xfast.md # Fast code review (flash, minimal)
+│   ├── reviewer-strong.md # Strong code review (gpt-5.6-sol, high)
+│   ├── reviewer-ultra-explicit.md # Deep adversarial review (gpt-5.6-sol) — only on explicit request
+│   ├── reviewer-xultra-explicit.md # Deepest adversarial review (gpt-5.6-sol, xhigh) — only on explicit request
+│   ├── researcher-fast.md # Web + local research with citations (flash, high)
+│   ├── researcher-strong.md # Strong research with citations (gpt-5.6-sol, high)
+│   ├── worker-fast.md   # General-purpose (flash, high)
+│   ├── worker-xfast.md  # Fast general-purpose (flash, minimal)
+│   └── worker-strong.md # Strong general-purpose (gpt-5.6-sol, medium)
 └── prompts/             # Workflow presets (prompt templates)
-    ├── implement.md     # scout -> planner -> worker
-    ├── scout-and-plan.md    # scout -> planner (no implementation)
-    └── implement-and-review.md  # worker -> reviewer -> worker
+    ├── implement.md     # scout-fast -> planner-fast -> worker-fast
+    ├── scout-and-plan.md    # scout-fast -> planner-fast (no implementation)
+    └── implement-and-review.md  # worker-fast -> reviewer-fast -> worker-fast
 ```
 
 ## Installation
@@ -137,10 +146,10 @@ there is no automatic fallback and no config key.
 
 ```ts
 // Herdr backend. A successful pane can be recycled; a failed pane is retained.
-{ agent: "worker", task: "Implement it", herdr: {} }
+{ agent: "worker-fast", task: "Implement it", herdr: {} }
 
 // Keep the pane after success too.
-{ agent: "reviewer", task: "Review it", herdr: { retain: "always" } }
+{ agent: "reviewer-fast", task: "Review it", herdr: { retain: "always" } }
 ```
 
 `herdr` is a per-dispatch user intent. It cannot be set in agent definition
@@ -224,28 +233,28 @@ By default every dispatch is **async**: the `subagent` tool returns a dispatch i
 
 ### Single agent
 ```
-Use scout to find all authentication code
+Use scout-fast to find all authentication code
 ```
 
 ### Blocking agent
 ```
-Use worker to implement the validation change, execution: blocking
+Use worker-fast to implement the validation change, execution: blocking
 ```
 
 ### Herdr pane (opt-in)
 ```
-Use worker to implement the validation change, herdr: {}
-Use reviewer to review it and keep the pane, herdr: { retain: "always" }
+Use worker-fast to implement the validation change, herdr: {}
+Use reviewer-fast to review it and keep the pane, herdr: { retain: "always" }
 ```
 
 ### Parallel execution
 ```
-Run 2 scouts in parallel: one to find models, one to find providers
+Run 2 scout-fast agents in parallel: one to find models, one to find providers
 ```
 
 ### Chained workflow
 ```
-Use a chain: first have scout find the read tool, then have planner suggest improvements
+Use a chain: first have scout-fast find the read tool, then have planner-fast suggest improvements
 ```
 
 ### Workflow prompts
@@ -319,8 +328,8 @@ The widget is cleared when the last child finishes and on `session_shutdown`.
 
 ```text
 Subagents (2 active)
-● worker sa-abc123 running · 34s  Implement validation
-◐ researcher sa-def456 waiting approval · 12s  Check API behavior
+● worker-fast sa-abc123 running · 34s  Implement validation
+◐ researcher-fast sa-def456 waiting approval · 12s  Check API behavior
 ```
 
 Each line shows a state icon, agent name, short run id, current state, elapsed
@@ -446,22 +455,43 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 ## Sample Agents
 
-| Agent | Purpose | Model | Thinking | Tools |
-|-------|---------|-------|----------|-------|
-| `scout` | Fast codebase recon | deepseek-v4.1-flash | low | read, grep, find, ls, bash |
-| `planner` | Implementation plans | deepseek-v4.1-flash | high | read, grep, find, ls |
-| `reviewer` | Code review | deepseek-v4.1-flash | max | read, grep, find, ls, bash |
-| `researcher` | Web + local research with citations | deepseek-v4.1-flash | high | web_search, http_md, http, read, grep, find, ls |
-| `ultra-reviewer-explicit` | Deep adversarial review (only on explicit request) | gpt-5.6-sol | max | read, grep, find, ls, bash |
-| `worker` | General-purpose | deepseek-v4.1-flash | high | (all default) |
+Each role ships as a family of stable `<role>-<tier>` profiles. The `-fast`
+profiles are the everyday defaults used by the workflow prompts; `-xfast` trades
+reasoning for speed, `-strong` uses `gpt-5.6-sol`, and the `-explicit` profiles
+are opt-in only (see below). The table lists the original sample-agent name for
+each renamed profile; newly added profiles have a blank Existing name.
+
+| Existing name | New name | Model | Thinking/Effort |
+|---------------|----------|-------|-----------------|
+| `scout` | `scout-fast` | `opencode-go/deepseek-v4.1-flash` | low |
+|  | `scout-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
+| `planner` | `planner-fast` | `opencode-go/deepseek-v4.1-flash` | high |
+|  | `planner-strong` | `openai-codex/gpt-5.6-sol` | medium |
+|  | `planner-ultra-explicit` | `openai-codex/gpt-5.6-sol` | high |
+| `worker` | `worker-fast` | `opencode-go/deepseek-v4.1-flash` | high |
+|  | `worker-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
+|  | `worker-strong` | `openai-codex/gpt-5.6-sol` | medium |
+| `reviewer` | `reviewer-fast` | `opencode-go/deepseek-v4.1-flash` | high |
+|  | `reviewer-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
+|  | `reviewer-strong` | `openai-codex/gpt-5.6-sol` | high |
+| `ultra-reviewer-explicit` | `reviewer-ultra-explicit` | `openai-codex/gpt-5.6-sol` | high |
+|  | `reviewer-xultra-explicit` | `openai-codex/gpt-5.6-sol` | xhigh |
+| `researcher` | `researcher-fast` | `opencode-go/deepseek-v4.1-flash` | high |
+|  | `researcher-strong` | `openai-codex/gpt-5.6-sol` | high |
+
+Explicit-only profiles (`planner-ultra-explicit`, `reviewer-ultra-explicit`, and
+`reviewer-xultra-explicit`) must never be auto-selected. Only route to them when
+the user's own words explicitly ask for an ultra plan or an ultra/xultra review.
+Use `planner-fast`/`planner-strong` for ordinary plans and
+`reviewer-fast`/`reviewer-strong` for ordinary reviews.
 
 ## Workflow Prompts
 
 | Prompt | Flow |
 |--------|------|
-| `/implement <query>` | scout → planner → worker |
-| `/scout-and-plan <query>` | scout → planner |
-| `/implement-and-review <query>` | worker → reviewer → worker |
+| `/implement <query>` | scout-fast → planner-fast → worker-fast |
+| `/scout-and-plan <query>` | scout-fast → planner-fast |
+| `/implement-and-review <query>` | worker-fast → reviewer-fast → worker-fast |
 
 ## Error Handling
 

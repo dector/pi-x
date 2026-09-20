@@ -674,7 +674,8 @@ export default function (pi: ExtensionAPI) {
 	const childControl = registerChildControls(pi);
 	// Surface agent names + brief descriptions in the tool description so the
 	// model can choose deliberately without trial and error. Important for
-	// opt-in agents like `ultra-reviewer-explicit`. Uses user-scope only, which
+	// opt-in agents like `reviewer-ultra-explicit` and
+	// `reviewer-xultra-explicit`. Uses user-scope only, which
 	// matches the default agentScope. Computed once at registration; the agent
 	// list is re-discovered per invocation for actual execution.
 	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
