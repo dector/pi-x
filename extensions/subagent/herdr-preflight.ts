@@ -15,7 +15,8 @@
  */
 
 import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { probeHerdrBridgeListener, type HerdrBridgeLauncher } from "./herdr-bridge.ts";
 import {
 	createHerdrClient,
@@ -204,7 +205,7 @@ function safeCreateTab(
 
 /** Absolute path to the pane-side bridge entry point shipped with this extension. */
 export function resolveHerdrBridgeMainPath(): string {
-	return join(import.meta.dir, "herdr-bridge-main.ts");
+	return join(dirname(fileURLToPath(import.meta.url)), "herdr-bridge-main.ts");
 }
 
 /**
