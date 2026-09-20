@@ -12,7 +12,13 @@ import {
 	type PermissionAction,
 } from "./contract";
 import { HerdrTabStatus, detectHerdrTabEnv, type HerdrTabStyle } from "./herdr-tab";
-import { UserWaitRegistry, parseUserWaitClear, parseUserWaitSet, type UserWaitTransition } from "./user-wait";
+import {
+	UserWaitRegistry,
+	parseUserWaitClear,
+	parseUserWaitSet,
+	type UserWaitSnapshot,
+	type UserWaitTransition,
+} from "./user-wait";
 
 /**
  * hub: central signal hub for pi-x extensions.
@@ -30,6 +36,26 @@ const WAIT_ID_DISPLAY_LENGTH = 8;
 /** Shorten a wait id for display only; the full id is never prompt content. */
 function shortWaitId(id: string): string {
 	return id.length > WAIT_ID_DISPLAY_LENGTH ? id.slice(0, WAIT_ID_DISPLAY_LENGTH) : id;
+}
+
+// `/px:hub` renders owner-supplied text (owner, id, label, provider ids). Strip
+// ANSI escapes and control characters so a malicious value cannot forge extra
+// lines, repaint the terminal, or move the cursor.
+const ANSI_ESCAPE_PATTERN = /\u001b(?:\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/** Collapse a display field to one clean line; `""` when nothing remains. */
+function sanitizeDisplayText(value: string): string {
+	return value
+		.replace(ANSI_ESCAPE_PATTERN, " ")
+		.replace(CONTROL_CHARACTER_PATTERN, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/** Detached copy for `changed` observers, so they cannot mutate adapter state. */
+function copyWaitSnapshot(snapshot: UserWaitSnapshot): UserWaitSnapshot {
+	return { active: snapshot.active, count: snapshot.count, waits: snapshot.waits.map((wait) => ({ ...wait })) };
 }
 
 type PendingRequest = {
@@ -148,7 +174,9 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	};
 
 	const applyUserWaitTransition = (transition: UserWaitTransition): void => {
-		if (transition.changed) pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, transition.snapshot);
+		// Observers get a detached copy: a `changed` listener must not be able to
+		// mutate the snapshot the Herdr adapter reads its activation label from.
+		if (transition.changed) pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, copyWaitSnapshot(transition.snapshot));
 		emitHerdrWaitTransition(transition);
 	};
 
@@ -310,11 +338,7 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async () => {
 		// Drop every registered wait and release Herdr if one was still open, so a
 		// shut-down session cannot leave the pane stuck as blocked.
-		const reset = userWaits.reset();
-		if (reset.changed) {
-			pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, reset.snapshot);
-			emitHerdrWaitTransition(reset);
-		}
+		applyUserWaitTransition(userWaits.reset());
 
 		if (!herdrTab) return;
 		// `stop()` is internally bounded by its restore timeout; awaiting it keeps
@@ -329,18 +353,26 @@ export default function hubExtension(pi: ExtensionAPI): void {
 
 			const providerLines = [...capsByProvider.entries()]
 				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([id, caps]) => `- ${id}: ${[...caps].sort().join(", ") || "(none)"}`);
+				.map(
+					([id, caps]) =>
+						`- ${sanitizeDisplayText(id)}: ${[...caps].sort().map((cap) => sanitizeDisplayText(cap)).join(", ") || "(none)"}`,
+				);
 
 			const pendingLines = [...pending.entries()].map(
-				([id, request]) => `- ${id}: ${request.cap.map((entry) => entry.what).join(", ")}`,
+				([id, request]) =>
+					`- ${sanitizeDisplayText(id)}: ${request.cap.map((entry) => sanitizeDisplayText(entry.what)).join(", ")}`,
 			);
 
 			// User waits are display text only: id is shortened, label is whatever the
-			// UI owner chose to declare. Full prompt content never reaches hub.
+			// UI owner chose to declare. Full prompt content never reaches hub, and
+			// every rendered field is sanitized so it cannot forge extra lines.
 			const waitSnapshot = userWaits.snapshot();
-			const waitLines = waitSnapshot.waits.map(
-				(wait) => `- ${wait.owner}/${shortWaitId(wait.id)}: ${wait.label ?? "(no label)"}`,
-			);
+			const waitLines = waitSnapshot.waits.map((wait) => {
+				const owner = sanitizeDisplayText(wait.owner) || "(unknown)";
+				const id = sanitizeDisplayText(wait.id);
+				const label = wait.label === undefined ? "" : sanitizeDisplayText(wait.label);
+				return `- ${owner}/${shortWaitId(id) || "(unknown)"}: ${label || "(no label)"}`;
+			});
 
 			const lines = [
 				`hub providers: ${capsByProvider.size}`,

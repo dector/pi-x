@@ -236,6 +236,44 @@ describe("hub user-wait event wiring", () => {
 		});
 	});
 
+	test("a changed observer cannot mutate the snapshot the Herdr adapter reads", () => {
+		const { bus } = setup();
+
+		// A buggy or hostile observer mutates the payload it was handed. That must
+		// not reach the snapshot the Herdr adapter reads the activation label from.
+		const off = bus.on(WAIT.changed, (payload) => {
+			const snapshot = payload as { active: boolean; count: number; waits: Array<{ label?: string }> };
+			snapshot.waits.length = 0;
+			snapshot.count = 0;
+			snapshot.active = false;
+		});
+
+		bus.send(WAIT.set, { id: "w1", owner: "safe-mode", label: "original" });
+		off();
+
+		expect(eventsNamed(bus.emitted, HERDR)).toEqual([
+			{ event: HERDR, payload: { active: true, label: "original" } },
+		]);
+	});
+
+	test("a changed observer cannot corrupt later snapshots through the registry", () => {
+		const { bus } = setup();
+
+		const off = bus.on(WAIT.changed, (payload) => {
+			const snapshot = payload as { waits: Array<{ label?: string }> };
+			snapshot.waits[0]!.label = "forged";
+		});
+		bus.send(WAIT.set, { id: "w1", owner: "safe-mode", label: "original" });
+		off();
+
+		bus.send(WAIT.set, { id: "w1", owner: "safe-mode", label: "updated" });
+
+		// The mutating listener ran for the first snapshot only; the registry still
+		// holds the authoritative metadata for the second.
+		const changed = eventsNamed(bus.emitted, WAIT.changed).at(-1)?.payload as { waits: Array<{ label?: string }> };
+		expect(changed.waits[0]!.label).toBe("updated");
+	});
+
 	test("ack is delivered synchronously so a client can detect support", () => {
 		const { bus } = setup();
 		let acked: unknown;
@@ -309,5 +347,47 @@ describe("hub user-wait event wiring", () => {
 		bus.send(WAIT.clear, { id: "w1", owner: "other" });
 		const afterClear = await runHubCommand(commands);
 		expect(afterClear[0]).toContain("active user waits: 0");
+	});
+
+	test("/px:hub sanitizes owner, id, and label so they cannot forge output", async () => {
+		const { bus, commands } = setup();
+		bus.send(WAIT.set, {
+			id: "abcdefghijklmnop",
+			owner: "evil\n- forged: owner\u001b[31m",
+			label: "safe\u001b[31m\n- forged: label\u0007",
+		});
+
+		const messages = await runHubCommand(commands);
+		const message = messages[0] ?? "";
+
+		// No raw escape/control bytes survive into the rendered notify text.
+		expect(message).not.toContain("\u001b");
+		expect(message).not.toContain("\u0007");
+		// Newlines collapse into one line, so the injected bullet cannot appear.
+		expect(message).toContain("- evil - forged: owner/abcdefgh: safe - forged: label");
+
+		const waited = message.split("active user waits: 1\n")[1] ?? "";
+		expect(waited.split("\n").filter((line) => line.startsWith("- "))).toEqual([
+			"- evil - forged: owner/abcdefgh: safe - forged: label",
+		]);
+	});
+
+	test("/px:hub falls back to (no label) when a label is only control characters", async () => {
+		const { bus, commands } = setup();
+		bus.send(WAIT.set, { id: "w1", owner: "safe-mode", label: "\n\u001b[0m\t" });
+
+		const messages = await runHubCommand(commands);
+		expect(messages[0]).toContain("- safe-mode/w1: (no label)");
+	});
+
+	test("/px:hub sanitizes provider ids and capability names", async () => {
+		const { bus, commands } = setup();
+		bus.send("hub:register", { id: "evil\n- forged", caps: { provide: ["perm:shell\u001b[31m"] } });
+
+		const messages = await runHubCommand(commands);
+		const message = messages[0] ?? "";
+
+		expect(message).not.toContain("\u001b");
+		expect(message).toContain("- evil - forged: perm:shell");
 	});
 });

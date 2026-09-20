@@ -468,6 +468,33 @@ describe("concurrent and nested waits aggregate to one Herdr interval", () => {
 		expect(payloadsFor(bus, HUB_USER_WAIT_CHANNELS.clear)).toHaveLength(2);
 	});
 
+	test("a throwing nested wait clears only itself; the outer wait still clears", async () => {
+		const { bus } = setup();
+		const error = new Error("inner failed");
+
+		const outer = withUserWait(bus, { owner: "safe-mode", label: "outer", kind: "approval" }, async () => {
+			await expect(
+				withUserWait(bus, { owner: "safe-mode", label: "inner", kind: "input" }, async () => {
+					throw error;
+				}),
+			).rejects.toBe(error);
+
+			// The inner wait cleared itself; the aggregate stayed above zero, so the
+			// outer wait is still active and Herdr has not seen an exit yet.
+			expect(waitSnapshots(bus).at(-1)).toMatchObject({ active: true, count: 1 });
+			expect(waitSnapshots(bus).at(-1)?.waits[0]).toMatchObject({ owner: "safe-mode", label: "outer" });
+		});
+
+		await outer;
+
+		expect(herdrStates(bus)).toEqual([
+			{ active: true, label: "outer" },
+			{ active: false },
+		]);
+		expect(payloadsFor(bus, HUB_USER_WAIT_CHANNELS.clear)).toHaveLength(2);
+		expect(waitSnapshots(bus).at(-1)).toEqual({ active: false, count: 0, waits: [] });
+	});
+
 	test("nested waits keep the aggregate active until the final clear", async () => {
 		const { bus } = setup();
 
@@ -494,6 +521,38 @@ describe("concurrent and nested waits aggregate to one Herdr interval", () => {
 		]);
 		expect(payloadsFor(bus, HUB_USER_WAIT_CHANNELS.clear)).toHaveLength(2);
 		expect(waitSnapshots(bus).at(-1)).toEqual({ active: false, count: 0, waits: [] });
+	});
+});
+
+describe("user-wait payloads carry no request content", () => {
+	test("a tool approval never echoes the command into any wait payload", async () => {
+		const { bus, lifecycle } = setup();
+		const ui = createFakeUi();
+		const secret =
+			"curl -H 'Authorization: Bearer super-secret-token' https://internal.example.test/deploy";
+
+		const toolCallHandlers = lifecycle.get("tool_call") ?? [];
+		expect(toolCallHandlers).toHaveLength(1);
+		const resultPromise = toolCallHandlers[0]!(
+			{ toolName: "bash", toolCallId: "tc-secret", input: { command: secret } },
+			ui.ctx,
+		);
+
+		await ui.waitForSelect();
+		expect(herdrStates(bus)).toEqual([{ active: true, label: "safe-mode approval: bash" }]);
+		ui.resolveSelect("[N]o");
+		await resultPromise;
+
+		const waitPayloads = [
+			...payloadsFor(bus, HUB_USER_WAIT_CHANNELS.set),
+			...payloadsFor(bus, HUB_USER_WAIT_CHANNELS.changed),
+			...payloadsFor(bus, HUB_USER_WAIT_CHANNELS.clear),
+			...payloadsFor(bus, HERDR_BLOCKED_EVENT),
+		];
+		const serialized = JSON.stringify(waitPayloads);
+		expect(serialized).not.toContain(secret);
+		expect(serialized).not.toContain("super-secret-token");
+		expect(serialized).not.toContain("internal.example.test");
 	});
 });
 
