@@ -43,10 +43,16 @@ import {
 	type StatusBarSetPayload,
 } from "./contract";
 import {
+	chooseTopBorderSegments,
 	compactFrameLabel,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
 	composeSectionItems,
+	filesOnlyFrameLabel,
+	FRAME_LABEL_CLOSE,
+	FRAME_LABEL_OPEN,
+	FRAME_LEFT_CORNER_OPEN,
+	FRAME_RIGHT_CORNER_CLOSE,
 	hasVisibleText,
 	sanitizeStatusText,
 } from "./compose";
@@ -66,11 +72,8 @@ const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
 const REPO_STATS_ID = "repo-stats";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
-// Minimum horizontal dashes kept when a corner label is rendered on a frame border.
-const MIN_CORNER_LABEL_GAP = 6;
-type TopLeftChoiceKind = "none" | "compact" | "full";
-// Visible width of the `-< ` + ` >-` tack wrappers around a border label.
-const FRAME_LABEL_TACK_WIDTH = 6;
+// Minimum horizontal dash kept between labels (or beside a lone label).
+const MIN_CORNER_LABEL_GAP = 1;
 // While streaming, the top-left model label is animated. Two styles are available:
 // - `comet`: a single character is highlighted and bounces back and forth across
 //   the label. A short fading trail follows behind it (in the direction of motion).
@@ -96,13 +99,13 @@ type WorkingAnimation = (typeof WORKING_ANIMATIONS)[number];
 // with `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`.
 const WORKING_ANIMATION: WorkingAnimation = "comet";
 
-// Editor frame side borders (rounded corners).
+// Heavy editor frame with square corners.
 const FRAME_BORDER = {
-	topLeft: "╭",
-	topRight: "╮",
-	bottomLeft: "╰",
-	bottomRight: "╯",
-	vertical: "│",
+	topLeft: "┏",
+	topRight: "┓",
+	bottomLeft: "┗",
+	bottomRight: "┛",
+	vertical: "┃",
 } as const;
 // Providers whose context usage label also shows cumulative session cost.
 const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
@@ -169,7 +172,7 @@ function formatCostTrailingPrecise(total: number): string {
 	return `${total.toFixed(3)}$`;
 }
 
-// Bottom-border context label: `15.9% 210k · 0.03$` (the frame adds the tacks).
+// Bottom-border context label: `15.9% 210k · 0.03$` (the frame adds spacing and border dashes).
 // Colored with the same context-usage rules as the status-bar context items.
 function buildFrameContextLabel(
 	ctx: ExtensionContext,
@@ -240,7 +243,7 @@ function renderBorderLine(
 	const rightWidth = visibleWidth(rightSegment);
 
 	if (leftWidth === 0 && rightWidth === 0) {
-		return borderColor("─".repeat(width));
+		return borderColor("━".repeat(width));
 	}
 
 	if (leftWidth + rightWidth >= width) {
@@ -248,23 +251,23 @@ function renderBorderLine(
 		return truncateToWidth(rightSegment, width, "");
 	}
 
-	return `${leftSegment}${borderColor("─".repeat(width - leftWidth - rightWidth))}${rightSegment}`;
+	return `${leftSegment}${borderColor("━".repeat(width - leftWidth - rightWidth))}${rightSegment}`;
 }
 
 /**
- * Default editor with rounded side borders and status labels rendered in the
+ * Default editor with heavy square borders and status labels rendered in the
  * frame corners. In `new` display mode the top-left corner shows the active
  * provider/model plus effort (abbreviation, or arrows-only on narrow screens)
  * and the top-right corner shows the git dirty totals. While streaming, the
  * label runs the configured animation
  * (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
  * by one column on each side
- * (`│ <input> │`):
+ * (`┃ <input> ┃`):
  *
  * ```
- * ╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
- * │ ... input ...                                         │
- * ╰-< SMART · NET? >-·-< 15.9% 210k · 0.03$ >────────────╯
+ * ┏━━ cdx/5.6-sol (high) ━ +1 -2 M4 · +150 -200 ━━┓
+ * ┃ ... input ...                                  ┃
+ * ┗━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -402,48 +405,31 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Top-left corner label: model plus effort inside `-< ... >-` tacks.
+	 * Top-left corner label: model plus effort inset from the corner by `━━ `.
 	 * While streaming the label runs the configured animation.
 	 */
 	private topLeftSegment(label: string): string {
 		const body = this.renderModelLabel(label);
-		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
+		return `${this.borderColor(FRAME_LEFT_CORNER_OPEN)}${body}${this.borderColor(FRAME_LABEL_CLOSE)}`;
 	}
 
 	/**
-	 * Top-right corner label: git dirty totals inside `-< ... >-` tacks. The
-	 * producer's group separator dot is recolored to match the frame border.
-	 * `compact` removes the decorative spaces between values so a narrow frame
-	 * can still show the model label alongside the totals.
+	 * Top-right corner label. Compact mode removes value spacing; files-only
+	 * mode drops the lower-priority line totals after the `·` separator.
 	 */
-	private topRightSegment(compact = false): string {
+	private topRightSegment(options: { compact?: boolean; filesOnly?: boolean } = {}): string {
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return "";
-		const colored = sanitizeStatusText(label)
-			.split("·")
-			.join(this.borderColor("·"));
-		const body = compact ? compactFrameLabel(colored) : colored;
-		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
+		const selected = options.filesOnly ? filesOnlyFrameLabel(label) : sanitizeStatusText(label);
+		const colored = selected.split("·").join(this.borderColor("·"));
+		const body = options.compact ? compactFrameLabel(colored) : colored;
+		return `${this.borderColor(FRAME_LABEL_OPEN)}${body}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
 	}
 
 	/**
-	 * Pick the richest top-left model label that still leaves room for
-	 * `rightSegment`: full text first, then the arrows-only effort variant.
-	 */
-	private chooseTopLeftLabel(width: number, rightSegment: string): { kind: TopLeftChoiceKind; segment: string } {
-		const leftBudget = Math.max(0, width - visibleWidth(rightSegment) - MIN_CORNER_LABEL_GAP);
-		const fits = (label: string) => visibleWidth(label) + FRAME_LABEL_TACK_WIDTH <= leftBudget;
-		const fullLabel = this.topLeftLabel(false);
-		const compactLabel = this.topLeftLabel(true);
-		if (fullLabel && fits(fullLabel)) return { kind: "full", segment: this.topLeftSegment(fullLabel) };
-		if (compactLabel && fits(compactLabel)) return { kind: "compact", segment: this.topLeftSegment(compactLabel) };
-		return { kind: "none", segment: "" };
-	}
-
-	/**
-	 * Render the inner editor 2 columns narrower and draw vertical side borders
-	 * plus rounded corners around it. The inner editor applies one column of
-	 * horizontal padding, so content sits at `│ <input> │`. Autocomplete lines stay
+	 * Render the inner editor 2 columns narrower and draw heavy vertical side
+	 * borders plus square corners around it. The inner editor applies one column
+	 * of horizontal padding, so content sits at `┃ <input> ┃`. Autocomplete lines stay
 	 * outside the frame.
 	 */
 	render(width: number): string[] {
@@ -522,18 +508,38 @@ class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Prefer spaced git totals while any model-label variant fits. If they would
-		// push the model label off the frame, remove their decorative spaces and
-		// retry the model label against the reclaimed width.
-		const fullRightSegment = this.topRightSegment(false);
-		const compactRightSegment = this.topRightSegment(true);
-		const fullRightChoice = this.chooseTopLeftLabel(width, fullRightSegment);
-		const useCompactRight = compactRightSegment !== fullRightSegment && fullRightChoice.kind === "none";
-		const rightSegment = useCompactRight ? compactRightSegment : fullRightSegment;
-		const leftChoice = useCompactRight
-			? this.chooseTopLeftLabel(width, compactRightSegment)
-			: fullRightChoice;
-		const leftSegment = leftChoice.segment;
+		// Keep the model whenever possible. Git totals degrade from spaced, to
+		// compact, to file counts only; if no pair fits, the model wins.
+		const fullModelLabel = this.topLeftLabel(false);
+		const compactModelLabel = this.topLeftLabel(true);
+		// Measure uncolored placeholders so only the selected model variant runs
+		// through the stateful working animation renderer.
+		const fullModelPlaceholder = fullModelLabel
+			? `${FRAME_LEFT_CORNER_OPEN}${fullModelLabel}${FRAME_LABEL_CLOSE}`
+			: "";
+		const compactModelPlaceholder = compactModelLabel
+			? `${FRAME_LEFT_CORNER_OPEN}${compactModelLabel}${FRAME_LABEL_CLOSE}`
+			: "";
+		const chosen = chooseTopBorderSegments({
+			width,
+			leftSegments: [fullModelPlaceholder, compactModelPlaceholder],
+			rightSegments: [
+				this.topRightSegment(),
+				this.topRightSegment({ compact: true }),
+				this.topRightSegment({ filesOnly: true }),
+				this.topRightSegment({ filesOnly: true, compact: true }),
+			],
+			minimumGap: MIN_CORNER_LABEL_GAP,
+			visibleWidth,
+		});
+		const selectedModelLabel =
+			chosen.left === fullModelPlaceholder
+				? fullModelLabel
+				: chosen.left === compactModelPlaceholder
+					? compactModelLabel
+					: undefined;
+		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel) : "";
+		const rightSegment = chosen.right;
 
 		const candidates: Array<[string, string]> = [
 			[leftSegment, `${scrollSegment}${rightSegment}`],
@@ -560,12 +566,11 @@ class FrameStatusEditor extends CustomEditor {
 		const statusLabel = this.bottomLeftStatusProvider?.();
 		const networkLabel = this.bottomLeftNetworkProvider?.();
 		const leftSegment = this.bottomLeftSegment(contextLabel, statusLabel, networkLabel);
-		if (!leftSegment) {
-			return super.renderBottomBorder(width, hiddenLineCount);
-		}
-
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
+		if (!leftSegment) {
+			return renderBorderLine(width, "", scrollSegment, borderColor);
+		}
 
 		if (visibleWidth(leftSegment) + visibleWidth(scrollSegment) < width) {
 			return renderBorderLine(width, leftSegment, scrollSegment, borderColor);
@@ -582,8 +587,8 @@ class FrameStatusEditor extends CustomEditor {
 
 	/**
 	 * Combined bottom-left segment. Safe mode and the effective network token
-	 * share one label joined by exactly ` · `; context info follows in its own
-	 * tacks: `-< SMART · NET? >-·-< 15.9% 210k >-`. Composition (including
+	 * share one label joined by exactly ` · `; context info follows after the
+	 * border bridge: `━━ SMART · NET? ━━━ 15.9% 210k `. Composition (including
 	 * safe-mode recoloring) lives in the pure `composeBorderBottomLeft` helper.
 	 */
 	private bottomLeftSegment(contextLabel?: string, statusLabel?: string, networkLabel?: string): string {

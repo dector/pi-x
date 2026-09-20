@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	chooseTopBorderSegments,
 	compactFrameLabel,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
 	composeSafeModeNetworkGroup,
 	composeSectionItems,
+	filesOnlyFrameLabel,
+	FRAME_LABEL_CLOSE,
+	FRAME_LABEL_OPEN,
+	FRAME_LEFT_CORNER_OPEN,
+	FRAME_RIGHT_CORNER_CLOSE,
 	hasVisibleText,
 	sanitizeStatusText,
 	styleSafeModeLabel,
@@ -52,6 +59,18 @@ describe("pure text helpers", () => {
 		expect(compactFrameLabel(colored)).toBe("\u001b[32m+1\u001b[0m\u001b[31m-2\u001b[0mM4·+150-200");
 	});
 
+	test("filesOnlyFrameLabel drops line totals", () => {
+		expect(filesOnlyFrameLabel(" +1 -0 M1 · +93 -0 ")).toBe("+1 -0 M1");
+		expect(filesOnlyFrameLabel("+1 -0 M1")).toBe("+1 -0 M1");
+	});
+
+	test("frame labels use spaces instead of angle tacks", () => {
+		expect(FRAME_LABEL_OPEN).toBe(" ");
+		expect(FRAME_LABEL_CLOSE).toBe(" ");
+		expect(FRAME_LEFT_CORNER_OPEN).toBe("━━ ");
+		expect(FRAME_RIGHT_CORNER_CLOSE).toBe(" ━━");
+	});
+
 	test("styleSafeModeLabel recolors only SMART/SMART+", () => {
 		expect(styleSafeModeLabel("SMART", border)).toBe("«SMART»");
 		expect(styleSafeModeLabel("SMART+", border)).toBe("«SMART+»");
@@ -59,8 +78,42 @@ describe("pure text helpers", () => {
 	});
 });
 
+describe("chooseTopBorderSegments", () => {
+	const fullModel = `${FRAME_LEFT_CORNER_OPEN}cdx/5.6-sol (med)${FRAME_LABEL_CLOSE}`;
+	const compactModel = `${FRAME_LEFT_CORNER_OPEN}cdx/5.6-sol (🡺)${FRAME_LABEL_CLOSE}`;
+	const fullGit = `${FRAME_LABEL_OPEN}+1 -0 M1 · +93 -0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const compactGit = `${FRAME_LABEL_OPEN}+1-0M1·+93-0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const filesGit = `${FRAME_LABEL_OPEN}+1 -0 M1${FRAME_RIGHT_CORNER_CLOSE}`;
+	const compactFilesGit = `${FRAME_LABEL_OPEN}+1-0M1${FRAME_RIGHT_CORNER_CLOSE}`;
+	const choose = (width: number) =>
+		chooseTopBorderSegments({
+			width,
+			leftSegments: [fullModel, compactModel],
+			rightSegments: [fullGit, compactGit, filesGit, compactFilesGit],
+			minimumGap: 1,
+			visibleWidth,
+		});
+
+	test("uses one border dash as the minimum gap", () => {
+		const chosen = choose(visibleWidth(fullModel) + visibleWidth(filesGit) + 1);
+		expect(chosen).toEqual({ left: fullModel, right: filesGit });
+	});
+
+	test("shortens git to file counts before dropping the model", () => {
+		const chosen = choose(34);
+		expect(chosen.left).toBe(fullModel);
+		expect(chosen.right).toBe(filesGit);
+		expect(chosen.right).not.toContain("+93");
+	});
+
+	test("keeps the model alone when no git form fits", () => {
+		const chosen = choose(visibleWidth(fullModel) + 1);
+		expect(chosen).toEqual({ left: fullModel, right: "" });
+	});
+});
+
 describe("composeBorderBottomLeft (editor border)", () => {
-	test("renders safe mode then network in one label, then context in its own tacks", () => {
+	test("renders safe mode then network in one label, then context after the border bridge", () => {
 		const out = composeBorderBottomLeft({
 			contextLabel: "15.9% 210k · 0.03$",
 			statusLabel: "SMART",
@@ -68,7 +121,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«-< »«SMART»« · »<muted>NET?</muted>« >»«-·-< »15.9% 210k · 0.03$« >-»");
+		expect(out).toBe("«━━ »«SMART»« · »<muted>NET?</muted>« ━━━ »15.9% 210k · 0.03$« »");
 		// Order: safe mode, then network, then context.
 		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("NET?"));
 		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("15.9%"));
@@ -82,23 +135,23 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			networkLabel: "NET+",
 			borderColor: border,
 		});
-		expect(out).toBe("«-< »«SMART»« · »NET+« >-»");
+		expect(out).toBe("«━━ »«SMART»« · »NET+« »");
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET+"]);
 	});
 
 	test("keeps the network token with no safe-mode producer", () => {
 		const out = composeBorderBottomLeft({ networkLabel: "NET", borderColor: border });
-		expect(out).toBe("«-< »NET« >-»");
+		expect(out).toBe("«━━ »NET« »");
 	});
 
 	test("keeps safe mode when the core is absent", () => {
 		const out = composeBorderBottomLeft({ statusLabel: "PARANOID", borderColor: border });
-		expect(out).toBe("«-< »PARANOID« >-»");
+		expect(out).toBe("«━━ »PARANOID« »");
 	});
 
 	test("context-only output still renders", () => {
 		const out = composeBorderBottomLeft({ contextLabel: "15.9% 210k", borderColor: border });
-		expect(out).toBe("«-< »15.9% 210k« >-»");
+		expect(out).toBe("«━━ »15.9% 210k« »");
 	});
 
 	test("renders nothing when every part is empty", () => {

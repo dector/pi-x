@@ -8,8 +8,12 @@
 
 import { joinSafeModeAndNetwork } from "./network";
 
-/** Join two labels on the same border edge: the two tacks with a vertically centered dot. */
-export const FRAME_LABEL_JOIN = "-·-";
+/** Join two labels on the same border edge with three border dashes. */
+export const FRAME_LABEL_JOIN = "━━━";
+export const FRAME_LABEL_OPEN = " ";
+export const FRAME_LABEL_CLOSE = " ";
+export const FRAME_LEFT_CORNER_OPEN = "━━ ";
+export const FRAME_RIGHT_CORNER_CLOSE = " ━━";
 
 export function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
@@ -33,6 +37,46 @@ export function compactFrameLabel(label: string): string {
 	return label.replace(/ /g, "");
 }
 
+/** Keep only the file-count group before the git label's `·` separator. */
+export function filesOnlyFrameLabel(label: string): string {
+	const sanitized = sanitizeStatusText(label);
+	const separator = sanitized.indexOf("·");
+	return (separator === -1 ? sanitized : sanitized.slice(0, separator)).trim();
+}
+
+/**
+ * Choose top-border segments in caller-provided preference order. Left variants
+ * have priority: when no pair fits, keep the model and drop git statistics.
+ */
+export function chooseTopBorderSegments(args: {
+	width: number;
+	leftSegments: readonly string[];
+	rightSegments: readonly string[];
+	minimumGap: number;
+	visibleWidth: (text: string) => number;
+}): { left: string; right: string } {
+	const uniqueVisible = (segments: readonly string[]) =>
+		segments.filter((segment, index) => hasVisibleText(segment) && segments.indexOf(segment) === index);
+	const leftSegments = uniqueVisible(args.leftSegments);
+	const rightSegments = uniqueVisible(args.rightSegments);
+	const fitsAlone = (segment: string) => args.visibleWidth(segment) + args.minimumGap <= args.width;
+
+	for (const left of leftSegments) {
+		for (const right of rightSegments) {
+			if (args.visibleWidth(left) + args.visibleWidth(right) + args.minimumGap <= args.width) {
+				return { left, right };
+			}
+		}
+	}
+	for (const left of leftSegments) {
+		if (fitsAlone(left)) return { left, right: "" };
+	}
+	for (const right of rightSegments) {
+		if (fitsAlone(right)) return { left: "", right };
+	}
+	return { left: "", right: "" };
+}
+
 /** `SMART` is recolored to the frame border; other safe-mode labels keep the producer color. */
 export function styleSafeModeLabel(label: string, borderColor: (text: string) => string): string {
 	const plain = stripAnsi(sanitizeStatusText(label));
@@ -49,10 +93,10 @@ export interface BorderBottomLeftArgs {
 
 /**
  * Compose the editor-frame bottom-left segment. Safe mode and the network token
- * share one `-< ... >-` label joined by exactly ` · ` (colored like the border);
- * the context label follows in its own tacks joined by the standard bridge:
+ * share one label joined by exactly ` · ` (colored like the border); the context
+ * label follows after the standard border bridge:
  *
- *   `-< SMART · NET? >-·-< 15.9% 210k · 0.03$ >-`
+ *   `━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ `
  *
  * Either producer part may be missing; both missing yields `""`.
  */
@@ -65,12 +109,12 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	);
 	if (!hasContext && !statusGroup) return "";
 
-	const open = args.borderColor("-< ");
-	const close = args.borderColor(" >-");
+	const open = args.borderColor(FRAME_LEFT_CORNER_OPEN);
+	const close = args.borderColor(FRAME_LABEL_CLOSE);
 
 	if (statusGroup && hasContext) {
-		const join = args.borderColor(`${FRAME_LABEL_JOIN}< `);
-		return `${open}${statusGroup}${args.borderColor(" >")}${join}${sanitizeStatusText(args.contextLabel!)}${close}`;
+		const join = args.borderColor(` ${FRAME_LABEL_JOIN} `);
+		return `${open}${statusGroup}${join}${sanitizeStatusText(args.contextLabel!)}${close}`;
 	}
 	if (statusGroup) return `${open}${statusGroup}${close}`;
 	return `${open}${sanitizeStatusText(args.contextLabel!)}${close}`;

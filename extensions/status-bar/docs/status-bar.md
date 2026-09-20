@@ -162,12 +162,12 @@ Aliases load at session start, so reload/restart after editing the file.
 ## Editor frame
 
 Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
-full frame (`│` sides + rounded `╭ ╮ ╰ ╯` corners), enables one column of horizontal
-editor padding (`paddingX: 1`), and renders:
+full frame (heavy `┃` sides + square `┏ ┓ ┗ ┛` corners), enables one column of
+horizontal editor padding (`paddingX: 1`), and renders:
 
 - top-left: active provider + model ID + effort (`<ctx.model.provider>/<ctx.model.id> (<effort>)`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. The effort is the 3-4 lowercase level symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown. While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
-- top-right: `repo-stats` git dirty totals (`-< +1 -2 M4 · +150 -200 >-`), rendered only when the repo is dirty. The producer's `[ ]`/`|` are stripped and the file/line groups are separated by a `·` recolored to the frame border color. On narrow frames, spaces between values are removed (`+1-2M4·+150-200`) when the spaced form would leave no room for the top-left model/effort label. In `new` mode these totals are hidden from the first line; in `legacy` mode they stay there.
-- bottom-left: context usage and cumulative cost (`-< 15.9% 210k · 0.03$ >-`),
+- top-right: `repo-stats` git dirty totals (`+1 -2 M4 · +150 -200 ━━`), rendered only when the repo is dirty. The producer's `[ ]`/`|` are stripped and the file/line groups are separated by a `·` recolored to the frame border color. On narrow frames, compact full totals (`+1-2M4·+150-200`) and then file-only variants (`+1 -2 M4` or `+1-2M4`) are tried. The model label remains visible whenever it fits, and labels sharing the top edge need only one heavy border dash between them. In `new` mode these totals are hidden from the first line; in `legacy` mode they stay there.
+- bottom-left: context usage and cumulative cost (`━━ 15.9% 210k · 0.03$ `),
   colored with the same context-usage rules as the status-bar context items
   (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%). When subagent
   usage changes the total, cost renders as session | total (`0.01$ | 0.013$`),
@@ -175,16 +175,16 @@ editor padding (`paddingX: 1`), and renders:
   includes every subagent in the branch, nested ones included, and is omitted
   while the total rounds to the same three-decimal value as the session cost.
 - bottom-left, before context: `safe-mode` producer content (for example `SMART`)
-  followed by the effective network token, joined to the context label by the two
-  tacks with a centered dot (`-< SMART · NET? >-·-< 15.9% >-`). Safe mode and the
+  followed by the effective network token, joined to the context label by the
+  three-dash border bridge (`━━ SMART · NET? ━━━ 15.9% `). Safe mode and the
   network token share one label joined by exactly ` · `, which is preserved under
   crowding. `SMART` uses the frame border color; other modes keep the producer's
   own color. The network token keeps its policy color (`muted` for deny-all and
   ask-all; `text` for allow-trusted, ask-untrusted, and allow-all) and follows
   effective state only (PARANOID -> gray `NET?`).
 
-Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
-Two labels on the same edge are joined by the two tacks with a centered dot (`-< A >-·-< B >-`).
+Border labels use spaces instead of angle tacks (`┏━━ left ━ right ━━┓`).
+Two bottom-left labels use three heavy border dashes (`┗━━ A ━━━ B ━━━┛`).
 Labels are dropped when the terminal is too narrow.
 The inner editor renders 2 columns narrower and applies `paddingX: 1`; autocomplete
 stays outside the frame and is indented to match. Mouse coordinates are shifted back by one

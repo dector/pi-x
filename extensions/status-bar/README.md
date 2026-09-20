@@ -77,30 +77,31 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
-│ ... input ...                                         │
-╰-< SMART · NET? >-·-< 15.9% 210k · 0.03$ >────────────╯
+┏━━ cdx/5.6-sol (high) ━ +1 -2 M4 · +150 -200 ━━┓
+┃ ... input ...                                  ┃
+┗━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
 ```
 
-- The inner editor is rendered 2 columns narrower and wrapped with `│` side
-  borders and rounded corners (`╭ ╮ ╰ ╯`). The editor uses one column of
-  horizontal padding (`paddingX: 1`), so input sits at `│ <input> │`. The
+- The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
+  side borders and square corners (`┏ ┓ ┗ ┛`). The editor uses one column of
+  horizontal padding (`paddingX: 1`), so input sits at `┃ <input> ┃`. The
   autocomplete list stays outside the frame and is indented to line up.
-- Every border text label is delimited with ASCII angle tacks on both sides:
-  `-< <label> >-`. When two labels share the bottom-left edge they are joined by
-  the two tacks with a centered dot: `-< <safe-mode> · <network> >-·-< <context> >-`.
+- Border labels use spaces instead of angle tacks: `┏━━ <left> ━ <right> ━━┓`.
+  Two labels sharing the bottom-left edge use three heavy border dashes:
+  `┗━━ <safe-mode> · <network> ━━━ <context> ━━━┛`.
   Safe mode and the network token always share one label and keep the spaced
   ` · ` separator even when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - **top-right** — git dirty totals from `repo-stats`, e.g.
-  `-< +1 -2 M4 · +150 -200 >-`. Rendered only when the repo is dirty. The
+  `+1 -2 M4 · +150 -200 ━━`. Rendered only when the repo is dirty. The
   producer's `[ ]` and `|` are not shown; the file/line groups are separated by
-  a `·` recolored to the frame border color. On narrow frames, spaces between
-  values are removed (for example `+1-2M4·+150-200`) when the spaced form would
-  leave no room for the model label. In `new` mode the totals are hidden from the
-  first line to avoid duplication; in `legacy` mode they stay on the first line.
+  a `·` recolored to the frame border color. On narrow frames, compact full
+  totals are tried first. If that is still too wide, file-only variants are used
+  (for example `+1 -2 M4` or `+1-2M4`). The model label remains visible whenever
+  it fits. Labels sharing the top edge need only one heavy border dash between them. In `new` mode the totals are hidden from the first line to avoid
+  duplication; in `legacy` mode they stay on the first line.
 - **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
-  - Format: `-< <safe-mode> · <NET> >-·-< <percent> <tokens> · <cost> >-`. The safe-mode
+  - Format: `━━ <safe-mode> · <NET> ━━━ <percent> <tokens> · <cost> `. The safe-mode
     and network parts are omitted when their producer/core is absent.
   - **network** — effective policy from `permissions-core`, shown only after safe
     mode and joined with exactly ` · ` (the dot uses the frame border color).
@@ -155,7 +156,7 @@ labels are rendered in the frame corners:
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
     `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
-- Corner labels are wrapped in `-< ... >-` tacks; the rest of the border is
+- Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits on the right of the
   bottom border; the `↑ N more` indicator sits on the right of the top border.
