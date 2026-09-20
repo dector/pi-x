@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createJsonlDecoder, spawnRpcChild } from "./rpc-client.ts";
+import { createJsonlDecoder, createRpcProtocol, spawnRpcChild } from "./rpc-client.ts";
 
 describe("JSONL decoder", () => {
 	test("preserves UTF-8 boundaries, strips CR, and flushes a final line", () => {
@@ -12,6 +12,61 @@ describe("JSONL decoder", () => {
 		decoder.push(encoded.subarray(14));
 		decoder.flush();
 		expect(lines).toEqual(['{"text":"😀"}', "last"]);
+	});
+
+	test("drops an oversize complete line and keeps later lines", () => {
+		const lines: string[] = [];
+		const oversize: number[] = [];
+		const decoder = createJsonlDecoder((line) => lines.push(line), {
+			maxBytes: 16,
+			onOversize: (bytes) => oversize.push(bytes),
+		});
+		decoder.push(`${'x'.repeat(100)}\nok\n`);
+		decoder.flush();
+		expect(lines).toEqual(["ok"]);
+		expect(oversize).toEqual([100]);
+	});
+
+	test("drops a split oversize line and resumes at the next newline", () => {
+		const lines: string[] = [];
+		const decoder = createJsonlDecoder((line) => lines.push(line), { maxBytes: 8, onOversize: () => {} });
+		decoder.push("0123456789");
+		decoder.push("abcdefghij");
+		decoder.push("\nnext\n");
+		decoder.flush();
+		expect(lines).toEqual(["next"]);
+	});
+});
+
+describe("RPC protocol", () => {
+	test("correlates responses, surfaces unmatched responses, and times out", async () => {
+		const sent: string[] = [];
+		const unmatched: unknown[] = [];
+		const protocol = createRpcProtocol({
+			events: {
+				onStreamEvent: () => {},
+				onExtensionUiRequest: () => {},
+				onResponse: (response) => unmatched.push(response),
+			},
+			send: (command) => sent.push(JSON.stringify(command)),
+		});
+		const response = protocol.request({ id: "a", type: "ping" }, 1000);
+		expect(sent).toEqual([JSON.stringify({ id: "a", type: "ping" })]);
+		protocol.handleLine(JSON.stringify({ id: "a", type: "response", command: "ping", success: true, data: 7 }));
+		await expect(response).resolves.toMatchObject({ success: true, data: 7 });
+		protocol.handleLine(JSON.stringify({ id: "other", type: "response", command: "ping", success: true }));
+		expect(unmatched).toHaveLength(1);
+		await expect(protocol.request({ id: "timeout", type: "prompt" }, 20)).rejects.toThrow(/timed out/);
+	});
+
+	test("rejects duplicate request ids and missing ids", async () => {
+		const protocol = createRpcProtocol({
+			events: { onStreamEvent: () => {}, onExtensionUiRequest: () => {} },
+			send: () => {},
+		});
+		void protocol.request({ id: "dup", type: "ping" }, 1000);
+		await expect(protocol.request({ id: "dup", type: "ping" }, 1000)).rejects.toThrow(/Duplicate/);
+		await expect(protocol.request({ type: "ping" }, 1000)).rejects.toThrow(/requires an id/);
 	});
 });
 

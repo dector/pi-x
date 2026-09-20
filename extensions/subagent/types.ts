@@ -47,6 +47,12 @@ export type SubagentExecution = "async" | "blocking";
 export type SubagentDispatchStatus = "started" | "completed" | "failed" | "aborted";
 export type SubagentMode = "single" | "parallel" | "chain";
 
+/**
+ * How a run's RPC child is hosted. `process` is the default direct spawn;
+ * `herdr` runs the child behind the authenticated Herdr pane bridge.
+ */
+export type SubagentBackendKind = "process" | "herdr";
+
 /** Model/thinking defaults snapshotted for a dispatch when it is prepared. */
 export interface DispatchDefaults {
 	model?: string;

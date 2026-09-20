@@ -8,34 +8,90 @@ import type {
 	RpcStreamEvent,
 } from "./types.ts";
 
+/**
+ * Options for the shared JSONL framing helper.
+ *
+ * `maxBytes` and `onOversize` are opt-in. Omitting them keeps the original
+ * unbounded pipe behavior; the socket bridge passes a bound so a broken peer
+ * cannot grow the parent's memory without limit.
+ */
+export interface JsonlDecoderOptions {
+	/** Maximum buffered bytes allowed for a single line before it is dropped. */
+	maxBytes?: number;
+	/** Called once when an oversize line is discarded, with its buffered byte count. */
+	onOversize?: (bytes: number) => void;
+}
+
 export function createJsonlDecoder(
 	onLine: (line: string) => void,
+	options: JsonlDecoderOptions = {},
 ): { push(chunk: Buffer | Uint8Array | string): void; flush(): void } {
 	const decoder = new StringDecoder("utf8");
+	const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
 	let buffered = "";
+	let bufferedBytes = 0;
+	let discarding = false;
+
+	const emit = (raw: string): void => {
+		onLine(raw.endsWith("\r") ? raw.slice(0, -1) : raw);
+	};
+
 	const drain = (final: boolean): void => {
 		let newline = buffered.indexOf("\n");
 		while (newline >= 0) {
-			let line = buffered.slice(0, newline);
+			const raw = buffered.slice(0, newline);
 			buffered = buffered.slice(newline + 1);
-			if (line.endsWith("\r")) line = line.slice(0, -1);
-			onLine(line);
+			bufferedBytes = Math.max(0, bufferedBytes - Buffer.byteLength(raw) - 1);
+			const bytes = Buffer.byteLength(raw);
+			if (bytes > maxBytes) options.onOversize?.(bytes);
+			else emit(raw);
 			newline = buffered.indexOf("\n");
 		}
-		if (final && buffered.length > 0) {
-			let line = buffered;
+		if (bufferedBytes > maxBytes) {
+			options.onOversize?.(bufferedBytes);
+			discarding = true;
 			buffered = "";
-			if (line.endsWith("\r")) line = line.slice(0, -1);
-			onLine(line);
+			bufferedBytes = 0;
+		}
+		if (final) {
+			if (buffered.length > 0 && !discarding) {
+				const bytes = Buffer.byteLength(buffered);
+				if (bytes > maxBytes) options.onOversize?.(bytes);
+				else emit(buffered);
+			}
+			buffered = "";
+			bufferedBytes = 0;
+			discarding = false;
 		}
 	};
+
+	const append = (text: string, bytes: number): void => {
+		if (discarding) {
+			// Drop the remainder of the oversize line, then resume normally.
+			const newline = text.indexOf("\n");
+			if (newline < 0) return;
+			discarding = false;
+			buffered = text.slice(newline + 1);
+			bufferedBytes = Buffer.byteLength(buffered);
+		} else {
+			buffered += text;
+			bufferedBytes += bytes;
+		}
+		drain(false);
+	};
+
 	return {
 		push(chunk) {
-			buffered += typeof chunk === "string" ? chunk : decoder.write(Buffer.from(chunk));
-			drain(false);
+			if (typeof chunk === "string") {
+				append(chunk, Buffer.byteLength(chunk));
+				return;
+			}
+			const text = decoder.write(Buffer.from(chunk));
+			if (text.length > 0) append(text, Buffer.byteLength(text));
 		},
 		flush() {
-			buffered += decoder.end();
+			const tail = decoder.end();
+			if (tail.length > 0) append(tail, Buffer.byteLength(tail));
 			drain(true);
 		},
 	};
@@ -93,24 +149,37 @@ function isUiRequest(value: Record<string, unknown>): value is RpcExtensionUiReq
 	);
 }
 
-export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
-	const proc: ChildProcessWithoutNullStreams = spawn(options.command, options.args, {
-		cwd: options.cwd,
-		env: { ...process.env, ...options.env },
-		shell: false,
-		stdio: ["pipe", "pipe", "pipe"],
-	});
+export interface RpcProtocolOptions {
+	events: RpcChildEvents;
+	maxDiagnostics?: number;
+	/** Transport write for one command or UI response. May throw when the peer is gone. */
+	send: (command: RpcCommand | RpcExtensionUiResponse) => void;
+}
+
+/**
+ * Transport-agnostic RPC bookkeeping: JSONL parsing, response correlation,
+ * pending-request timeouts, and diagnostic capping.
+ *
+ * The pipe child (`spawnRpcChild`) and the Herdr socket bridge both feed decoded
+ * lines into `handleLine` and write outgoing commands through `send`, so the
+ * protocol is implemented once instead of being duplicated per transport.
+ */
+export interface RpcProtocol {
+	handleLine(line: string): void;
+	request(command: RpcCommand, timeoutMs: number): Promise<RpcResponse>;
+	send(command: RpcCommand | RpcExtensionUiResponse): void;
+	rejectPending(error: Error): void;
+	diagnostic(message: string): void;
+}
+
+export function createRpcProtocol(options: RpcProtocolOptions): RpcProtocol {
 	const pending = new Map<string, Pending>();
-	const maxStderrChars = options.maxStderrChars ?? 16_384;
 	const maxDiagnostics = options.maxDiagnostics ?? 50;
-	let stderr = "";
 	let diagnosticCount = 0;
-	let exited = false;
-	let terminating: Promise<void> | undefined;
-	let resolveExit!: (exit: RpcExit) => void;
-	const exit = new Promise<RpcExit>((resolve) => {
-		resolveExit = resolve;
-	});
+
+	const diagnostic = (message: string): void => {
+		if (diagnosticCount++ < maxDiagnostics) options.events.onProtocolDiagnostic?.(message);
+	};
 
 	const rejectPending = (error: Error): void => {
 		for (const item of pending.values()) {
@@ -119,18 +188,8 @@ export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
 		}
 		pending.clear();
 	};
-	const diagnostic = (message: string): void => {
-		if (diagnosticCount++ < maxDiagnostics) options.events.onProtocolDiagnostic?.(message);
-	};
-	const finishExit = (info: RpcExit): void => {
-		if (exited) return;
-		exited = true;
-		rejectPending(new Error(`RPC child exited before responding (${info.code ?? info.signal ?? "unknown"})`));
-		resolveExit(info);
-		options.events.onExit?.(info);
-	};
 
-	const decoder = createJsonlDecoder((line) => {
+	const handleLine = (line: string): void => {
 		if (!line.trim()) return;
 		let parsed: unknown;
 		try {
@@ -163,38 +222,15 @@ export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
 			return;
 		}
 		options.events.onStreamEvent(message as RpcStreamEvent);
-	});
-
-	proc.stdout.on("data", (chunk) => decoder.push(chunk));
-	proc.stdout.on("end", () => decoder.flush());
-	proc.stderr.on("data", (chunk) => {
-		const text = chunk.toString();
-		stderr = (stderr + text).slice(-maxStderrChars);
-		options.events.onStderr?.(text);
-	});
-	proc.on("error", (error) => {
-		diagnostic(`RPC child process error: ${error.message}`);
-		finishExit({ code: 1, signal: null });
-	});
-	proc.on("close", (code, signal) => finishExit({ code, signal }));
-	proc.stdin.on("error", (error) => rejectPending(error));
-
-	const send = (command: RpcCommand | RpcExtensionUiResponse): void => {
-		if (exited || proc.stdin.destroyed || !proc.stdin.writable) throw new Error("RPC child stdin is not writable");
-		proc.stdin.write(`${JSON.stringify(command)}\n`);
 	};
 
-	const client: RpcChild = {
-		get pid() {
-			return proc.pid;
-		},
-		get exited() {
-			return exited;
-		},
-		get stderr() {
-			return stderr;
-		},
-		exit,
+	const send = (command: RpcCommand | RpcExtensionUiResponse): void => options.send(command);
+
+	return {
+		handleLine,
+		send,
+		rejectPending,
+		diagnostic,
 		request(command, timeoutMs) {
 			if (!command.id) return Promise.reject(new Error("RPC request requires an id"));
 			if (pending.has(command.id)) return Promise.reject(new Error(`Duplicate RPC request id: ${command.id}`));
@@ -213,12 +249,81 @@ export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
 				}
 			});
 		},
-		send,
-		respondUi: send,
+	};
+}
+
+export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
+	const proc: ChildProcessWithoutNullStreams = spawn(options.command, options.args, {
+		cwd: options.cwd,
+		env: { ...process.env, ...options.env },
+		shell: false,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const maxStderrChars = options.maxStderrChars ?? 16_384;
+	let stderr = "";
+	let exited = false;
+	let terminating: Promise<void> | undefined;
+	let resolveExit!: (exit: RpcExit) => void;
+	const exit = new Promise<RpcExit>((resolve) => {
+		resolveExit = resolve;
+	});
+
+	const protocol = createRpcProtocol({
+		events: options.events,
+		maxDiagnostics: options.maxDiagnostics,
+		send: (command) => {
+			if (exited || proc.stdin.destroyed || !proc.stdin.writable) throw new Error("RPC child stdin is not writable");
+			proc.stdin.write(`${JSON.stringify(command)}\n`);
+		},
+	});
+
+	const finishExit = (info: RpcExit): void => {
+		if (exited) return;
+		exited = true;
+		protocol.rejectPending(new Error(`RPC child exited before responding (${info.code ?? info.signal ?? "unknown"})`));
+		resolveExit(info);
+		options.events.onExit?.(info);
+	};
+
+	const decoder = createJsonlDecoder((line) => protocol.handleLine(line));
+	proc.stdout.on("data", (chunk) => decoder.push(chunk));
+	proc.stdout.on("end", () => decoder.flush());
+	proc.stderr.on("data", (chunk) => {
+		const text = chunk.toString();
+		stderr = (stderr + text).slice(-maxStderrChars);
+		options.events.onStderr?.(text);
+	});
+	proc.on("error", (error) => {
+		protocol.diagnostic(`RPC child process error: ${error.message}`);
+		finishExit({ code: 1, signal: null });
+	});
+	proc.on("close", (code, signal) => finishExit({ code, signal }));
+	proc.stdin.on("error", (error) => protocol.rejectPending(error));
+
+	return {
+		get pid() {
+			return proc.pid;
+		},
+		get exited() {
+			return exited;
+		},
+		get stderr() {
+			return stderr;
+		},
+		exit,
+		request(command, timeoutMs) {
+			return protocol.request(command, timeoutMs);
+		},
+		send(command) {
+			protocol.send(command);
+		},
+		respondUi(response) {
+			protocol.send(response);
+		},
 		terminate({ graceMs = 1500 } = {}) {
 			if (terminating) return terminating;
 			terminating = (async () => {
-				rejectPending(new Error("RPC child is terminating"));
+				protocol.rejectPending(new Error("RPC child is terminating"));
 				if (exited) return;
 				if (!proc.stdin.destroyed) proc.stdin.end();
 				const wait = async (ms: number): Promise<boolean> =>
@@ -232,5 +337,4 @@ export function spawnRpcChild(options: SpawnRpcChildOptions): RpcChild {
 			return terminating;
 		},
 	};
-	return client;
 }
