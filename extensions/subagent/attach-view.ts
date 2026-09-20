@@ -1,17 +1,32 @@
 /**
  * Live attach overlay for a subagent run.
  *
- * Stage 1 is intentionally read-only: it renders the transcript built by
- * `attach.ts`, follows the tail while new output arrives, and lets the user
- * scroll or detach with Escape. It never stops the child.
+ * The view renders the transcript built by `attach.ts`, follows the tail while
+ * new output arrives, and lets the user scroll, steer, or detach. Steering is
+ * submitted through an injected native transport (see `sendSteer` in
+ * `registry.ts`) so the view can show inline success/failure and does not need
+ * to know how the child is reached.
  *
  * The component is driven by a small 200ms poll because the registry already
  * mutates the in-memory `SingleResult`; polling keeps the view simple and only
  * runs while the overlay is open. `dispose()` is idempotent so the framework,
  * an explicit close, and session teardown can all call it safely.
+ *
+ * The embedded editor receives raw input and owns the terminal cursor while
+ * composing, and the view forwards `focused` to it for IME candidate-window
+ * positioning. Tests inject a fake editor so the interaction can be exercised
+ * without a real terminal.
  */
 
-import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import {
+	Key,
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+	type Component,
+	type Focusable,
+} from "@earendil-works/pi-tui";
 import { buildTranscript, TranscriptViewport, type TranscriptBlock } from "./attach.ts";
 import { formatToolCall, formatToolStatus, type ThemeFg } from "./format.ts";
 import { isFailedResult } from "./result-output.ts";
@@ -42,6 +57,29 @@ const DEFAULT_TIMERS: AttachViewTimers = {
 	clear: (handle) => clearInterval(handle),
 };
 
+/**
+ * Minimal editor seam. The real `Editor` from `@earendil-works/pi-tui`
+ * satisfies this structurally; tests supply a fake that records submissions.
+ */
+export interface AttachEditor {
+	focused: boolean;
+	disableSubmit: boolean;
+	onSubmit?: (text: string) => void;
+	render(width: number): string[];
+	handleInput(data: string): void;
+	getText?(): string;
+	setText?(text: string): void;
+}
+
+/** Inline steering status shown under the editor. */
+export interface AttachSteerStatus {
+	kind: "info" | "success" | "error";
+	text: string;
+}
+
+/** Which keyboard target currently owns input. */
+export type AttachMode = "scroll" | "compose";
+
 export interface AttachViewOptions {
 	/** Reads the live result on every render so updates are always current. */
 	getResult: () => SingleResult;
@@ -49,6 +87,14 @@ export interface AttachViewOptions {
 	theme: AttachTheme;
 	requestRender: () => void;
 	done: (result: null) => void;
+	/** Embedded steering editor. Omitted in read-only/no-input contexts. */
+	editor?: AttachEditor;
+	/**
+	 * Deliver a steering message to the given run. Resolves on success and
+	 * rejects with a user-facing message on failure. Addressing the run by id
+	 * keeps the transport honest about which child was steered.
+	 */
+	steer?: (runId: string, message: string) => Promise<void>;
 	/** Terminal row count; defaults to 24 when unavailable. */
 	terminalRows?: () => number;
 	/** Injectable clock for deterministic tests. */
@@ -57,15 +103,35 @@ export interface AttachViewOptions {
 	timers?: AttachViewTimers;
 }
 
-export class AttachView implements Component {
+export class AttachView implements Component, Focusable {
 	private readonly viewport = new TranscriptViewport();
 	private expanded = false;
 	private pollTimer: ReturnType<typeof setInterval> | undefined;
 	private disposed = false;
 	private closed = false;
+	private mode: AttachMode = "scroll";
+	private submitting = false;
+	private steerStatus: AttachSteerStatus | undefined;
+	private _focused = false;
 
 	constructor(private readonly options: AttachViewOptions) {
+		if (this.options.editor) {
+			this.options.editor.onSubmit = (text) => {
+				void this.submitSteer(text);
+			};
+			this.options.editor.disableSubmit = this.isReadOnly;
+		}
 		this.startPolling();
+	}
+
+	/** Focusable interface: the TUI sets this on the focused overlay. */
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.syncEditorFocus();
 	}
 
 	/** Whether the viewport is pinned to the newest transcript line. */
@@ -78,18 +144,50 @@ export class AttachView implements Component {
 		return this.expanded;
 	}
 
+	/** Whether the run has settled and steering is disabled. */
+	get isReadOnly(): boolean {
+		const run = this.options.getRun();
+		if (run.completedAt !== undefined) return true;
+		const result = this.options.getResult();
+		if (result.state === "settled" || result.state === "failed") return true;
+		return typeof result.exitCode === "number" && result.exitCode !== -1;
+	}
+
+	/** Current keyboard target. */
+	get inputMode(): AttachMode {
+		return this.mode;
+	}
+
+	/** Last inline steering status, if any. */
+	get lastSteerStatus(): AttachSteerStatus | undefined {
+		return this.steerStatus;
+	}
+
 	render(width: number): string[] {
 		const w = Math.max(1, width);
 		const result = this.options.getResult();
 		const run = this.options.getRun();
 		const theme = this.options.theme;
 
+		const readOnly = this.isReadOnly;
+		if (readOnly && this.mode === "compose") this.mode = "scroll";
+		if (this.options.editor) this.options.editor.disableSubmit = readOnly || this.submitting;
+		this.syncEditorFocus();
+
 		const taskLines = this.renderTask(result.task, w);
 		const body: string[] = [];
 		for (const block of buildTranscript(result, { includeTask: false })) body.push(...this.renderBlock(block, w));
 
+		const statusLines = this.renderStatusLines(w, readOnly);
+		const editorLines = this.renderEditor(w, readOnly);
+
 		const totalRows = Math.max(8, (this.options.terminalRows?.() ?? 24) - 2);
-		const chrome = 1 + taskLines.length + 3; // header + task + two separators + help
+		// Header + task + two separators + help + status; keep at least one
+		// transcript row before the editor claims the rest.
+		const reserved = 1 + taskLines.length + 2 + 1 + statusLines.length;
+		const maxEditor = Math.max(0, totalRows - reserved - 1);
+		const clippedEditor = editorLines.length > maxEditor ? editorLines.slice(editorLines.length - maxEditor) : editorLines;
+		const chrome = reserved + clippedEditor.length;
 		const viewportHeight = Math.max(1, totalRows - chrome);
 		this.viewport.setViewportHeight(viewportHeight);
 		this.viewport.update(body.length);
@@ -102,15 +200,36 @@ export class AttachView implements Component {
 		lines.push(separator);
 		lines.push(...windowLines);
 		lines.push(separator);
-		lines.push(this.helpLine(w));
+		if (clippedEditor.length > 0) lines.push(...clippedEditor);
+		lines.push(...statusLines);
+		lines.push(this.helpLine(w, readOnly));
 		return lines;
 	}
 
 	handleInput(data: string): void {
+		const readOnly = this.isReadOnly;
 		if (matchesKey(data, Key.escape)) {
+			if (this.mode === "compose") {
+				this.setMode("scroll");
+				return;
+			}
 			this.close();
 			return;
 		}
+
+		if (this.mode === "compose" && !readOnly) {
+			if (matchesKey(data, Key.ctrl("enter"))) {
+				const text = this.options.editor?.getText?.() ?? "";
+				this.options.editor?.setText?.("");
+				void this.submitSteer(text);
+				this.options.requestRender();
+				return;
+			}
+			this.options.editor?.handleInput(data);
+			this.options.requestRender();
+			return;
+		}
+
 		if (matchesKey(data, Key.up)) this.viewport.lineUp();
 		else if (matchesKey(data, Key.down)) this.viewport.lineDown();
 		else if (matchesKey(data, Key.pageUp)) this.viewport.pageUp();
@@ -118,8 +237,48 @@ export class AttachView implements Component {
 		else if (matchesKey(data, Key.home)) this.viewport.scrollToTop();
 		else if (matchesKey(data, Key.end)) this.viewport.scrollToBottom();
 		else if (matchesKey(data, Key.ctrl("o"))) this.expanded = !this.expanded;
-		else return;
+		else if (matchesKey(data, Key.enter) && !readOnly && this.options.editor) {
+			this.setMode("compose");
+			return;
+		} else return;
 		this.options.requestRender();
+	}
+
+	/**
+	 * Submit steering text through the injected transport. Public so the
+	 * editor callback and tests share one path. Empty messages are ignored.
+	 */
+	async submitSteer(message: string): Promise<void> {
+		const text = message.trim();
+		if (text.length === 0) return;
+		if (this.isReadOnly) {
+			this.steerStatus = { kind: "error", text: "This run has settled; steering is read-only." };
+			this.options.requestRender();
+			return;
+		}
+		if (this.submitting) return;
+		const steer = this.options.steer;
+		if (!steer) {
+			this.steerStatus = { kind: "error", text: "Steering is unavailable for this run." };
+			this.options.requestRender();
+			return;
+		}
+
+		const runId = this.options.getRun().runId;
+		this.submitting = true;
+		if (this.options.editor) this.options.editor.disableSubmit = true;
+		this.steerStatus = { kind: "info", text: `Sending steering message to ${runId}…` };
+		this.options.requestRender();
+		try {
+			await steer(runId, text);
+			this.steerStatus = { kind: "success", text: `Steering message sent to ${runId}.` };
+		} catch (error) {
+			this.steerStatus = { kind: "error", text: error instanceof Error ? error.message : String(error) };
+		} finally {
+			this.submitting = false;
+			if (this.options.editor) this.options.editor.disableSubmit = this.isReadOnly;
+			this.options.requestRender();
+		}
 	}
 
 	invalidate(): void {
@@ -146,6 +305,18 @@ export class AttachView implements Component {
 
 	// --- internals ---------------------------------------------------------
 
+	private setMode(mode: AttachMode): void {
+		this.mode = mode;
+		this.syncEditorFocus();
+		this.options.requestRender();
+	}
+
+	/** Forward focus to the embedded editor only while composing. */
+	private syncEditorFocus(): void {
+		if (!this.options.editor) return;
+		this.options.editor.focused = this._focused && this.mode === "compose" && !this.isReadOnly;
+	}
+
 	private startPolling(): void {
 		const timers = this.options.timers ?? DEFAULT_TIMERS;
 		const interval = this.options.pollIntervalMs ?? ATTACH_POLL_INTERVAL_MS;
@@ -170,12 +341,37 @@ export class AttachView implements Component {
 		return truncateToWidth(parts.join(" · "), width, "…");
 	}
 
-	private helpLine(width: number): string {
+	private helpLine(width: number, readOnly: boolean): string {
 		const theme = this.options.theme;
+		if (readOnly) {
+			const expand = this.expanded ? "collapse" : "expand";
+			const help = `Esc detach · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand} · read-only`;
+			return truncateToWidth(theme.fg("dim", help), width, "…");
+		}
+		if (this.mode === "compose") {
+			return truncateToWidth(theme.fg("dim", "Esc back · Enter send · Shift+Enter newline · Ctrl+Enter send"), width, "…");
+		}
 		const follow = this.viewport.isFollowing ? "following" : "scrolled";
 		const expand = this.expanded ? "collapse" : "expand";
-		const help = `Esc detach · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`;
+		const help = `Esc detach · Enter steer · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`;
 		return truncateToWidth(theme.fg("dim", help), width, "…");
+	}
+
+	private renderStatusLines(width: number, readOnly: boolean): string[] {
+		const theme = this.options.theme;
+		if (this.steerStatus) {
+			const { kind, text } = this.steerStatus;
+			const color = kind === "error" ? "error" : kind === "success" ? "success" : "muted";
+			const glyph = kind === "error" ? "✗ " : kind === "success" ? "✓ " : "… ";
+			return [truncateToWidth(theme.fg(color, `${glyph}${text}`), width, "…")];
+		}
+		if (readOnly) return [truncateToWidth(theme.fg("dim", "run settled · read-only"), width, "…")];
+		return [];
+	}
+
+	private renderEditor(width: number, readOnly: boolean): string[] {
+		if (readOnly || !this.options.editor) return [];
+		return this.options.editor.render(width);
 	}
 
 	private renderTask(task: unknown, width: number): string[] {

@@ -22,9 +22,10 @@ import {
 	type ExtensionContext,
 	getAgentDir,
 	getMarkdownTheme,
+	getSelectListTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Editor, Markdown, Spacer, Text, type EditorTheme } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildAgentLogPicker,
@@ -641,6 +642,11 @@ export default function (pi: ExtensionAPI) {
 		try {
 			await ctx.ui.custom<null>(
 				(tui, theme, _keybindings, done) => {
+					const editorTheme: EditorTheme = {
+						borderColor: (text) => theme.fg("accent", text),
+						selectList: getSelectListTheme(),
+					};
+					const editor = new Editor(tui, editorTheme);
 					const view = new AttachView({
 						getResult: () => run.result,
 						getRun: () => ({
@@ -656,6 +662,8 @@ export default function (pi: ExtensionAPI) {
 						requestRender: () => tui.requestRender(),
 						done: (result) => done(result),
 						terminalRows: () => tui.terminal.rows,
+						editor,
+						steer: (runId, message) => sendSteer(registry.get(runId) ?? run, message),
 					});
 					closeActiveAttach = () => view.close();
 					return view;

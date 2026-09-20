@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { ATTACH_POLL_INTERVAL_MS, AttachView, type AttachViewTimers } from "./attach-view.ts";
+import { ATTACH_POLL_INTERVAL_MS, AttachView, type AttachEditor, type AttachViewTimers } from "./attach-view.ts";
 import type { SingleResult } from "./types.ts";
 
 const ESC = "\x1b";
@@ -9,7 +9,10 @@ const DOWN = "\x1b[B";
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
 const END = "\x1b[F";
+const ENTER = "\r";
 const CTRL_O = "\x0f";
+const CTRL_ENTER = "\x1b[13;5u";
+const IME_TEXT = "日本語のテキスト";
 
 const passthroughTheme = {
 	fg: (_color: string, text: string) => text,
@@ -40,6 +43,43 @@ function makeLongResult(): SingleResult {
 	return makeResult({ messages: [{ role: "assistant", content: [{ type: "text", text }] }] as never });
 }
 
+interface FakeEditorHarness {
+	editor: AttachEditor;
+	inputs: string[];
+	setText: (value: string) => void;
+	submit: (value: string) => void;
+}
+
+/** Minimal stand-in for the real Editor: records input, tracks focus state. */
+function makeFakeEditor(): FakeEditorHarness {
+	let text = "";
+	const inputs: string[] = [];
+	const editor: AttachEditor = {
+		focused: false,
+		disableSubmit: false,
+		onSubmit: undefined,
+		render: (width: number) => [`[steer-editor ${width}]`],
+		handleInput: (data: string) => {
+			inputs.push(data);
+		},
+		getText: () => text,
+		setText: (value: string) => {
+			text = value;
+		},
+	};
+	return {
+		editor,
+		inputs,
+		setText: (value) => {
+			text = value;
+		},
+		submit: (value) => {
+			text = "";
+			editor.onSubmit?.(value);
+		},
+	};
+}
+
 function makeFakeTimers() {
 	const entries: Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean }> = [];
 	let nextId = 1;
@@ -64,6 +104,8 @@ function makeFakeTimers() {
 	};
 }
 
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function makeView(options: {
 	result?: SingleResult;
 	completedAt?: number;
@@ -71,6 +113,8 @@ function makeView(options: {
 	rows?: number;
 	done?: (result: null) => void;
 	onRender?: () => void;
+	editor?: AttachEditor;
+	steer?: (runId: string, message: string) => Promise<void>;
 } = {}) {
 	const result = options.result ?? makeResult();
 	const startedAt = Date.now() - 42_000;
@@ -83,6 +127,8 @@ function makeView(options: {
 		terminalRows: () => options.rows ?? 24,
 		now: () => startedAt + 42_000,
 		timers: options.timers,
+		editor: options.editor,
+		steer: options.steer,
 	});
 	return { view, result };
 }
@@ -185,14 +231,117 @@ describe("AttachView", () => {
 
 	test("renders a completed run read-only", () => {
 		const completedAt = Date.now() - 1000;
+		const fake = makeFakeEditor();
 		const { view } = makeView({
 			result: makeResult({ exitCode: 0, state: "settled" }),
 			completedAt,
+			editor: fake.editor,
 		});
 		const text = view.render(60).join("\n");
 		expect(text).toContain("settled");
-		// Stage 1 has no controls: only detach and scrolling are advertised.
-		expect(text).not.toContain("pause");
-		expect(text).not.toContain("steer");
+		expect(text).toContain("read-only");
+		// Read-only runs never advertise or render steering.
+		expect(text).not.toContain("Enter steer");
+		expect(text).not.toContain("[steer-editor");
+		expect(fake.editor.disableSubmit).toBe(true);
+	});
+
+	test("propagates focus to the editor only while composing", () => {
+		const fake = makeFakeEditor();
+		const { view } = makeView({ editor: fake.editor });
+		view.focused = true;
+		expect(fake.editor.focused).toBe(false);
+		view.handleInput(ENTER);
+		expect(view.inputMode).toBe("compose");
+		expect(fake.editor.focused).toBe(true);
+		view.handleInput(ESC);
+		expect(view.inputMode).toBe("scroll");
+		expect(fake.editor.focused).toBe(false);
+	});
+
+	test("forwards raw input to the editor while composing", () => {
+		const fake = makeFakeEditor();
+		const { view } = makeView({ editor: fake.editor });
+		view.handleInput(ENTER);
+		view.handleInput(IME_TEXT);
+		expect(fake.inputs).toEqual([IME_TEXT]);
+	});
+
+	test("steer sends the correct run ID and message and shows success inline", async () => {
+		const fake = makeFakeEditor();
+		const calls: Array<{ runId: string; message: string }> = [];
+		const { view } = makeView({
+			editor: fake.editor,
+			steer: (runId, message) => {
+				calls.push({ runId, message });
+				return Promise.resolve();
+			},
+		});
+		view.handleInput(ENTER);
+		fake.submit("focus on the failing tests");
+		await flush();
+
+		expect(calls).toEqual([{ runId: "sa-abc123", message: "focus on the failing tests" }]);
+		expect(view.lastSteerStatus?.kind).toBe("success");
+		expect(view.lastSteerStatus?.text).toContain("sa-abc123");
+		const text = view.render(80).join("\n");
+		expect(text).toContain("✓");
+		expect(text).toContain("sa-abc123");
+	});
+
+	test("steer failure is shown inline and re-enables the editor", async () => {
+		const fake = makeFakeEditor();
+		const { view } = makeView({
+			editor: fake.editor,
+			steer: () => Promise.reject(new Error("child is gone")),
+		});
+		view.handleInput(ENTER);
+		fake.submit("please continue");
+		await flush();
+
+		expect(view.lastSteerStatus?.kind).toBe("error");
+		expect(view.lastSteerStatus?.text).toContain("child is gone");
+		expect(fake.editor.disableSubmit).toBe(false);
+		const text = view.render(80).join("\n");
+		expect(text).toContain("✗");
+		expect(text).toContain("child is gone");
+	});
+
+	test("Ctrl+Enter submits the current editor text", async () => {
+		const fake = makeFakeEditor();
+		const calls: string[] = [];
+		const { view } = makeView({
+			editor: fake.editor,
+			steer: (_runId, message) => {
+				calls.push(message);
+				return Promise.resolve();
+			},
+		});
+		view.handleInput(ENTER);
+		fake.setText("use the new helper");
+		view.handleInput(CTRL_ENTER);
+		await flush();
+		expect(calls).toEqual(["use the new helper"]);
+		expect(fake.editor.getText?.()).toBe("");
+	});
+
+	test("completed runs ignore steering attempts", async () => {
+		const fake = makeFakeEditor();
+		let steered = 0;
+		const { view } = makeView({
+			result: makeResult({ exitCode: 0, state: "settled" }),
+			completedAt: Date.now() - 1000,
+			editor: fake.editor,
+			steer: () => {
+				steered += 1;
+				return Promise.resolve();
+			},
+		});
+		view.handleInput(ENTER);
+		expect(view.inputMode).toBe("scroll");
+		await view.submitSteer("too late");
+		expect(steered).toBe(0);
+		expect(view.lastSteerStatus?.kind).toBe("error");
+		expect(fake.editor.disableSubmit).toBe(true);
 	});
 });
