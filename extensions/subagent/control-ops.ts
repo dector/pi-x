@@ -59,6 +59,7 @@ export interface SubagentControlInput {
 	cwd?: unknown;
 	agentScope?: unknown;
 	confirmProjectAgents?: unknown;
+	herdr?: unknown;
 }
 
 export type SubagentControlParseResult =
@@ -100,7 +101,17 @@ function trimmed(value: unknown): string | undefined {
 }
 
 /** Field names that describe a new dispatch and must not appear on a control call. */
-const DISPATCH_ONLY_FIELDS = ["agent", "task", "tasks", "chain", "execution", "cwd", "agentScope", "confirmProjectAgents"] as const;
+const DISPATCH_ONLY_FIELDS = [
+	"agent",
+	"task",
+	"tasks",
+	"chain",
+	"execution",
+	"cwd",
+	"agentScope",
+	"confirmProjectAgents",
+	"herdr",
+] as const;
 
 /**
  * Validate a control call. Requires an explicit `stop`/`steer` action, exactly

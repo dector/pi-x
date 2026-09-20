@@ -67,6 +67,17 @@ export interface HerdrBridgeBootstrap {
 	token: string;
 }
 
+/**
+ * Launch the pane-side bridge. The launcher is the only place that knows how a
+ * command is delivered to a Herdr pane, so callers stay testable with a fake
+ * and no command text ever contains task/prompt/pi arguments.
+ */
+export interface HerdrBridgeLauncher {
+	/** Throw when the bridge runtime or entry point is unavailable. */
+	assertAvailable(): void;
+	launch(paneId: string, bootstrap: HerdrBridgeBootstrap): Promise<void>;
+}
+
 export type HerdrBridgeFrame =
 	| { type: "hello"; protocol: number; token: string; pid: number }
 	| { type: "welcome"; protocol: number; request: HerdrBridgeSpawnRequest }

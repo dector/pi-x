@@ -683,3 +683,56 @@ describe("coerceTerminalCompletionDetails", () => {
 		expect(details.plannedItems).toHaveLength(2);
 	});
 });
+
+describe("backend and Herdr metadata", () => {
+	test("acknowledgement names the Herdr transport but stays default for process", () => {
+		const base = {
+			dispatchId: "dispatch-1",
+			execution: "async" as const,
+			mode: "single" as const,
+			items: [{ agent: "worker", runId: "sa-1", task: "do it" }],
+		};
+		expect(formatAsyncAcknowledgement(base)).not.toContain("herdr");
+		expect(formatAsyncAcknowledgement({ ...base, backend: "herdr" })).toContain("single, async, herdr");
+	});
+
+	test("buildAsyncStartResult carries backend and retention without changing process shape", () => {
+		const processDispatch = preparedDispatch();
+		const processDetails = buildAsyncStartResult(processDispatch).details;
+		expect(processDetails?.backend).toBeUndefined();
+		expect(processDetails?.herdrRetention).toBeUndefined();
+
+		const herdrDispatch = preparedDispatch({ backend: "herdr", herdrRetention: "always" });
+		const result = buildAsyncStartResult(herdrDispatch);
+		expect(result.details).toMatchObject({ backend: "herdr", herdrRetention: "always" });
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("herdr");
+	});
+
+	test("normalizeSubagentDetails keeps only known backend/retention values", () => {
+		const normalized = normalizeSubagentDetails({
+			mode: "single",
+			results: [],
+			backend: "herdr",
+			herdrRetention: "always",
+		});
+		expect(normalized).toMatchObject({ backend: "herdr", herdrRetention: "always" });
+
+		const unknown = normalizeSubagentDetails({
+			mode: "single",
+			results: [],
+			backend: "carrier-pigeon",
+			herdrRetention: "sometimes",
+		});
+		expect(unknown?.backend).toBeUndefined();
+		expect(unknown?.herdrRetention).toBeUndefined();
+	});
+
+	test("coerceTerminalCompletionDetails falls back to the dispatch backend", () => {
+		const dispatch = preparedDispatch({ backend: "herdr", herdrRetention: "failed" });
+		const details = coerceTerminalCompletionDetails(dispatch, undefined);
+		expect(details.backend).toBe("herdr");
+		expect(details.herdrRetention).toBe("failed");
+		expect(isTerminalDispatchStatus(details.dispatchStatus)).toBe(true);
+	});
+});

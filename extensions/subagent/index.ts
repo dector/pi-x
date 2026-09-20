@@ -73,7 +73,11 @@ import {
 import { AsyncDispatchManager } from "./lifecycle.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
-import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
+import { HerdrSubagentBackend, ProcessSubagentBackend, type SubagentBackend } from "./backend.ts";
+import { createHerdrBridgeLauncher, preflightHerdr } from "./herdr-preflight.ts";
+import { createParentHerdrTab, type HerdrDisposeReason, type ParentHerdrTab } from "./herdr-tab.ts";
+import type { HerdrClient, HerdrEnvironment } from "./herdr-client.ts";
+import { type RpcChild } from "./rpc-client.ts";
 import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } from "./registry.ts";
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
@@ -84,7 +88,9 @@ import { SubagentTimingTracker } from "./timing.ts";
 import type {
 	PreparedSubagentDispatch,
 	SingleResult,
+	SubagentBackendKind,
 	SubagentDetails,
+	SubagentRunOutcome,
 	ToolRunStatus,
 } from "./types.ts";
 
@@ -151,6 +157,8 @@ interface SingleAgentRuntimeDependencies {
 	approvalQueue: ApprovalQueue;
 	parentContext: ExtensionContext;
 	registry: SubagentRegistry;
+	/** Select the RPC transport for a prepared dispatch (process or Herdr). */
+	backendFor: (kind: SubagentBackendKind | undefined) => SubagentBackend;
 	/** Refresh the active-subagents widget after a visible progress change. */
 	onProgress?: () => void;
 }
@@ -259,6 +267,9 @@ async function runSingleAgent(
 	let child: RpcChild | undefined;
 	let removeAbortListener: (() => void) | undefined;
 	let stop: RunStopController | undefined;
+	// Hoisted so the finally block can classify the run's terminal outcome for
+	// the backend (for example to recycle or retain a Herdr pane).
+	let wasAborted = false;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
@@ -272,7 +283,6 @@ async function runSingleAgent(
 		currentResult.inheritedMode = safeModeSnapshot?.mode;
 		currentResult.effectiveMode = safeModeSnapshot?.mode;
 		currentResult.outerAccess = safeModeSnapshot?.outerAccess;
-		let wasAborted = false;
 		let resolveCompletion!: () => void;
 		const completion = new Promise<void>((resolve) => {
 			resolveCompletion = resolve;
@@ -280,7 +290,8 @@ async function runSingleAgent(
 		const streamState: RpcStreamState = { liveText: "", settled: false };
 		let uiDialogCount = 0;
 		const invocation = getPiInvocation(args);
-		child = spawnRpcChild({
+		const backend = runtime.backendFor(dispatch.backend);
+		const spawnOptions = {
 			command: invocation.command,
 			args: invocation.args,
 			cwd: cwd ?? defaultCwd,
@@ -424,7 +435,16 @@ async function runSingleAgent(
 					resolveCompletion();
 				},
 			},
+		};
+		child = await backend.spawn(spawnOptions, {
+			runId,
+			dispatchId: dispatch.dispatchId,
+			agent: agent.name,
+			task,
+			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 		});
+		if (dispatch.backend) currentResult.backend = dispatch.backend;
+		if (child.herdr) currentResult.herdr = child.herdr;
 		activeChildren.add(child);
 
 		// Stop escalation for this run: the first stop aborts the child
@@ -472,6 +492,9 @@ async function runSingleAgent(
 			child,
 			dispatchId: dispatch.dispatchId,
 			execution: dispatch.execution,
+			...(dispatch.backend ? { backend: dispatch.backend } : {}),
+			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
+			...(child.herdr ? { herdr: child.herdr } : {}),
 			abort: () => runStop.request(),
 		});
 
@@ -515,6 +538,25 @@ async function runSingleAgent(
 		currentResult.timing = timing.finish();
 		registry.complete(runId);
 		if (child) {
+			// Classify the terminal outcome so a Herdr lease can be recycled or
+			// retained. `release` is a no-op for the process backend.
+			const outcome: SubagentRunOutcome =
+				wasAborted || currentResult.stopReason === "aborted"
+					? "aborted"
+					: isFailedResult(currentResult)
+						? "failed"
+						: "success";
+			try {
+				await child.release?.(outcome);
+			} catch {
+				// A release failure must not skip pane termination/cleanup.
+			}
+			// Retention is applied during release, so refresh the recorded location.
+			if (child.herdr) {
+				currentResult.herdr = child.herdr;
+				const run = registry.get(runId);
+				if (run) run.herdr = child.herdr;
+			}
 			await child.terminate();
 			activeChildren.delete(child);
 		}
@@ -550,6 +592,16 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 	default: "user",
 });
 
+const HerdrRetentionSchema = StringEnum(["failed", "always"] as const, {
+	description:
+		'How long to keep the Herdr pane: "failed" (default) keeps failed/aborted panes and recycles successful ones; "always" keeps every pane.',
+	default: "failed",
+});
+
+const HerdrSchema = Type.Object({
+	retain: Type.Optional(HerdrRetentionSchema),
+});
+
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
@@ -581,6 +633,7 @@ const SubagentParams = Type.Object({
 			default: "async",
 		}),
 	),
+	herdr: Type.Optional(HerdrSchema),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
@@ -632,6 +685,52 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 	});
+
+	// Parent-owned Herdr tab, created lazily by the first Herdr dispatch and
+	// reused for the session. Preflight validates the environment and prepares
+	// the tab before a dispatch is accepted; nothing is created unless the
+	// request explicitly carries `herdr`.
+	type HerdrSession = { environment: HerdrEnvironment; client: HerdrClient; tab: ParentHerdrTab };
+	let herdrSession: HerdrSession | undefined;
+	let herdrBackend: HerdrSubagentBackend | undefined;
+	const processBackend = new ProcessSubagentBackend();
+
+	function disposeHerdrSession(reason: HerdrDisposeReason): Promise<void> {
+		const session = herdrSession;
+		// Clear first so a concurrent dispatch cannot attach to a disposed tab.
+		herdrSession = undefined;
+		herdrBackend = undefined;
+		if (!session) return Promise.resolve();
+		return session.tab.dispose({ reason }).catch(() => undefined);
+	}
+
+	function backendFor(kind: SubagentBackendKind | undefined): SubagentBackend {
+		if (kind !== "herdr") return processBackend;
+		if (!herdrSession) {
+			throw new Error("Herdr was requested, but no parent Herdr tab has been prepared.");
+		}
+		if (!herdrBackend) {
+			herdrBackend = new HerdrSubagentBackend({
+				tab: herdrSession.tab,
+				launcher: createHerdrBridgeLauncher({ client: herdrSession.client }),
+			});
+		}
+		return herdrBackend;
+	}
+
+	/** Validate Herdr and prepare the owned tab; called before acceptance. */
+	async function runHerdrPreflight(): Promise<{ ok: true } | { ok: false; error: string }> {
+		const result = await preflightHerdr({
+			existing: herdrSession,
+			createTab: (client) => createParentHerdrTab({ client, agentDir: getAgentDir() }),
+		});
+		if (!result.ok) return { ok: false, error: result.error };
+		// A different environment means a different tab manager; drop any cached
+		// backend so it cannot address the previous session's tab.
+		if (herdrSession && herdrSession.tab !== result.tab) herdrBackend = undefined;
+		herdrSession = { environment: result.environment, client: result.client, tab: result.tab };
+		return { ok: true };
+	}
 
 	// Publish the active-subagents widget from the registry. Registry completions
 	// during shutdown cannot re-show the widget because the teardown flag forces
@@ -830,6 +929,10 @@ export default function (pi: ExtensionAPI) {
 							`Agent: ${run.agentName} [${run.runId}]`,
 							`State: ${run.result.state ?? "unknown"}`,
 							`Execution: ${run.execution ?? "blocking"}`,
+							...(run.backend ? [`Backend: ${run.backend}`] : []),
+							...(run.herdr ? [`Herdr tab: ${run.herdr.tabId}`, `Herdr pane: ${run.herdr.paneId}`] : []),
+							...(run.herdrRetention ? [`Retention: ${run.herdrRetention}`] : []),
+							...(run.herdr ? [`Pane status: ${run.herdr.retained ? "retained" : "active"}`] : []),
 							...(run.dispatchId ? [`Dispatch: ${run.dispatchId}`] : []),
 							`PID: ${run.child?.pid ?? "n/a"}`,
 							`CWD: ${run.cwd}`,
@@ -941,6 +1044,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
+		// A replacement session must not adopt the previous session's Herdr tab.
+		herdrSession = undefined;
+		herdrBackend = undefined;
 		asyncDispatches.reset();
 		// Forget the previous widget content so the first refresh always
 		// republishes (and clears a stale widget from an earlier session).
@@ -956,7 +1062,7 @@ export default function (pi: ExtensionAPI) {
 		publishActiveSubagentWidget();
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
 		// Order matters: flip the shutdown flag, abort detached controllers,
 		// terminate active RPC children, await settled dispatch promises, then
 		// clear runtime state. Completion delivery is suppressed by the manager
@@ -984,6 +1090,9 @@ export default function (pi: ExtensionAPI) {
 		await Promise.allSettled(childrenToTerminate.map((child) => child.terminate()));
 		await dispatchesSettled;
 		for (const child of childrenToTerminate) activeChildren.delete(child);
+		// Children are settled first; `dispose` then closes the owned tab only
+		// when no explicitly retained panes remain (`reload` keeps the tab).
+		await disposeHerdrSession(event.reason);
 	});
 
 	const registeredAgents = formatAgentList(discoverAgents(process.cwd(), "user").agents, 50);
@@ -1108,6 +1217,7 @@ export default function (pi: ExtensionAPI) {
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
 			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn. Detached children may modify the shared working tree, so re-read affected files before editing them.',
 			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
+		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
@@ -1142,6 +1252,11 @@ export default function (pi: ExtensionAPI) {
 				discoverAgents,
 				requestPermission: (what, data) => askHubPermission(what, data, ctx),
 				snapshotSafeMode: getSafeModeSnapshot,
+				preflightHerdr: async (herdr) => {
+					const result = await runHerdrPreflight();
+					if (!result.ok) return result;
+					return { ok: true, retention: herdr.retain ?? "failed" };
+				},
 				nextDispatchId: newDispatchId,
 				nextRunId: newRunId,
 				context: {
@@ -1158,6 +1273,7 @@ export default function (pi: ExtensionAPI) {
 				approvalQueue,
 				parentContext: ctx,
 				registry,
+				backendFor,
 				onProgress: publishActiveSubagentWidget,
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({

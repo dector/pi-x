@@ -24,6 +24,7 @@ import type {
 	PreparedDispatchItem,
 	PreparedSubagentDispatch,
 	SingleResult,
+	SubagentBackendKind,
 	SubagentDetails,
 	SubagentDispatchStatus,
 	SubagentMode,
@@ -53,6 +54,7 @@ function failedResultFor(
 	error: unknown,
 	signal: AbortSignal | undefined,
 	fallbackCwd?: string,
+	backend?: SubagentBackendKind,
 ): SingleResult {
 	const message = error instanceof Error ? error.message : String(error);
 	const aborted = signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
@@ -69,6 +71,7 @@ function failedResultFor(
 		usage: emptyUsage(),
 		runId: item.runId,
 		...(item.step !== undefined ? { step: item.step } : {}),
+		...(backend ? { backend } : {}),
 		state: "failed",
 	};
 }
@@ -100,17 +103,18 @@ async function runChild(
 	item: PreparedDispatchItem,
 	signal: AbortSignal | undefined,
 	fallbackCwd?: string,
+	backend?: SubagentBackendKind,
 ): Promise<SingleResult> {
 	// A queued parallel item (or a later chain step) must never start, and in
 	// particular must never prompt a child, once its dispatch is aborted.
 	if (signal?.aborted) {
-		return failedResultFor(item, new Error("Subagent was aborted before it started"), signal, fallbackCwd);
+		return failedResultFor(item, new Error("Subagent was aborted before it started"), signal, fallbackCwd, backend);
 	}
 	try {
 		return await deps.runSingle(request);
 	} catch (error) {
 		if (error instanceof SubagentAbortError) return normalizeAbortedResult(error.result);
-		return failedResultFor(item, error, signal, fallbackCwd);
+		return failedResultFor(item, error, signal, fallbackCwd, backend);
 	}
 }
 
@@ -154,6 +158,8 @@ function makeDetailsFor(dispatch: PreparedSubagentDispatch, mode: SubagentMode):
 		projectAgentsDir: dispatch.projectAgentsDir,
 		plannedItems: dispatch.items,
 		cwd: dispatch.cwd,
+		...(dispatch.backend ? { backend: dispatch.backend } : {}),
+		...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 		results,
 	});
 }
@@ -183,6 +189,7 @@ export function buildDispatchExceptionResult(
 		usage: emptyUsage(),
 		runId: item.runId,
 		...(item.step !== undefined ? { step: item.step } : {}),
+		...(dispatch.backend ? { backend: dispatch.backend } : {}),
 		state: "failed",
 	}));
 	const details: SubagentDetails = options.details ?? {
@@ -194,6 +201,8 @@ export function buildDispatchExceptionResult(
 		projectAgentsDir: dispatch.projectAgentsDir,
 		plannedItems: dispatch.items,
 		cwd: dispatch.cwd,
+		...(dispatch.backend ? { backend: dispatch.backend } : {}),
+		...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 		results,
 	};
 	const status = details.dispatchStatus ?? (aborted ? "aborted" : "failed");
@@ -261,6 +270,7 @@ export async function runPreparedDispatch(
 				item,
 				signal,
 				dispatch.cwd,
+				dispatch.backend,
 			);
 			results.push(result);
 
@@ -294,6 +304,7 @@ export async function runPreparedDispatch(
 				messages: [],
 				stderr: "",
 				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+				...(dispatch.backend ? { backend: dispatch.backend } : {}),
 			};
 		}
 
@@ -328,6 +339,7 @@ export async function runPreparedDispatch(
 				item,
 				signal,
 				dispatch.cwd,
+				dispatch.backend,
 			);
 			allResults[index] = result;
 			emitParallelUpdate();
@@ -359,6 +371,7 @@ export async function runPreparedDispatch(
 		item,
 		signal,
 		dispatch.cwd,
+		dispatch.backend,
 	);
 
 	if (isFailedResult(result)) {

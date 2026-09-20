@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { ProcessSubagentBackend } from "./backend.ts";
-import type { RpcChildEvents } from "./rpc-client.ts";
-import type { RpcResponse, RpcStreamEvent } from "./types.ts";
+import { HerdrSubagentBackend, ProcessSubagentBackend } from "./backend.ts";
+import type { HerdrBridgeBootstrap } from "./herdr-bridge.ts";
+import type { HerdrAcquireOptions, HerdrPaneLease, ParentHerdrTab } from "./herdr-tab.ts";
+import type { RpcChild, RpcChildEvents, RpcExit } from "./rpc-client.ts";
+import type { PreparedDispatchItem, RpcCommand, RpcExtensionUiResponse, RpcResponse, RpcStreamEvent } from "./types.ts";
 
 const FAKE_CHILD = join(import.meta.dir, "fixtures/fake-rpc-child.mjs");
 
@@ -68,5 +70,103 @@ describe("ProcessSubagentBackend", () => {
 			"exited before responding",
 		);
 		expect(child.exited).toBe(true);
+	});
+});
+
+function fakeRpcChild(): RpcChild {
+	return {
+		pid: 4242,
+		exited: false,
+		stderr: "",
+		exit: Promise.resolve<RpcExit>({ code: 0, signal: null }),
+		request: async (command: RpcCommand) => ({ id: command.id, type: "response", command: command.type, success: true }),
+		send: (_command: RpcCommand | RpcExtensionUiResponse) => {},
+		respondUi: (_response: RpcExtensionUiResponse) => {},
+		terminate: async () => {},
+	};
+}
+
+function fakeLease(released: string[], paneId = "w1:p2"): HerdrPaneLease {
+	return {
+		tabId: "w1:t1",
+		paneId,
+		runId: "sa-1",
+		get retained() {
+			return released.includes("success") || released.includes("failed") || released.includes("aborted");
+		},
+		release: async (outcome) => {
+			released.push(outcome);
+		},
+	};
+}
+
+function fakeHerdrTab(
+	lease: HerdrPaneLease,
+	acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }>,
+): ParentHerdrTab {
+	return {
+		ensureTab: async () => "w1:t1",
+		acquire: async (run, options) => {
+			acquired.push({ run, options });
+			return lease;
+		},
+		focus: async () => {},
+		dispose: async () => {},
+	};
+}
+
+describe("HerdrSubagentBackend", () => {
+	test("leases a pane, launches the bridge, and releases with the run outcome", async () => {
+		const released: string[] = [];
+		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
+		let launched: { paneId: string; bootstrap: HerdrBridgeBootstrap } | undefined;
+		const backend = new HerdrSubagentBackend({
+			tab: fakeHerdrTab(fakeLease(released), acquired),
+			launcher: {
+				assertAvailable: () => {},
+				launch: async (paneId, bootstrap) => {
+					launched = { paneId, bootstrap };
+				},
+			},
+			createChild: async (options) => {
+				await options.launch({ socketPath: "/tmp/s.sock", tokenFile: "/tmp/tok", token: "secret" });
+				return fakeRpcChild();
+			},
+		});
+
+		const child = await backend.spawn(
+			{ command: "pi", args: ["--mode", "rpc"], cwd: "/work", events: events() },
+			{ runId: "sa-1", dispatchId: "dispatch-1", agent: "worker", task: "do it", herdrRetention: "always" },
+		);
+
+		expect(backend.kind).toBe("herdr");
+		expect(acquired[0]?.run).toMatchObject({ runId: "sa-1", agent: "worker", task: "do it" });
+		expect(acquired[0]?.options?.retention).toBe("always");
+		expect(launched?.paneId).toBe("w1:p2");
+		expect(launched?.bootstrap.socketPath).toBe("/tmp/s.sock");
+		expect(child.herdr).toMatchObject({ tabId: "w1:t1", paneId: "w1:p2" });
+		await child.release?.("success");
+		expect(released).toEqual(["success"]);
+		expect(child.herdr?.retained).toBe(true);
+	});
+
+	test("releases the pane as failed when the bridge launch throws", async () => {
+		const released: string[] = [];
+		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
+		const backend = new HerdrSubagentBackend({
+			tab: fakeHerdrTab(fakeLease(released), acquired),
+			launcher: { assertAvailable: () => {}, launch: async () => {} },
+			createChild: async () => {
+				throw new Error("bridge boom");
+			},
+		});
+
+		await expect(
+			backend.spawn(
+				{ command: "pi", args: [], cwd: "/work", events: events() },
+				{ runId: "sa-1", dispatchId: "dispatch-1", agent: "worker" },
+			),
+		).rejects.toThrow("bridge boom");
+		expect(released).toEqual(["failed"]);
 	});
 });

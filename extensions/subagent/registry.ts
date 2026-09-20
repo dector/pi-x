@@ -1,6 +1,6 @@
 import { raceWithAbort, throwIfAborted } from "./run-stop.ts";
 import type { RpcChild } from "./rpc-client.ts";
-import type { SingleResult, SubagentExecution } from "./types.ts";
+import type { HerdrRetention, HerdrRunLocation, SingleResult, SubagentBackendKind, SubagentExecution } from "./types.ts";
 
 export interface SubagentRunRuntime {
 	runId: string;
@@ -15,6 +15,15 @@ export interface SubagentRunRuntime {
 	dispatchId?: string;
 	/** Whether the owning dispatch runs detached or blocking. */
 	execution?: SubagentExecution;
+	/** RPC transport hosting this run; omitted means the process backend. */
+	backend?: SubagentBackendKind;
+	/** Herdr retention intent for this run's pane. */
+	herdrRetention?: HerdrRetention;
+	/**
+	 * Live Herdr pane identity. Mutable while the run is active (retention is
+	 * applied at release), so the manager/attach view reads it through the run.
+	 */
+	herdr?: HerdrRunLocation;
 	/**
 	 * Stop just this run. First call asks the child to abort cooperatively;
 	 * repeating it escalates to bounded forced termination. Set by the runner

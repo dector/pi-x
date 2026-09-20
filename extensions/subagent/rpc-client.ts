@@ -1,11 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type {
+	HerdrRunLocation,
 	RpcCommand,
 	RpcExtensionUiRequest,
 	RpcExtensionUiResponse,
 	RpcResponse,
 	RpcStreamEvent,
+	SubagentRunOutcome,
 } from "./types.ts";
 
 /**
@@ -126,10 +128,18 @@ export interface RpcChild {
 	readonly exited: boolean;
 	readonly stderr: string;
 	readonly exit: Promise<RpcExit>;
+	/** Herdr pane identity, when this child runs behind the authenticated bridge. */
+	readonly herdr?: HerdrRunLocation;
 	request(command: RpcCommand, timeoutMs: number): Promise<RpcResponse>;
 	send(command: RpcCommand | RpcExtensionUiResponse): void;
 	respondUi(response: RpcExtensionUiResponse): void;
 	terminate(options?: { graceMs?: number }): Promise<void>;
+	/**
+	 * Release backend-owned resources (for example a Herdr pane lease) with the
+	 * run's terminal outcome. Optional so pipe children stay unchanged; the
+	 * direct-process backend never sets it.
+	 */
+	release?(outcome: SubagentRunOutcome): Promise<void>;
 }
 
 type Pending = { resolve: (response: RpcResponse) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };

@@ -865,3 +865,32 @@ describe("partial results on child rejection", () => {
 		expect(result.details?.results[1]?.cwd).toBe("/parent");
 	});
 });
+
+describe("backend metadata propagation", () => {
+	test("carries backend and retention through synthetic failures and details", async () => {
+		const dispatch = preparedDispatch("single", [{ agent: "worker", task: "t" }], {
+			backend: "herdr",
+			herdrRetention: "always",
+		});
+		const deps: DispatchRuntimeDependencies = {
+			runSingle: async () => {
+				throw new Error("boom");
+			},
+		};
+		const result = await runPreparedDispatch(dispatch, deps, undefined, undefined);
+		expect(result.isError).toBe(true);
+		expect(result.details).toMatchObject({ backend: "herdr", herdrRetention: "always" });
+		expect(result.details?.results[0]).toMatchObject({ backend: "herdr", state: "failed" });
+	});
+
+	test("omits backend metadata for the default process dispatch", async () => {
+		const dispatch = preparedDispatch("single", [{ agent: "worker", task: "t" }]);
+		const deps: DispatchRuntimeDependencies = {
+			runSingle: async (request) => singleResult(request.agent, "ok", { runId: request.runId }),
+		};
+		const result = await runPreparedDispatch(dispatch, deps, undefined, undefined);
+		expect(result.details?.backend).toBeUndefined();
+		expect(result.details?.herdrRetention).toBeUndefined();
+		expect(result.details?.results[0]?.backend).toBeUndefined();
+	});
+});

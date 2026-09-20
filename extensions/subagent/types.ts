@@ -69,6 +69,9 @@ export interface HerdrRunLocation {
 	retained: boolean;
 }
 
+/** Terminal outcome used to release a backend resource (for example a pane). */
+export type SubagentRunOutcome = "success" | "failed" | "aborted";
+
 /** Model/thinking defaults snapshotted for a dispatch when it is prepared. */
 export interface DispatchDefaults {
 	model?: string;
@@ -104,6 +107,13 @@ export interface PreparedSubagentDispatch {
 	cwd: string;
 	safeModeSnapshot?: SafeModeSnapshot;
 	items: PreparedDispatchItem[];
+	/**
+	 * Selected RPC transport. Omitted means the default direct-process backend,
+	 * so records prepared before Herdr keep their historical meaning.
+	 */
+	backend?: SubagentBackendKind;
+	/** Per-dispatch Herdr retention intent; only set when `backend` is `herdr`. */
+	herdrRetention?: HerdrRetention;
 }
 
 export interface SingleResult {
@@ -138,6 +148,10 @@ export interface SingleResult {
 	 */
 	resolvedApprovals?: ResolvedApproval[];
 	timing?: SubagentTiming;
+	/** RPC transport that hosted this run; omitted means the process backend. */
+	backend?: SubagentBackendKind;
+	/** Herdr pane identity for this run, when it ran behind the bridge. */
+	herdr?: HerdrRunLocation;
 }
 
 export type SubagentControlAction = "stop" | "steer";
@@ -182,6 +196,10 @@ export interface SubagentDetails {
 	plannedItems?: PreparedDispatchItem[];
 	/** Parent working directory, used to fill in missing per-result cwd. */
 	cwd?: string;
+	/** Dispatch-level RPC transport; omitted means the process backend. */
+	backend?: SubagentBackendKind;
+	/** Per-dispatch Herdr retention intent, when the dispatch opted into Herdr. */
+	herdrRetention?: HerdrRetention;
 	results: SingleResult[];
 }
 

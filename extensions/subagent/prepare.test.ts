@@ -10,7 +10,13 @@
 import { describe, expect, test } from "bun:test";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, AgentScope } from "./agents.ts";
-import { MAX_PARALLEL_TASKS, prepareSubagentDispatch, type PreparationDependencies } from "./prepare.ts";
+import {
+	MAX_PARALLEL_TASKS,
+	prepareSubagentDispatch,
+	type HerdrPreflightOutcome,
+	type HerdrRequest,
+	type PreparationDependencies,
+} from "./prepare.ts";
 import type { SafeModeSnapshot } from "./safe-mode.ts";
 
 function agent(name: string, source: "user" | "project" = "user"): AgentConfig {
@@ -33,6 +39,8 @@ interface HarnessOptions {
 	safeMode?: SafeModeSnapshot;
 	runIds?: string[];
 	dispatchIds?: string[];
+	/** Injected Herdr preflight result; defaults to a successful `failed` policy. */
+	preflightHerdr?: (request: HerdrRequest) => Promise<HerdrPreflightOutcome>;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -42,6 +50,7 @@ function createHarness(options: HarnessOptions = {}) {
 		safeMode: 0,
 		nextDispatchId: 0,
 		nextRunId: 0,
+		preflight: [] as HerdrRequest[],
 		/** Ordered effect log, so tests can assert allocation order. */
 		order: [] as string[],
 	};
@@ -63,6 +72,12 @@ function createHarness(options: HarnessOptions = {}) {
 			calls.safeMode += 1;
 			calls.order.push("safe-mode");
 			return options.safeMode;
+		},
+		preflightHerdr: async (request) => {
+			calls.preflight.push(request);
+			calls.order.push("preflight");
+			if (options.preflightHerdr) return options.preflightHerdr(request);
+			return { ok: true, retention: request.retain ?? "failed" };
 		},
 		nextDispatchId: () => {
 			calls.nextDispatchId += 1;
@@ -490,5 +505,106 @@ describe("effect ordering", () => {
 		});
 		await prepareSubagentDispatch({ agent: "worker", task: "t", agentScope: "project" }, deps);
 		expect(calls.order).toEqual(["permission", "run-id", "dispatch-id", "safe-mode"]);
+	});
+});
+
+describe("herdr preparation", () => {
+	test("omitted herdr keeps the process backend and never preflights", async () => {
+		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch({ agent: "worker", task: "t" }, deps);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.backend).toBeUndefined();
+		expect(result.dispatch.herdrRetention).toBeUndefined();
+		expect(calls.preflight).toHaveLength(0);
+	});
+
+	test('herdr: {} resolves to retain "failed" and the herdr backend', async () => {
+		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch({ agent: "worker", task: "t", herdr: {} }, deps);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.backend).toBe("herdr");
+		expect(result.dispatch.herdrRetention).toBe("failed");
+		expect(calls.preflight).toEqual([{}]);
+	});
+
+	test('herdr: { retain: "always" } is preserved', async () => {
+		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch(
+			{ agent: "worker", task: "t", herdr: { retain: "always" } },
+			deps,
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.backend).toBe("herdr");
+		expect(result.dispatch.herdrRetention).toBe("always");
+		expect(calls.preflight).toEqual([{ retain: "always" }]);
+	});
+
+	test("invalid retention is rejected without preflight or ID allocation", async () => {
+		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch(
+			{ agent: "worker", task: "t", herdr: { retain: "sometimes" as never } },
+			deps,
+		);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(textOf(result.result)).toContain("Invalid herdr retention");
+		expect(calls.preflight).toHaveLength(0);
+		expect(calls.nextRunId).toBe(0);
+		expect(calls.nextDispatchId).toBe(0);
+	});
+
+	test("a non-object herdr value is rejected", async () => {
+		const { deps } = createHarness();
+		const result = await prepareSubagentDispatch(
+			{ agent: "worker", task: "t", herdr: "yes" as never },
+			deps,
+		);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(textOf(result.result)).toContain('must be an object');
+	});
+
+	test("unknown herdr options are rejected", async () => {
+		const { deps } = createHarness();
+		const result = await prepareSubagentDispatch(
+			{ agent: "worker", task: "t", herdr: { keep: true } as never },
+			deps,
+		);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(textOf(result.result)).toContain("Unknown herdr option");
+	});
+
+	test("a preflight failure fails before acceptance and allocates no IDs", async () => {
+		const { deps, calls } = createHarness({
+			runIds: ["sa-1"],
+			dispatchIds: ["d-1"],
+			preflightHerdr: async () => ({ ok: false, error: "Herdr server unreachable" }),
+		});
+		const result = await prepareSubagentDispatch({ agent: "worker", task: "t", herdr: {} }, deps);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(textOf(result.result)).toContain("Herdr server unreachable");
+		expect(calls.preflight).toHaveLength(1);
+		expect(calls.nextRunId).toBe(0);
+		expect(calls.nextDispatchId).toBe(0);
+	});
+
+	test("preflight runs after project approval and before ID allocation", async () => {
+		const { deps, calls } = createHarness({
+			agents: [agent("worker", "project")],
+			projectAgentsDir: "/repo/.pi/agents",
+			permission: "allow",
+			runIds: ["sa-1"],
+			dispatchIds: ["d-1"],
+		});
+		await prepareSubagentDispatch(
+			{ agent: "worker", task: "t", agentScope: "project", herdr: {} },
+			deps,
+		);
+		expect(calls.order).toEqual(["permission", "preflight", "run-id", "dispatch-id", "safe-mode"]);
 	});
 });

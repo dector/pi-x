@@ -775,3 +775,83 @@ describe("persisted transcript recovery", () => {
 		expect(merged?.result).toBe(run.result);
 	});
 });
+
+describe("backend and Herdr location metadata", () => {
+	test("registry entries carry the live backend, retention, and location", () => {
+		const entries = registryAgentLogEntries([
+			runtime({
+				backend: "herdr",
+				herdrRetention: "always",
+				herdr: { tabId: "w1:t1", paneId: "w1:p2", retained: false },
+			}),
+		]);
+		expect(entries[0]).toMatchObject({
+			backend: "herdr",
+			herdrRetention: "always",
+			herdr: { tabId: "w1:t1", paneId: "w1:p2", retained: false },
+		});
+	});
+
+	test("persisted entries keep an informational location without treating it as live", () => {
+		const result = {
+			agent: "worker",
+			agentSource: "user",
+			task: "do it",
+			exitCode: 0,
+			messages: [assistant("done")],
+			stderr: "",
+			usage,
+			runId: "sa-9",
+			backend: "herdr",
+			herdr: { tabId: "w1:t1", paneId: "w1:p9", retained: true },
+		};
+		const entries = persistedAgentLogEntries(
+			branchWithDetails({
+				mode: "single",
+				execution: "async",
+				dispatchId: "dispatch-9",
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				backend: "herdr",
+				herdrRetention: "always",
+				results: [result],
+			}),
+		);
+		expect(entries[0]).toMatchObject({
+			backend: "herdr",
+			herdrRetention: "always",
+			herdr: { tabId: "w1:t1", paneId: "w1:p9", retained: true },
+		});
+
+		const text = formatAgentLogEntry(entries[0]);
+		expect(text).toContain("Backend: herdr");
+		expect(text).toContain("Herdr tab: w1:t1");
+		expect(text).toContain("Herdr pane: w1:p9 (retained)");
+		expect(text).toContain("Retention: always");
+	});
+
+	test("merge preserves backend metadata only the persisted record has", () => {
+		const merged = mergeAgentLogEntries(
+			registryAgentLogEntries([runtime({ runId: "sa-9", result: { ...runtime({}).result, runId: "sa-9" } })]),
+			[
+				{
+					runId: "sa-9",
+					agentName: "scout",
+					task: "find auth code",
+					output: "persisted",
+					status: "completed",
+					source: "persisted",
+					backend: "herdr",
+					herdrRetention: "failed",
+					herdr: { tabId: "w1:t1", paneId: "w1:p3", retained: true },
+				},
+			],
+		);
+		expect(merged[0]).toMatchObject({
+			backend: "herdr",
+			herdrRetention: "failed",
+			herdr: { tabId: "w1:t1", paneId: "w1:p3", retained: true },
+		});
+	});
+});

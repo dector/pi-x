@@ -17,7 +17,14 @@
 import { isTerminalDispatchStatus, normalizeSubagentDetails, SUBAGENT_COMPLETION_CUSTOM_TYPE } from "./completion.ts";
 import type { SubagentRunRuntime } from "./registry.ts";
 import { getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
-import type { SingleResult, SubagentDetails, SubagentExecution } from "./types.ts";
+import type {
+	HerdrRetention,
+	HerdrRunLocation,
+	SingleResult,
+	SubagentBackendKind,
+	SubagentDetails,
+	SubagentExecution,
+} from "./types.ts";
 
 export type AgentLogStatus = "running" | "completed" | "failed";
 export type AgentLogSource = "registry" | "persisted";
@@ -38,6 +45,15 @@ export interface AgentLogEntry {
 	dispatchId?: string;
 	/** Whether the run came from a detached async or blocking dispatch. */
 	execution?: SubagentExecution;
+	/** RPC transport; omitted means the process backend. */
+	backend?: SubagentBackendKind;
+	/** Per-dispatch Herdr retention intent, when the dispatch opted into Herdr. */
+	herdrRetention?: HerdrRetention;
+	/**
+	 * Persisted Herdr location. Informational only: panes may have been closed
+	 * manually, so Stage 5 validates it before offering a jump/close action.
+	 */
+	herdr?: HerdrRunLocation;
 	/**
 	 * Full result behind this entry, when available. Registry entries always
 	 * carry the live result; persisted entries carry the result embedded in
@@ -78,6 +94,9 @@ export function registryAgentLogEntries(runs: SubagentRunRuntime[]): AgentLogEnt
 			completedAt: run.completedAt,
 			dispatchId: run.dispatchId,
 			execution: run.execution,
+			backend: run.backend,
+			herdrRetention: run.herdrRetention,
+			herdr: run.herdr,
 			result: run.result,
 		});
 	}
@@ -161,6 +180,9 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 					completedAt,
 					dispatchId: details.dispatchId,
 					execution: details.execution,
+					backend: (result.backend as SubagentBackendKind | undefined) ?? details.backend,
+					herdrRetention: details.herdrRetention,
+					herdr: result.herdr as HerdrRunLocation | undefined,
 					result,
 				});
 			}
@@ -197,6 +219,9 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 				completedAt,
 				dispatchId: details.dispatchId,
 				execution: details.execution,
+				backend: (result.backend as SubagentBackendKind | undefined) ?? details.backend,
+				herdrRetention: details.herdrRetention,
+				herdr: result.herdr as HerdrRunLocation | undefined,
 				result,
 			});
 		}
@@ -229,6 +254,9 @@ function mergeMetadata(entry: AgentLogEntry, richer: AgentLogEntry): AgentLogEnt
 		completedAt: entry.completedAt ?? richer.completedAt,
 		dispatchId: entry.dispatchId ?? richer.dispatchId,
 		execution: entry.execution ?? richer.execution,
+		backend: entry.backend ?? richer.backend,
+		herdrRetention: entry.herdrRetention ?? richer.herdrRetention,
+		herdr: entry.herdr ?? richer.herdr,
 		result: entry.result ?? richer.result,
 	};
 }
@@ -328,6 +356,10 @@ export function formatAgentLogEntry(entry: AgentLogEntry): string {
 	const lines: string[] = [`Agent: ${label}`];
 	if (entry.mode) lines.push(`Mode: ${entry.mode}${entry.step ? ` (step ${entry.step})` : ""}${entry.execution ? ` [${entry.execution}]` : ""}`);
 	if (entry.dispatchId) lines.push(`Dispatch: ${entry.dispatchId}`);
+	if (entry.backend) lines.push(`Backend: ${entry.backend}`);
+	if (entry.herdr) lines.push(`Herdr tab: ${entry.herdr.tabId}`);
+	if (entry.herdr) lines.push(`Herdr pane: ${entry.herdr.paneId}${entry.herdr.retained ? " (retained)" : ""}`);
+	if (entry.herdrRetention) lines.push(`Retention: ${entry.herdrRetention}`);
 	lines.push(`Status: ${entry.status}`);
 	if (entry.startedAt) lines.push(`Started: ${new Date(entry.startedAt).toISOString()}`);
 	if (entry.completedAt) lines.push(`Completed: ${new Date(entry.completedAt).toISOString()}`);

@@ -129,6 +129,7 @@ describe("control request validation", () => {
 			{ cwd: "/tmp" },
 			{ agentScope: "user" },
 			{ confirmProjectAgents: true },
+			{ herdr: {} },
 		];
 		for (const field of dispatchFields) {
 			const result = parseSubagentControl({ action: "stop", dispatchId: "d-1", ...field });

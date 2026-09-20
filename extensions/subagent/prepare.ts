@@ -26,8 +26,10 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, AgentDiscoveryResult, AgentScope } from "./agents.ts";
 import type { SafeModeSnapshot } from "./safe-mode.ts";
 import type {
+	HerdrRetention,
 	PreparedDispatchItem,
 	PreparedSubagentDispatch,
+	SubagentBackendKind,
 	SubagentDetails,
 	SubagentDispatchStatus,
 	SubagentExecution,
@@ -46,6 +48,12 @@ export interface SubagentTaskInput {
 	cwd?: string;
 }
 
+/** Explicit Herdr opt-in. Presence of the object selects the Herdr backend. */
+export interface HerdrRequest {
+	/** Defaults to `"failed"`: recycle success, keep failed/aborted panes. */
+	retain?: HerdrRetention;
+}
+
 /** Raw tool arguments. Mirrors the tool's TypeBox schema. */
 export interface SubagentRequest {
 	agent?: string;
@@ -57,7 +65,14 @@ export interface SubagentRequest {
 	confirmProjectAgents?: boolean;
 	/** Omitted means `"async"`; only an explicit `"blocking"` opts into awaiting. */
 	execution?: SubagentExecution;
+	/** Present means run behind the Herdr pane bridge instead of a direct child. */
+	herdr?: HerdrRequest;
 }
+
+/** Result of the injected Herdr preflight: a backend choice or a clear failure. */
+export type HerdrPreflightOutcome =
+	| { ok: true; retention: HerdrRetention }
+	| { ok: false; error: string };
 
 /** Parent context snapshotted into the prepared dispatch. */
 export interface PreparationContext {
@@ -73,6 +88,11 @@ export interface PreparationDependencies {
 	/** Ask the hub for a project-agent decision; anything but `"allow"` is denial. */
 	requestPermission: (what: string, data: Record<string, unknown>) => Promise<string | undefined>;
 	snapshotSafeMode: () => Promise<SafeModeSnapshot | undefined>;
+	/**
+	 * Validate Herdr and prepare the parent tab before a dispatch is accepted.
+	 * Only called when the request carries `herdr`.
+	 */
+	preflightHerdr?: (request: HerdrRequest) => Promise<HerdrPreflightOutcome>;
 	nextDispatchId: () => string;
 	nextRunId: () => string;
 	context: PreparationContext;
@@ -87,6 +107,34 @@ interface ResolvedItem {
 	task: string;
 	cwd?: string;
 	step?: number;
+}
+
+const HERDR_REQUEST_KEYS = new Set(["retain"]);
+
+/**
+ * Validate the public `herdr` object. Returns the resolved retention intent, or
+ * a model-visible error for a non-object, unknown option, or invalid `retain`.
+ */
+export function parseHerdrRequest(
+	value: unknown,
+): { ok: true; request: HerdrRequest; retention: HerdrRetention } | { ok: false; error: string } {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return { ok: false, error: 'Subagent "herdr" must be an object such as {} or { retain: "always" }.' };
+	}
+	const record = value as Record<string, unknown>;
+	const unknown = Object.keys(record).filter((key) => !HERDR_REQUEST_KEYS.has(key));
+	if (unknown.length > 0) {
+		return { ok: false, error: `Unknown herdr option(s): ${unknown.join(", ")}. Supported: retain.` };
+	}
+	const retain = record.retain;
+	if (retain !== undefined && retain !== "failed" && retain !== "always") {
+		return {
+			ok: false,
+			error: `Invalid herdr retention ${JSON.stringify(retain)}. Use "failed" or "always".`,
+		};
+	}
+	const resolved: HerdrRetention = retain ?? "failed";
+	return { ok: true, request: retain !== undefined ? { retain } : {}, retention: resolved };
 }
 
 /**
@@ -148,6 +196,16 @@ export async function prepareSubagentDispatch(
 		);
 	}
 
+	// Validate the explicit Herdr opt-in shape early so a bad request never
+	// reaches permission prompts or preflight. The object's presence alone is
+	// what selects the backend.
+	const herdrIntent = request.herdr === undefined ? undefined : parseHerdrRequest(request.herdr);
+	if (herdrIntent && !herdrIntent.ok) {
+		return fail(herdrIntent.error, mode, "failed", true);
+	}
+	let backend: SubagentBackendKind | undefined;
+	let herdrRetention: HerdrRetention | undefined;
+
 	const resolvedItems: ResolvedItem[] = hasChain
 		? (request.chain ?? []).map((step, index) => ({
 				agent: step.agent,
@@ -191,6 +249,18 @@ export async function prepareSubagentDispatch(
 		}
 	}
 
+	// Herdr preflight runs after permission and before any ID is allocated or
+	// child is started, so an unavailable server/pane fails before acceptance.
+	if (herdrIntent?.ok) {
+		if (!deps.preflightHerdr) {
+			return fail("Herdr was requested, but the Herdr backend is not available in this session.", mode, "failed", true);
+		}
+		const preflight = await deps.preflightHerdr(herdrIntent.request);
+		if (!preflight.ok) return fail(preflight.error, mode, "failed", true);
+		backend = "herdr";
+		herdrRetention = preflight.retention;
+	}
+
 	const items: PreparedDispatchItem[] = resolvedItems.map((item) => ({
 		runId: deps.nextRunId(),
 		agent: item.agent,
@@ -218,6 +288,8 @@ export async function prepareSubagentDispatch(
 			cwd: deps.context.cwd,
 			safeModeSnapshot,
 			items,
+			...(backend ? { backend } : {}),
+			...(herdrRetention ? { herdrRetention } : {}),
 		},
 	};
 }

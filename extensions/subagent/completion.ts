@@ -16,10 +16,12 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getResultOutput, isAbortedResult, isFailedResult, type ResultStatusFields } from "./result-output.ts";
 import type {
+	HerdrRetention,
 	NormalizedSubagentDetails,
 	PreparedDispatchItem,
 	PreparedSubagentDispatch,
 	SingleResult,
+	SubagentBackendKind,
 	SubagentDetails,
 	SubagentDispatchStatus,
 	SubagentExecution,
@@ -38,6 +40,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMode(value: unknown): value is SubagentMode {
 	return value === "single" || value === "parallel" || value === "chain";
+}
+
+/** Only the two known transports survive normalization. */
+export function normalizeBackend(value: unknown): SubagentBackendKind | undefined {
+	return value === "process" || value === "herdr" ? value : undefined;
+}
+
+/** Only the two known retention policies survive normalization. */
+export function normalizeHerdrRetention(value: unknown): HerdrRetention | undefined {
+	return value === "failed" || value === "always" ? value : undefined;
 }
 
 /**
@@ -108,6 +120,8 @@ export function normalizeSubagentDetails(value: unknown): NormalizedSubagentDeta
 		dispatchStatus,
 		plannedItems,
 		cwd: typeof value.cwd === "string" ? value.cwd : undefined,
+		backend: normalizeBackend(value.backend),
+		herdrRetention: normalizeHerdrRetention(value.herdrRetention),
 		results: value.results as SingleResult[],
 	};
 }
@@ -156,6 +170,8 @@ export function coerceTerminalCompletionDetails(
 			options.aborted === true || results.some((result) => isAbortedResult(result as ResultStatusFields));
 		dispatchStatus = aggregateDispatchStatus(results, { error: options.isError === true, aborted });
 	}
+	const backend = normalized?.backend ?? dispatch.backend;
+	const herdrRetention = normalized?.herdrRetention ?? dispatch.herdrRetention;
 	return {
 		mode: dispatch.mode,
 		execution: dispatch.execution,
@@ -165,6 +181,8 @@ export function coerceTerminalCompletionDetails(
 		projectAgentsDir: normalized?.projectAgentsDir ?? dispatch.projectAgentsDir,
 		...(plannedItems.length > 0 ? { plannedItems } : {}),
 		cwd: normalized?.cwd ?? dispatch.cwd,
+		...(backend ? { backend } : {}),
+		...(herdrRetention ? { herdrRetention } : {}),
 		results,
 	};
 }
@@ -224,6 +242,8 @@ export interface AsyncAcknowledgementInput {
 	dispatchId: string;
 	execution?: SubagentExecution;
 	mode: SubagentMode;
+	/** Selected transport; `herdr` is called out in the acknowledgement text. */
+	backend?: SubagentBackendKind;
 	items: readonly AsyncAcknowledgementItem[];
 }
 
@@ -233,8 +253,9 @@ export interface AsyncAcknowledgementInput {
  * children may have touched the shared working tree.
  */
 export function formatAsyncAcknowledgement(input: AsyncAcknowledgementInput): string {
+	const transport = input.backend === "herdr" ? ", herdr" : "";
 	const lines: string[] = [
-		`Subagent dispatch ${input.dispatchId} started in the background (${input.mode}, ${input.execution ?? "async"}).`,
+		`Subagent dispatch ${input.dispatchId} started in the background (${input.mode}, ${input.execution ?? "async"}${transport}).`,
 		"",
 		"Tasks:",
 	];
@@ -264,6 +285,7 @@ export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): Agent
 					dispatchId: dispatch.dispatchId,
 					execution: dispatch.execution,
 					mode: dispatch.mode,
+					...(dispatch.backend ? { backend: dispatch.backend } : {}),
 					items: dispatch.items.map((item) => ({
 						agent: item.agent,
 						runId: item.runId,
@@ -282,6 +304,8 @@ export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): Agent
 			projectAgentsDir: dispatch.projectAgentsDir,
 			plannedItems: dispatch.items,
 			cwd: dispatch.cwd,
+			...(dispatch.backend ? { backend: dispatch.backend } : {}),
+			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 			results: [],
 		},
 	};
