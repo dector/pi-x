@@ -2,35 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import hubExtension from "../hub/index.ts";
 import safeModeExtension from "./index.ts";
-import { HERDR_BLOCKED_EVENT, withHerdrBlocked } from "./herdr-blocked.ts";
-
-type Emitted = { event: string; payload: unknown };
-
-function createEmitter() {
-	const events: Emitted[] = [];
-	const emit = (event: string, payload: unknown): void => {
-		events.push({ event, payload });
-	};
-	return { events, emit };
-}
-
-function activeStates(events: Emitted[]): boolean[] {
-	return events.map(({ payload }) => (payload as { active: boolean }).active);
-}
-
-// Every enter must be matched by exactly one clear that never underflows. A
-// future regression that drops a clear, emits a duplicate clear, or reorders
-// the pair will fail here.
-function expectBalanced(events: Emitted[]): void {
-	const states = activeStates(events);
-	let depth = 0;
-	for (const active of states) {
-		depth += active ? 1 : -1;
-		expect(depth).toBeGreaterThanOrEqual(0);
-	}
-	expect(depth).toBe(0);
-	expect(states.filter((active) => active)).toHaveLength(states.filter((active) => !active).length);
-}
+import { HERDR_BLOCKED_EVENT } from "./herdr-blocked.ts";
 
 // A balanced sequence can still briefly drop to zero between two adjacent
 // waits (the steer-transition regression). This asserts depth stays > 0 from
@@ -45,138 +17,6 @@ function expectNoTransientUnblocked(payloads: Array<{ active: boolean }>): void 
 	}
 	expect(depth).toBe(0);
 }
-
-describe("withHerdrBlocked", () => {
-	test("successful action: emits active then clear and returns the result", async () => {
-		const { events, emit } = createEmitter();
-
-		const result = await withHerdrBlocked(emit, "safe-mode approval: bash", async () => "approved");
-
-		expect(result).toBe("approved");
-		expect(events).toEqual([
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "safe-mode approval: bash" } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: false } },
-		]);
-		expectBalanced(events);
-	});
-
-	test("thrown action: clears blocked and rethrows the original error", async () => {
-		const { events, emit } = createEmitter();
-		const error = new Error("approval UI failed");
-
-		await expect(
-			withHerdrBlocked(emit, "safe-mode approval: perm:agent", async () => {
-				throw error;
-			}),
-		).rejects.toBe(error);
-
-		expect(events).toEqual([
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "safe-mode approval: perm:agent" } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: false } },
-		]);
-		expectBalanced(events);
-	});
-
-	test("pending action: enter is emitted immediately and clear only after it settles", async () => {
-		const { events, emit } = createEmitter();
-		let settle!: (value: string) => void;
-		const pending = new Promise<string>((resolve) => {
-			settle = resolve;
-		});
-
-		const wrapped = withHerdrBlocked(emit, "safe-mode steering", () => pending);
-
-		// The enter event is synchronous, before the user has answered.
-		expect(events).toEqual([
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "safe-mode steering" } },
-		]);
-
-		settle("proceed safely");
-		await expect(wrapped).resolves.toBe("proceed safely");
-
-		expect(events).toEqual([
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "safe-mode steering" } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: false } },
-		]);
-		expectBalanced(events);
-	});
-
-	test("exact contract: locks herdr:blocked and never emits a px: event", async () => {
-		const { events, emit } = createEmitter();
-
-		await withHerdrBlocked(emit, "safe-mode approval: http", async () => undefined);
-
-		expect(HERDR_BLOCKED_EVENT).toBe("herdr:blocked");
-		expect(events.length).toBeGreaterThan(0);
-		for (const { event } of events) {
-			expect(event).toBe("herdr:blocked");
-			expect(event).not.toBe("px:herdr:blocked");
-		}
-		expect(events.some(({ event }) => event.startsWith("px:"))).toBe(false);
-	});
-
-	test("nested wrappers: one clear per enter, innermost first", async () => {
-		const { events, emit } = createEmitter();
-
-		const result = await withHerdrBlocked(emit, "outer", async () => {
-			const inner = await withHerdrBlocked(emit, "inner", async () => "inner-result");
-			return `outer-${inner}`;
-		});
-
-		expect(result).toBe("outer-inner-result");
-		expect(events).toEqual([
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "outer" } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: true, label: "inner" } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: false } },
-			{ event: HERDR_BLOCKED_EVENT, payload: { active: false } },
-		]);
-		expectBalanced(events);
-	});
-
-	test("nested wrappers: a failing inner action still clears both intervals", async () => {
-		const { events, emit } = createEmitter();
-		const error = new Error("inner failed");
-
-		await expect(
-			withHerdrBlocked(emit, "outer", async () => {
-				await withHerdrBlocked(emit, "inner", async () => {
-					throw error;
-				});
-			}),
-		).rejects.toBe(error);
-
-		expect(activeStates(events)).toEqual([true, true, false, false]);
-		expectBalanced(events);
-	});
-
-	test("concurrent wrappers: balanced enter/clear pairs even when one fails", async () => {
-		const { events, emit } = createEmitter();
-		const error = new Error("concurrent failure");
-
-		const results = await Promise.all([
-			withHerdrBlocked(emit, "slow", async () => {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-				return "slow-ok";
-			}),
-			withHerdrBlocked(emit, "failing", async () => {
-				await new Promise((resolve) => setTimeout(resolve, 1));
-				throw error;
-			}).catch((caught: unknown) => {
-				expect(caught).toBe(error);
-				return "caught";
-			}),
-			withHerdrBlocked(emit, "fast", async () => "fast-ok"),
-		]);
-
-		expect(results).toEqual(["slow-ok", "caught", "fast-ok"]);
-		expectBalanced(events);
-
-		const enters = events.filter(({ payload }) => (payload as { active: boolean }).active);
-		const clears = events.filter(({ payload }) => !(payload as { active: boolean }).active);
-		expect(enters).toHaveLength(3);
-		expect(clears).toHaveLength(3);
-	});
-});
 
 // Minimal event-bus harness. The real hub and safe-mode extensions run
 // against a shared in-memory bus. The only Pi runtime we fake is the approval
@@ -364,7 +204,7 @@ describe("hub-routed perm:agent blocked state", () => {
 });
 
 describe("safe-mode steering blocked state", () => {
-	test("stays blocked across the picker -> steering transition", async () => {
+	test("keeps a single hub aggregate block across the picker -> steering transition", async () => {
 		const bus = createBus();
 		const { pi, handlers } = createFakePi(bus);
 		hubExtension(pi as unknown as ExtensionAPI);
@@ -411,10 +251,10 @@ describe("safe-mode steering blocked state", () => {
 		expect(pickerOpened).toBe(true);
 		expect(steeringOpened).toBe(true);
 		expect(result).toMatchObject({ block: true });
+		// The outer approval and nested steering wait aggregate into one Herdr
+		// block: one enter for the pair, one exit after both clear.
 		expect(blocked).toEqual([
 			{ active: true, label: "safe-mode approval: bash" },
-			{ active: true, label: "safe-mode steering" },
-			{ active: false },
 			{ active: false },
 		]);
 		expectNoTransientUnblocked(blocked);

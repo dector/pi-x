@@ -23,7 +23,7 @@ import {
 	parseToolAuthorized,
 	type SafeModeStateChanged,
 } from "./contract.ts";
-import { withHerdrBlocked } from "./herdr-blocked.ts";
+import { withUserWait } from "./user-wait.ts";
 
 interface SafeModeState {
 	mode: SafeMode;
@@ -1369,12 +1369,15 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			const agents = sanitizeApprovalText(typeof data.agents === "string" ? data.agents : "project agents");
 			const source = sanitizeApprovalText(typeof data.source === "string" ? data.source : "(unknown)");
 
-			const decision = await withHerdrBlocked(pi.events.emit, "safe-mode approval: perm:agent", () =>
-				confirmApproval(
-					ctx,
-					"Run project-local agents?",
-					`\nAgents: ${agents}\nSource: ${source}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-				),
+			const decision = await withUserWait(
+				pi.events,
+				{ owner: "safe-mode", label: "safe-mode approval: perm:agent", kind: "approval" },
+				() =>
+					confirmApproval(
+						ctx,
+						"Run project-local agents?",
+						`\nAgents: ${agents}\nSource: ${source}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+					),
 			);
 
 			if (decision === "approve-once" || decision === "approve-all-session" || decision === "approve-project") {
@@ -1449,21 +1452,26 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary);
-		// Nest the steering prompt inside the approval interval so Herdr stays
-		// blocked continuously across the picker -> steering transition. The
-		// nested enter bumps the consumer's depth from 1 to 2 instead of
-		// dropping it to 0 before the steering prompt opens.
-		const approval = await withHerdrBlocked(pi.events.emit, `safe-mode approval: ${event.toolName}`, async () => {
-			const picked = await confirmApproval(ctx, prompt.title, prompt.message, {
-				allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
-			});
-			if (picked !== "steer") return { decision: picked };
+		// Keep the steering prompt nested inside the approval wait so the
+		// aggregate user-wait state never drops to zero across the picker ->
+		// steering transition. Hub emits a single Herdr block for the interval.
+		const approval = await withUserWait(
+			pi.events,
+			{ owner: "safe-mode", label: `safe-mode approval: ${event.toolName}`, kind: "approval" },
+			async () => {
+				const picked = await confirmApproval(ctx, prompt.title, prompt.message, {
+					allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
+				});
+				if (picked !== "steer") return { decision: picked };
 
-			const steerText = await withHerdrBlocked(pi.events.emit, "safe-mode steering", () =>
-				ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
-			);
-			return { decision: picked, steerText };
-		});
+				const steerText = await withUserWait(
+					pi.events,
+					{ owner: "safe-mode", label: "safe-mode steering", kind: "input" },
+					() => ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
+				);
+				return { decision: picked, steerText };
+			},
+		);
 		if (approval.decision === "approve-all-session") {
 			if (exactBashCommand) {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);
