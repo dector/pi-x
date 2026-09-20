@@ -179,8 +179,9 @@ editor padding (`paddingX: 1`), and renders:
   tacks with a centered dot (`-< SMART · NET? >-·-< 15.9% >-`). Safe mode and the
   network token share one label joined by exactly ` · `, which is preserved under
   crowding. `SMART` uses the frame border color; other modes keep the producer's
-  own color. The network token keeps its policy color (`muted` for `NET`/`NET?`,
-  `text` for `NET+`) and follows effective state only (PARANOID -> `NET?`).
+  own color. The network token keeps its policy color (`muted` for deny-all and
+  ask-all; `text` for allow-trusted, ask-untrusted, and allow-all) and follows
+  effective state only (PARANOID -> gray `NET?`).
 
 Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
 Two labels on the same edge are joined by the two tacks with a centered dot (`-< A >-·-< B >-`).

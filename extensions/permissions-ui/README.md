@@ -5,8 +5,8 @@ surface for `permissions-core`; all reads and writes go through that extension's
 validated event contract. This extension owns no policy logic and no persisted
 state.
 
-Stage 4 status: the selector is implemented. Status-bar rendering arrives in
-Stage 5.
+Status: the selector is implemented and is the only policy control in V1;
+`status-bar` renders the resulting effective token.
 
 ## Usage
 

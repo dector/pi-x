@@ -272,6 +272,17 @@ describe("http tools consume perm:net (Stage 3)", () => {
 		expect(await askPermTool(bus, "http", { url: "https://example.com" })).toMatchObject({ action: "allow" });
 	});
 
+	test("trusted methods confirm under reader (Auto = ask-all)", async () => {
+		const { bus } = await createHarness({ safeMode: "reader" });
+		expect(await askPermTool(bus, "http", { url: "https://example.com" }, "reader")).toMatchObject({
+			action: "confirm",
+		});
+		expect(await askPermTool(bus, "http_md", { url: "https://example.com" }, "reader")).toMatchObject({
+			action: "confirm",
+		});
+		expect(await askPermTool(bus, "web_search", { query: "pi" }, "reader")).toMatchObject({ action: "confirm" });
+	});
+
 	test("untrusted valid methods confirm under smart", async () => {
 		const { bus } = await createHarness({ safeMode: "smart" });
 		for (const method of ["POST", "PUT", "PATCH", "DELETE", "PURGE"]) {

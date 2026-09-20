@@ -201,6 +201,14 @@ echoes credentials or terminal escapes.
 See [`../hub/PROTOCOL.md`](../hub/PROTOCOL.md) and
 [`../permissions-core/README.md`](../permissions-core/README.md).
 
+## Network scope
+
+Only `http`, `http_md`, and `web_search` request `perm:net`. Network traffic
+from other extensions or tools (shell commands, Git remotes, package managers,
+MCP/custom tools, direct extension fetch) is **not** covered in V1. See
+[`../permissions-core/README.md`](../permissions-core/README.md) for the model,
+matrix, and known gaps.
+
 ## Install
 
 Copy this folder into a standard pi extension location:

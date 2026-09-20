@@ -102,9 +102,9 @@ labels are rendered in the frame corners:
     and network parts are omitted when their producer/core is absent.
   - **network** — effective policy from `permissions-core`, shown only after safe
     mode and joined with exactly ` · ` (the dot uses the frame border color).
-    Labels: `NET` (muted/gray, nothing auto-approved), `NET?` (muted/gray, trusted
-    or all traffic needs approval), `NET+` (normal/white, all valid traffic
-    auto-approved). It reflects effective state only, so PARANOID always renders
+    Labels/colors are policy-specific: deny-all is gray `NET`, ask-all is gray
+    `NET?`, allow-trusted is white `NET`, ask-untrusted is white `NET?`, and
+    allow-all is white `NET+`. It reflects effective state only, so PARANOID always renders
     gray `NET?`. In `legacy` mode the token moves to the status line instead (see
     [Display mode](#display-mode)); exactly one surface renders it.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
@@ -175,7 +175,7 @@ labels are rendered in the frame corners:
   - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`
     with the effective network token inserted directly after `safe-mode`,
     `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`.
-  - The network token is colored by policy (`muted` for `NET`/`NET?`, `text` for `NET+`) and is never also rendered on the border.
+  - The network token is colored by policy: `muted` for deny-all/ask-all and `text` for allow-trusted/ask-untrusted/allow-all. It is never also rendered on the border.
   - Safe mode and the network token share one item, so the spaced ` · ` between
     them is kept even when a crowded line switches its other items to the compact
     `·` separator. Late `changed` events after `session_shutdown` are ignored, so a

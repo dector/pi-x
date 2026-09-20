@@ -7,10 +7,10 @@ and the local event bus.
 
 Status: provides `perm:net` through the hub, persists the configured policy per
 session, observes safe-mode, and exposes a validated state contract. The
-`http`, `http_md`, and `web_search` tools consume this provider, and the
+`http`, `http_md`, and `web_search` tools consume this provider, the
 `/px:net` selector in [`../permissions-ui/`](../permissions-ui/README.md) reads
-and changes the state through the same contract. Status-bar rendering arrives
-in Stage 5.
+and changes the state through the same contract, and `status-bar` renders the
+effective token.
 
 ## Model
 
@@ -72,22 +72,24 @@ Response (`CapResult`): `{ what: "perm:net", action: "allow" | "confirm" | "bloc
 
 Guarantees:
 
-- malformed envelopes and malformed/invalid request data always reply `block`;
-- the provider always answers a `perm:net` cap it is targeted for (no unhandled
-  request);
+- malformed/invalid request data always replies `block`;
+- malformed hub envelopes are dropped and callers fail closed through bounded
+  timeouts;
+- the provider always answers a valid `perm:net` cap it is targeted for (no
+  unhandled request);
 - the provider never emits its own `hub:ask`, so handling a request cannot
   recurse through the hub or deadlock;
 - when permissions-core is absent the hub answers `block` (`no hub provider`).
 
 `safe-mode` no longer advertises `perm:net`; only permissions-core answers it.
 
-Stage 3 routes `http`, `http_md`, and `web_search` through this provider. An
+The `http`, `http_md`, and `web_search` tools route through this provider. An
 effective `confirm` becomes a `block` when no UI is available, and the HTTP
 extension additionally requires a one-time execution authorization from
 safe-mode (see [`../http/README.md`](../http/README.md)). Without safe-mode's
 final allow/user-approval handoff, no network request executes. The `/px:net`
-selector (Stage 4) is available in [`../permissions-ui/`](../permissions-ui/README.md);
-status-bar rendering arrives in Stage 5.
+selector is available in [`../permissions-ui/`](../permissions-ui/README.md), and
+`status-bar` renders the effective token.
 
 ## State contract and persistence
 
@@ -153,6 +155,33 @@ policies must be effective verbatim unless PARANOID is active, Auto's
 `effective` must equal its `autoEffective`, `autoEffective` must be derivable
 from a canonical safe mode, and PARANOID (or a fail-closed unknown mode) must be
 `ask-all` for both `effective` and `autoEffective`.
+
+## V1 scope and known gaps
+
+V1 enforces network policy only for `http`, `http_md`, and `web_search`, and
+only when they go through the hub. Traffic that never requests `perm:net` is
+unaffected.
+
+Not covered in V1:
+
+- shell commands (`curl`, `wget`, `ssh`, netcat);
+- Git remote operations (fetch, pull, push);
+- package managers and other subprocesses;
+- subprocess/agent tools and project-local subagents;
+- MCP and custom tools;
+- direct network access from extension code;
+- DNS-specific controls;
+- localhost/private-network distinctions;
+- per-host, per-domain, per-port, and per-method rules;
+- checking every redirect target (the initial request decision is reused);
+- custom rule files and scriptable classification;
+- process/OS-level sandboxing.
+
+Future rules stay two-layer: a rule returns only `trusted` or `untrusted`, and
+policy disposition maps that to `allow`/`confirm`/`block`.
+
+A manual TUI smoke test for the end-to-end flow is in
+[`docs/manual-smoke-test.md`](docs/manual-smoke-test.md).
 
 ## Tests
 

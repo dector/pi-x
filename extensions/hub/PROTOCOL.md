@@ -58,13 +58,39 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 `permissions-core` validates and normalizes this data, classifies trust, and
 disposes it under the effective network policy. Malformed data blocks; invalid
 input is never turned into an approval prompt. Provider ownership of `perm:net`
-moved from `safe-mode` to `permissions-core` in Stage 2.
+belongs to `permissions-core` (it moved off `safe-mode`).
 
-Stage 3 routes `http`, `http_md`, and `web_search` through `perm:net`. The HTTP
-extension asks `perm:net` from inside its `perm:tool` provider and returns the
-merged (most restrictive) result to safe-mode, which owns the approval dialog
-and turns `confirm` into a block when no UI is available. Provider absence,
-timeouts, and malformed answers fail closed.
+The `http`, `http_md`, and `web_search` tools request `perm:net` from inside
+their `perm:tool` provider and return the merged (most restrictive) result to
+safe-mode, which owns the approval dialog and turns `confirm` into a block when
+no UI is available. Provider absence, timeouts, and malformed answers fail
+closed.
+
+#### `perm:net` policy
+
+A valid request is classified as `trusted` (`GET`/`HEAD`/`OPTIONS`,
+`web_search`) or `untrusted` (other valid methods), then disposed:
+
+| Policy | trusted | untrusted |
+| --- | --- | --- |
+| `deny-all` | block | block |
+| `ask-all` | confirm | confirm |
+| `allow-trusted` | allow | block |
+| `ask-untrusted` | allow | confirm |
+| `allow-all` | allow | allow |
+
+New sessions start at `auto`, derived from the observed safe mode:
+`paranoid`/`reader` → `ask-all`, `smart` → `ask-untrusted`, `yolo`/`yolo+` →
+`allow-trusted`. PARANOID forces `ask-all` while retaining the configured
+choice; leaving PARANOID restores it. Explicit choices persist per session and
+are selected with `/px:net` (owned by `permissions-ui`). Provider absence,
+timeouts, malformed requests, and non-interactive confirmations fail closed;
+invalid input is never turned into an approval prompt.
+
+V1 enforcement scope is only `http`, `http_md`, and `web_search`. Shell, Git
+remote, package-manager, subprocess/agent, MCP/custom-tool, and direct
+extension network paths are not covered. See
+[`../permissions-core/README.md`](../permissions-core/README.md).
 
 Because the nested classification flow only runs when safe-mode and the hub are
 both present, enforcement happens again at execution time through a one-time
@@ -159,5 +185,6 @@ bounded and reset per session.
 
 ## Open
 
-- Is `confirm` handled by the provider (UI there) or returned to the requester?
 - Provider replies are not attributed beyond `from`; no trust check.
+- `perm:net` is only asked by the built-in HTTP tools; other network paths are
+  out of scope for V1 (see [`../permissions-core/README.md`](../permissions-core/README.md)).

@@ -193,6 +193,28 @@ describe("permissions-core index wiring", () => {
 		});
 	});
 
+	test("outer access (YOLO+) derives the same policy as its safe mode", async () => {
+		const { bus } = createBus();
+		const pi = createFakePi(bus);
+		hubExtension(pi as unknown as ExtensionAPI);
+		permissionsCoreExtension(pi as unknown as ExtensionAPI);
+		// Safe mode reports `yolo` with outer access on: the `YOLO+` label. Outer
+		// access is a filesystem/scope modifier and must not change network policy.
+		bus.on("px:safe-mode:state:request", (payload) => {
+			if (typeof payload !== "object" || payload === null) return;
+			const id = (payload as { id?: unknown }).id;
+			if (typeof id !== "string") return;
+			bus.emit("px:safe-mode:state:response", { id, state: { mode: "yolo", outerAccess: true } });
+		});
+
+		await fireLifecycle(pi, "session_start");
+		expect(await requestState(bus, "yolo-plus")).toMatchObject({
+			state: { configured: "auto", effective: "allow-trusted", autoEffective: "allow-trusted", overriddenByParanoid: false },
+		});
+		// Trusted traffic still allows, exactly as for plain `yolo`.
+		expect((await askPermNet(bus, "yolo-plus-get"))[0]).toMatchObject({ what: "perm:net", action: "allow" });
+	});
+
 	test("safe-mode absence fails closed after the bounded query timeout", async () => {
 		// No safe-mode stub: `session_start` awaits the real bounded query and
 		// must resolve (not hang). `safe-mode.test.ts` covers the timeout itself

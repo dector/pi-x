@@ -1,6 +1,6 @@
 // Validated event contract for permissions-core network state.
 //
-// Consumers (permissions-ui in Stage 4, status-bar in Stage 5) read and change
+// Consumers (permissions-ui and status-bar) read and change
 // state exclusively through these channels. Malformed payloads are dropped by
 // the parser helpers, never applied.
 

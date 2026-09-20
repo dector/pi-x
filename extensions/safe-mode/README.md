@@ -84,12 +84,20 @@ So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to oute
 - `stop`, `kill`, `write`, `forget` require approval in `reader`/`smart` (mutating process state).
 - `paranoid` asks for every `proc` call; `yolo` allows in-scope calls.
 
-## HTTP and memoryfs auto-allow
+## HTTP, network, and memoryfs
 
-- Memoryfs reads through `http`, `http_md`, and `web_search` (`memfs: { id, offset?, limit? }`) are auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
-- `web_search` queries are auto-allowed in `reader`, `smart`, and `yolo`; `paranoid` still asks.
-- `http` and `http_md` are auto-allowed in `reader`/`smart` only for `GET`, `HEAD`, and `OPTIONS` requests.
-- Other HTTP methods require approval in `reader`/`smart`; `yolo` keeps its normal allow behavior.
+Network disposition (method trust and policy) is owned by
+[`permissions-core`](../permissions-core/README.md) and reached through the hub
+`perm:net` capability. Safe-mode only owns the non-network (filesystem) parts of
+these tools via `perm:tool`.
+
+- Memoryfs reads through `http`, `http_md`, and `web_search` (`memfs: { id, offset?, limit? }`) never touch the network; they are auto-allowed in `reader`/`smart`/`yolo` and still ask in `paranoid`.
+- Plain `web_search` and `http`/`http_md` requests follow the effective network policy. Under Auto that means:
+  - `reader` and `paranoid`: ask for every valid request;
+  - `smart`: allow `GET`/`HEAD`/`OPTIONS`; ask for other methods;
+  - `yolo`: allow `GET`/`HEAD`/`OPTIONS`; block other methods.
+- Under `yolo`, other (untrusted) methods are blocked, not allowed.
+- Invalid URLs or methods block instead of prompting; malformed requests never become approvals.
 - `http_md` with `spillMode: "to_file"` requires approval.
 - `http` file output (`outputFile`, `curlArgs` `-o`, or `curlArgs` `--output`) requires approval in `reader`/`smart`.
 - In `yolo`, `http` file output is allowed only inside the project root; outside-project output still requires approval, including in `YOLO!`.
@@ -127,12 +135,11 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 | `edit`/`write` **outside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ |
 | read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | read-only `bash` targeting **outside repo** | ❓ | ❓* | ✅ | ❓* | ✅ | ❓ | ✅ |
-| `http`/`http_md` `GET`/`HEAD`/`OPTIONS` without file output | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `web_search` query | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `http`/`http_md`/`web_search` memoryfs read | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `http_md` `spillMode: "to_file"` | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ |
 
 Notes:
+- Network requests (`http`, `http_md`, `web_search`) are classified and disposed by [`permissions-core`](../permissions-core/README.md), not by safe-mode. Under Auto they follow the effective policy for the current mode; see its policy matrix.
 - `SMART!` does **not** allow outside `edit`/`write`; it only extends read-style approvals outside repo.
 - For `reader`/`smart`, non-read-only operations still ask for approval.
 - `*` For `reader`/`smart` with `outerAccess=false`, trusted read roots are a narrow read-only exception.

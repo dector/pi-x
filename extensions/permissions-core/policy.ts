@@ -3,7 +3,7 @@
 // This module is headless: it owns validation, normalization, trust
 // classification, policy disposition, Auto derivation from safe mode, and
 // serializable state types. It performs no I/O, registers no hub provider,
-// and renders no UI. Stage 2 wires it into the hub.
+// and renders no UI; index.ts wires the engine into the hub.
 
 export const NETWORK_POLICIES = [
 	"deny-all",

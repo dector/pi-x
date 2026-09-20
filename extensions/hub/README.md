@@ -13,8 +13,11 @@ between them (permissions being the first target).
 ## Status
 
 Provides the register/ask/reply/answer channels, a capability registry, and
-most-restrictive arbitration. `safe-mode` is the first provider (permissions);
-`subagent` is the first requester (`perm:agent`).
+most-restrictive arbitration. Providers: `safe-mode` (`perm:shell`, `perm:io`,
+`perm:agent`), `permissions-core` (`perm:net`), and the `http` and `sqlite`
+extensions (`perm:tool`). Safe-mode applies built-in fallback decisions when no
+`perm:tool` provider answers. Requesters include `subagent`
+(`perm:agent`) and the network tools (`perm:net`).
 
 ## Commands
 
