@@ -15,7 +15,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
@@ -45,10 +45,14 @@ import {
 	setLatestToolApprovalState,
 	type RpcStreamState,
 } from "./events.ts";
-import { interpolatePrevious, mapWithConcurrencyLimit } from "./execution.ts";
+import {
+	type DispatchRunner,
+	type OnUpdateCallback,
+	runDispatch,
+} from "./dispatch.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { sendControl, SubagentRegistry } from "./registry.ts";
-import { getFinalOutput, getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
+import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import {
@@ -60,10 +64,7 @@ import {
 import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
 import type { SingleResult, SubagentDetails, ToolRunStatus } from "./types.ts";
 
-const MAX_PARALLEL_TASKS = 8;
-const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
-const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
 // hub permission protocol (see extensions/hub/PROTOCOL.md)
 const HUB_ID = "subagent";
@@ -195,17 +196,6 @@ function formatToolCall(
 }
 
 
-function truncateParallelOutput(output: string): string {
-	const byteLength = Buffer.byteLength(output, "utf8");
-	if (byteLength <= PER_TASK_OUTPUT_CAP) return output;
-
-	let truncated = output.slice(0, PER_TASK_OUTPUT_CAP);
-	while (Buffer.byteLength(truncated, "utf8") > PER_TASK_OUTPUT_CAP) {
-		truncated = truncated.slice(0, -1);
-	}
-	return `${truncated}\n\n[Output truncated: ${byteLength - Buffer.byteLength(truncated, "utf8")} bytes omitted. Full output preserved in tool details.]`;
-}
-
 type DisplayItem =
 	| { type: "text"; text: string }
 	| { type: "toolCall"; name: string; args: Record<string, any>; status?: ToolRunStatus; summary?: string };
@@ -251,8 +241,6 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 	return { command: "pi", args };
 }
-
-type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 interface DispatchDefaults {
 	model?: string;
@@ -868,6 +856,7 @@ export default function (pi: ExtensionAPI) {
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
 			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+			const availableAgents = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 
 			const makeDetails =
 				(mode: "single" | "parallel" | "chain") =>
@@ -879,12 +868,11 @@ export default function (pi: ExtensionAPI) {
 				});
 
 			if (modeCount !== 1) {
-				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
+							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${availableAgents}`,
 						},
 					],
 					details: makeDetails("single")([]),
@@ -921,195 +909,31 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			if (params.chain && params.chain.length > 0) {
-				const results: SingleResult[] = [];
-				let previousOutput = "";
-
-				for (let i = 0; i < params.chain.length; i++) {
-					const step = params.chain[i];
-					const taskWithContext = interpolatePrevious(step.task, previousOutput);
-
-					// Create update callback that includes all previous results
-					const chainUpdate: OnUpdateCallback | undefined = onUpdate
-						? (partial) => {
-								// Combine completed results with current streaming result
-								const currentResult = partial.details?.results[0];
-								if (currentResult) {
-									const allResults = [...results, currentResult];
-									onUpdate({
-										content: partial.content,
-										details: makeDetails("chain")(allResults),
-									});
-								}
-							}
-						: undefined;
-
-					const result = await runSingleAgent(
+			const dispatchRunner: DispatchRunner = {
+				availableAgents,
+				makeDetails,
+				runSingle: ({ agent, task, cwd, step, signal: runSignal, onUpdate: runUpdate, makeDetails: runMakeDetails }) =>
+					runSingleAgent(
 						ctx.cwd,
 						dispatchDefaults,
 						agents,
-						step.agent,
-						taskWithContext,
-						step.cwd,
-						i + 1,
-						signal,
-						chainUpdate,
-						makeDetails("chain"),
+						agent,
+						task,
+						cwd,
+						step,
+						runSignal,
+						runUpdate,
+						runMakeDetails,
 						getSafeModeSnapshot,
 						newRunId(),
 						activeChildren,
 						approvalQueue,
 						ctx,
 						registry,
-					);
-					results.push(result);
-
-					const isError = isFailedResult(result);
-					if (isError) {
-						const errorMsg = getResultOutput(result);
-						return {
-							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
-							details: makeDetails("chain")(results),
-							isError: true,
-						};
-					}
-					previousOutput = getFinalOutput(result.messages);
-				}
-				return {
-					content: [{ type: "text", text: getFinalOutput(results[results.length - 1].messages) || "(no output)" }],
-					details: makeDetails("chain")(results),
-				};
-			}
-
-			if (params.tasks && params.tasks.length > 0) {
-				if (params.tasks.length > MAX_PARALLEL_TASKS)
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
-							},
-						],
-						details: makeDetails("parallel")([]),
-					};
-
-				// Track all results for streaming updates
-				const allResults: SingleResult[] = new Array(params.tasks.length);
-
-				// Initialize placeholder results
-				for (let i = 0; i < params.tasks.length; i++) {
-					allResults[i] = {
-						agent: params.tasks[i].agent,
-						agentSource: "unknown",
-						task: params.tasks[i].task,
-						exitCode: -1, // -1 = still running
-						messages: [],
-						stderr: "",
-						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-					};
-				}
-
-				const emitParallelUpdate = () => {
-					if (onUpdate) {
-						const running = allResults.filter((r) => r.exitCode === -1).length;
-						const done = allResults.filter((r) => r.exitCode !== -1).length;
-						onUpdate({
-							content: [
-								{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
-							],
-							details: makeDetails("parallel")([...allResults]),
-						});
-					}
-				};
-
-				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingleAgent(
-						ctx.cwd,
-						dispatchDefaults,
-						agents,
-						t.agent,
-						t.task,
-						t.cwd,
-						undefined,
-						signal,
-						// Per-task update callback
-						(partial) => {
-							if (partial.details?.results[0]) {
-								allResults[index] = partial.details.results[0];
-								emitParallelUpdate();
-							}
-						},
-						makeDetails("parallel"),
-						getSafeModeSnapshot,
-						newRunId(),
-						activeChildren,
-						approvalQueue,
-						ctx,
-						registry,
-					);
-					allResults[index] = result;
-					emitParallelUpdate();
-					return result;
-				});
-
-				const successCount = results.filter((r) => !isFailedResult(r)).length;
-				const summaries = results.map((r) => {
-					const output = truncateParallelOutput(getResultOutput(r));
-					const status = isFailedResult(r)
-						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
-						: "completed";
-					return `### [${r.agent}] ${status}\n\n${output}`;
-				});
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
-						},
-					],
-					details: makeDetails("parallel")(results),
-				};
-			}
-
-			if (params.agent && params.task) {
-				const result = await runSingleAgent(
-					ctx.cwd,
-					dispatchDefaults,
-					agents,
-					params.agent,
-					params.task,
-					params.cwd,
-					undefined,
-					signal,
-					onUpdate,
-					makeDetails("single"),
-					getSafeModeSnapshot,
-					newRunId(),
-					activeChildren,
-					approvalQueue,
-					ctx,
-					registry,
-				);
-				const isError = isFailedResult(result);
-				if (isError) {
-					const errorMsg = getResultOutput(result);
-					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-						details: makeDetails("single")([result]),
-						isError: true,
-					};
-				}
-				return {
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-					details: makeDetails("single")([result]),
-				};
-			}
-
-			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
-			return {
-				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
-				details: makeDetails("single")([]),
+					),
 			};
+
+			return runDispatch(params, dispatchRunner, signal, onUpdate);
 		},
 
 		renderCall(args, theme, _context) {

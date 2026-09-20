@@ -1,0 +1,71 @@
+{
+	"description": "Frozen Stage 0 fixtures for the current blocking subagent contract. These records predate execution/dispatch metadata and must keep parsing after later stages add optional fields.",
+	"subagentDetails": {
+		"mode": "parallel",
+		"agentScope": "user",
+		"projectAgentsDir": null,
+		"results": [
+			{
+				"agent": "scout",
+				"agentSource": "user",
+				"task": "find auth code",
+				"exitCode": 0,
+				"messages": [{ "role": "assistant", "content": [{ "type": "text", "text": "scout output" }] }],
+				"stderr": "",
+				"usage": { "input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0, "cost": 0, "contextTokens": 15, "turns": 1 },
+				"runId": "sa-legacy-1"
+			},
+			{
+				"agent": "worker",
+				"agentSource": "project",
+				"task": "apply fix",
+				"exitCode": 1,
+				"messages": [],
+				"stderr": "boom on stderr",
+				"usage": { "input": 1, "output": 0, "cacheRead": 0, "cacheWrite": 0, "cost": 0, "contextTokens": 1, "turns": 1 },
+				"runId": "sa-legacy-2",
+				"step": 2
+			}
+		]
+	},
+	"agentLogBranch": [
+		{
+			"type": "message",
+			"timestamp": "2024-01-01T00:00:00.000Z",
+			"message": {
+				"role": "toolResult",
+				"toolName": "subagent",
+				"toolCallId": "call-legacy",
+				"timestamp": 1704067200000,
+				"details": {
+					"mode": "parallel",
+					"agentScope": "user",
+					"projectAgentsDir": null,
+					"results": [
+						{
+							"agent": "scout",
+							"agentSource": "user",
+							"task": "find auth code",
+							"exitCode": 0,
+							"messages": [{ "role": "assistant", "content": [{ "type": "text", "text": "scout output" }] }],
+							"stderr": "",
+							"usage": { "input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0, "cost": 0, "contextTokens": 15, "turns": 1 },
+							"runId": "sa-legacy-1"
+						},
+						{
+							"agent": "worker",
+							"agentSource": "project",
+							"task": "apply fix",
+							"exitCode": 1,
+							"messages": [],
+							"stderr": "boom on stderr",
+							"usage": { "input": 1, "output": 0, "cacheRead": 0, "cacheWrite": 0, "cost": 0, "contextTokens": 1, "turns": 1 },
+							"runId": "sa-legacy-2",
+							"step": 2
+						}
+					]
+				}
+			}
+		}
+	]
+}
