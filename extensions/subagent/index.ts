@@ -71,6 +71,18 @@ import {
 	SubagentAbortError,
 } from "./dispatch.ts";
 import { AsyncDispatchManager } from "./lifecycle.ts";
+import {
+	ManagerHerdrActions,
+	buildManagerPicker,
+	clearHerdrLocation,
+	descriptorFromEntry,
+	descriptorFromRun,
+	hasHerdrPane,
+	managerActions,
+	managerDetails,
+	mergeManagerDescriptors,
+	type ManagerRunDescriptor,
+} from "./manager.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { HerdrSubagentBackend, ProcessSubagentBackend, type SubagentBackend } from "./backend.ts";
@@ -886,65 +898,138 @@ export default function (pi: ExtensionAPI) {
 		);
 	}
 
+	interface ManagerItem {
+		descriptor: ManagerRunDescriptor;
+		run?: SubagentRunRuntime;
+		entry?: AgentLogEntry;
+	}
+
+	/** Persisted Herdr locations the user closed or found stale this session. */
+	const dismissedPersistedHerdrRuns = new Set<string>();
+
+	/**
+	 * Registry runs plus persisted Herdr-retained runs the registry has already
+	 * pruned. Ordinary process runs are never added from history, so the default
+	 * manager list stays unchanged.
+	 */
+	function managerItems(ctx: ExtensionContext): ManagerItem[] {
+		const runs = registry.list();
+		const persisted = persistedAgentLogEntries(ctx.sessionManager.getBranch());
+		const descriptors = mergeManagerDescriptors(runs, persisted, dismissedPersistedHerdrRuns);
+		const byRunId = new Map(runs.map((run) => [run.runId, run]));
+		const entries = new Map<string, AgentLogEntry>();
+		for (const entry of persisted) {
+			if (entry.runId && !entries.has(entry.runId)) entries.set(entry.runId, entry);
+		}
+		return descriptors.map((descriptor) => {
+			const run = byRunId.get(descriptor.runId);
+			const entry = entries.get(descriptor.runId);
+			return {
+				descriptor,
+				...(run ? { run } : {}),
+				...(entry ? { entry } : {}),
+			};
+		});
+	}
+
+	/** Resolve the Herdr tab (running preflight on demand) for manager actions. */
+	async function managerHerdrActions(ctx: ExtensionContext): Promise<ManagerHerdrActions | undefined> {
+		if (!herdrSession) {
+			const result = await runHerdrPreflight();
+			if (!result.ok) {
+				ctx.ui.notify(result.error, "error");
+				return undefined;
+			}
+		}
+		const tab = herdrSession?.tab;
+		if (!tab) return undefined;
+		return new ManagerHerdrActions({
+			focusLocation: (location) => tab.focusLocation(location),
+			closeRetainedLocation: (location) => tab.closeRetainedLocation(location),
+			paneStatus: (location) => tab.paneStatus(location),
+		});
+	}
+
+	/** Drop a stale/closed pane record; the subagent result and log stay intact. */
+	function dismissHerdrLocation(item: ManagerItem): void {
+		if (item.run) clearHerdrLocation(item.run);
+		else if (item.descriptor.runId) dismissedPersistedHerdrRuns.add(item.descriptor.runId);
+		item.descriptor.herdr = undefined;
+		item.descriptor.paneStatus = "missing";
+	}
+
 	if (!childControl) {
 		pi.registerCommand("px:agents", {
 			description: "Manage active and recent subagent runs",
 			handler: async (_args, ctx) => {
 				if (!ctx.hasUI) return;
 				while (true) {
-					const runs = registry.list();
-					if (runs.length === 0) {
+					const items = managerItems(ctx);
+					if (items.length === 0) {
 						ctx.ui.notify("No subagent runs yet.", "info");
 						return;
 					}
-					const labels = runs.map((run) => {
-						const elapsed = Math.max(0, Math.floor(((run.completedAt ?? Date.now()) - run.startedAt) / 1000));
-						const mode = run.result.effectiveMode?.toUpperCase() ?? "UNKNOWN";
-						const state = run.completedAt ? (isFailedResult(run.result) ? "FAILED" : "COMPLETED") : (run.result.state ?? "running").toUpperCase();
-						return `${run.agentName} [${run.runId}]  ${state}  ${mode}  ${Math.floor(elapsed / 60).toString().padStart(2, "0")}:${(elapsed % 60).toString().padStart(2, "0")}`;
-					});
-					labels.push("Close");
-					const selected = await ctx.ui.select("Subagent manager", labels);
+					const { labels, byLabel } = buildManagerPicker(items.map((item) => item.descriptor));
+					const selected = await ctx.ui.select("Subagent manager", [...labels, "Close"]);
 					if (!selected || selected === "Close") return;
-					const run = runs[labels.indexOf(selected)];
-					if (!run) continue;
-					const actions = run.completedAt
-						? ["View transcript", "Details", "Back"]
-						: [
-							"Attach",
-							"Details",
-							"Configure permissions",
-							...(run.result.state === "paused" || run.result.state === "pause-requested" || run.result.state === "resuming" ? ["Resume"] : ["Pause"]),
-							"Abort",
-							"Back",
-						];
-					const action = await ctx.ui.select(`${run.agentName} [${run.runId}]`, actions);
+					const index = byLabel.get(selected);
+					if (index === undefined) continue;
+					const item = items[index];
+					const descriptor = item.descriptor;
+					const run = item.run;
+					const action = await ctx.ui.select(
+						`${descriptor.agentName} [${descriptor.runId}]`,
+						managerActions(descriptor),
+					);
 					if (!action || action === "Back") continue;
+
 					if (action === "Attach" || action === "View transcript") {
-						await openAttach(run, ctx);
+						if (run) await openAttach(run, ctx);
+						else if (item.entry) await openRecoveredAttach(item.entry, ctx);
 						continue;
 					}
+
 					if (action === "Details") {
-						const details = [
-							`Agent: ${run.agentName} [${run.runId}]`,
-							`State: ${run.result.state ?? "unknown"}`,
-							`Execution: ${run.execution ?? "blocking"}`,
-							...(run.backend ? [`Backend: ${run.backend}`] : []),
-							...(run.herdr ? [`Herdr tab: ${run.herdr.tabId}`, `Herdr pane: ${run.herdr.paneId}`] : []),
-							...(run.herdrRetention ? [`Retention: ${run.herdrRetention}`] : []),
-							...(run.herdr ? [`Pane status: ${run.herdr.retained ? "retained" : "active"}`] : []),
-							...(run.dispatchId ? [`Dispatch: ${run.dispatchId}`] : []),
-							`PID: ${run.child?.pid ?? "n/a"}`,
-							`CWD: ${run.cwd}`,
-							`Inherited: ${run.result.inheritedMode ?? "unknown"}`,
-							`Effective: ${run.result.effectiveMode ?? "unknown"}${run.result.outerAccess ? "+" : ""}`,
-							`Task: ${run.task}`,
-							...(run.result.pendingApproval ? [`Pending approval: ${run.result.pendingApproval.method} — ${run.result.pendingApproval.title ?? "untitled"}`] : []),
-							...(run.result.diagnostics ?? []).map((item) => `Diagnostic: ${item}`),
-						].join("\n");
-						await ctx.ui.editor(`Subagent details: ${run.runId}`, details);
+						// Live-validate a Herdr location so a manually closed pane shows as
+						// missing instead of a stale active/retained status.
+						if (descriptor.herdr && hasHerdrPane(descriptor)) {
+							const herdr = await managerHerdrActions(ctx);
+							if (herdr) descriptor.paneStatus = await herdr.status(descriptor.herdr);
+						}
+						await ctx.ui.editor(`Subagent details: ${descriptor.runId}`, managerDetails(descriptor));
 						continue;
 					}
+
+					if (action === "Jump to Herdr pane") {
+						if (!descriptor.herdr) continue;
+						const herdr = await managerHerdrActions(ctx);
+						if (!herdr) continue;
+						const result = await herdr.jump(descriptor.herdr);
+						ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
+						if (result.stale) dismissHerdrLocation(item);
+						// Return from the manager after a successful focus so the user lands
+						// in the exact pane; stale/error results keep the menu open.
+						if (result.ok) return;
+						continue;
+					}
+
+					if (action === "Close retained pane") {
+						if (!descriptor.herdr) continue;
+						const confirmed = await ctx.ui.confirm(
+							"Close retained pane",
+							`Close Herdr pane ${descriptor.herdr.paneId} for ${descriptor.runId}? The subagent result and log are preserved.`,
+						);
+						if (!confirmed) continue;
+						const herdr = await managerHerdrActions(ctx);
+						if (!herdr) continue;
+						const result = await herdr.closeRetained(descriptor.herdr);
+						ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
+						if (result.stale) dismissHerdrLocation(item);
+						continue;
+					}
+
+					// The remaining actions are live-run controls only.
+					if (!run) continue;
 					try {
 						if (action === "Pause") {
 							run.result.state = "pause-requested";
@@ -1047,6 +1132,7 @@ export default function (pi: ExtensionAPI) {
 		// A replacement session must not adopt the previous session's Herdr tab.
 		herdrSession = undefined;
 		herdrBackend = undefined;
+		dismissedPersistedHerdrRuns.clear();
 		asyncDispatches.reset();
 		// Forget the previous widget content so the first refresh always
 		// republishes (and clears a stale widget from an earlier session).

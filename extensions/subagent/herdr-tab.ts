@@ -68,6 +68,9 @@ export interface HerdrAcquireOptions {
 	label?: string;
 }
 
+/** Live presence of a recorded pane, as seen by the manager UI. */
+export type HerdrPaneStatus = "active" | "retained" | "missing";
+
 /** A leased pane handed to one run. */
 export interface HerdrPaneLease {
 	readonly tabId: string;
@@ -83,6 +86,15 @@ export interface ParentHerdrTab {
 	ensureTab(): Promise<string>;
 	acquire(run: PreparedDispatchItem, options?: HerdrAcquireOptions): Promise<HerdrPaneLease>;
 	focus(runId: string): Promise<void>;
+	/**
+	 * Validate and focus an exact recorded pane without creating anything.
+	 * Throws `HerdrTabError` when the tab/pane is stale or not owned.
+	 */
+	focusLocation(location: HerdrRunLocation): Promise<void>;
+	/** Close one recorded retained pane; false when it is not owned/retained. */
+	closeRetainedLocation(location: HerdrRunLocation): Promise<boolean>;
+	/** Live presence of a recorded pane without changing focus. */
+	paneStatus(location: HerdrRunLocation): Promise<HerdrPaneStatus>;
 	dispose(options?: { reason?: HerdrDisposeReason }): Promise<void>;
 }
 
@@ -339,7 +351,19 @@ export class HerdrTabManager implements ParentHerdrTab {
 			if (!location) {
 				throw new HerdrTabError(`No Herdr pane recorded for run ${runId}`, { code: "missing_location" });
 			}
-			await this.focusOwnedPane(location.paneId, location.tabId);
+			await this.focusRecordedLocationLocked(location);
+		});
+	}
+
+	/**
+	 * Focus a persisted/live location selected from the manager. Validates the
+	 * exact pane against live Herdr state and never creates a tab or pane: a
+	 * missing tab/pane is reported as stale so the caller can clear the record.
+	 */
+	focusLocation(location: HerdrRunLocation): Promise<void> {
+		return this.runExclusive(async () => {
+			this.assertNotDisposed();
+			await this.focusRecordedLocationLocked(location);
 		});
 	}
 
@@ -351,36 +375,58 @@ export class HerdrTabManager implements ParentHerdrTab {
 		});
 	}
 
-	/** Close one explicitly retained pane. Returns false when it is not ours. */
-	closeRetainedPane(paneId: string): Promise<boolean> {
+	/** Live pane presence for the manager Details view; never changes focus. */
+	paneStatus(location: HerdrRunLocation): Promise<HerdrPaneStatus> {
 		return this.runExclusive(async () => {
-			if (!this.retainedPanes.has(paneId)) return false;
-			if (!this.tabId) return false;
+			this.assertNotDisposed();
+			const tabId = await this.locateTabLocked();
+			if (!tabId || location.tabId !== tabId) return "missing";
 			let pane: HerdrPaneInfo;
 			try {
-				pane = await this.client.getPane(paneId);
+				pane = await this.client.getPane(location.paneId);
 			} catch {
-				// Already closed manually; drop the stale record.
-				this.retainedPanes.delete(paneId);
-				this.trackedPaneIds.delete(paneId);
-				await this.persistState();
-				return true;
+				return "missing";
 			}
-			if (pane.tabId !== this.tabId || !this.isOwnedPane(pane)) return false;
-			try {
-				await this.client.closePane(paneId);
-			} catch (error) {
-				this.log(`failed to close retained pane ${paneId}: ${messageOf(error)}`);
-				return false;
-			}
-			this.retainedPanes.delete(paneId);
-			this.trackedPaneIds.delete(paneId);
-			for (const [runId, location] of [...this.locations]) {
-				if (location.paneId === paneId) this.locations.delete(runId);
-			}
-			await this.persistState();
-			return true;
+			if (pane.tabId !== tabId || !this.isOwnedPane(pane)) return "missing";
+			return this.retainedPanes.has(location.paneId) || pane.tokens?.px_retained === "1" ? "retained" : "active";
 		});
+	}
+
+	/** Close one explicitly retained pane. Returns false when it is not ours. */
+	closeRetainedPane(paneId: string): Promise<boolean> {
+		return this.runExclusive(() => this.closeRetainedPaneLocked(paneId));
+	}
+
+	/** Close a recorded retained pane after locating the owned tab. */
+	closeRetainedLocation(location: HerdrRunLocation): Promise<boolean> {
+		return this.runExclusive(async () => {
+			this.assertNotDisposed();
+			const tabId = await this.locateTabLocked();
+			if (!tabId || location.tabId !== tabId) return false;
+			return this.closeRetainedPaneLocked(location.paneId);
+		});
+	}
+
+	private async closeRetainedPaneLocked(paneId: string): Promise<boolean> {
+		if (!this.retainedPanes.has(paneId)) return false;
+		if (!this.tabId) return false;
+		let pane: HerdrPaneInfo;
+		try {
+			pane = await this.client.getPane(paneId);
+		} catch {
+			// Already closed manually; drop the stale record.
+			await this.forgetPaneLocked(paneId);
+			return true;
+		}
+		if (pane.tabId !== this.tabId || !this.isOwnedPane(pane)) return false;
+		try {
+			await this.client.closePane(paneId);
+		} catch (error) {
+			this.log(`failed to close retained pane ${paneId}: ${messageOf(error)}`);
+			return false;
+		}
+		await this.forgetPaneLocked(paneId);
+		return true;
 	}
 
 	dispose(options: { reason?: HerdrDisposeReason } = {}): Promise<void> {
@@ -435,14 +481,8 @@ export class HerdrTabManager implements ParentHerdrTab {
 
 	private async ensureTabLocked(): Promise<string> {
 		this.assertNotDisposed();
-		if (this.tabId && this.rootPaneId) {
-			if (await this.validateCurrentTab()) return this.tabId;
-			this.tabId = undefined;
-			this.rootPaneId = undefined;
-		}
-
-		const adopted = await this.tryAdoptStoredTab();
-		if (adopted) return adopted;
+		const existing = await this.locateTabLocked();
+		if (existing) return existing;
 
 		const created = await this.client.createTab({ label: this.label, focus: false });
 		this.tabId = created.tab.tabId;
@@ -452,6 +492,60 @@ export class HerdrTabManager implements ParentHerdrTab {
 		await this.markPaneMetadata(created.rootPane.paneId, { runId: undefined, retained: false, title: this.label });
 		await this.persistState();
 		return this.tabId;
+	}
+
+	/**
+	 * Resolve the owned tab from memory or the persisted record, but never
+	 * create one. Used by manager actions that must not recreate Herdr state.
+	 */
+	private async locateTabLocked(): Promise<string | undefined> {
+		if (this.tabId && this.rootPaneId) {
+			if (await this.validateCurrentTab()) return this.tabId;
+			this.tabId = undefined;
+			this.rootPaneId = undefined;
+		}
+		return this.tryAdoptStoredTab();
+	}
+
+	/**
+	 * Validate a recorded location against the live owned tab and focus the exact
+	 * pane. Stale locations are forgotten and reported as typed errors so the UI
+	 * can clear them without ever recreating a pane.
+	 */
+	private async focusRecordedLocationLocked(location: HerdrRunLocation): Promise<void> {
+		const tabId = await this.locateTabLocked();
+		if (!tabId || location.tabId !== tabId) {
+			await this.forgetLocationLocked(location);
+			throw new HerdrTabError(`Herdr tab ${location.tabId} is not owned by this parent session`, {
+				code: "not_owned",
+			});
+		}
+		try {
+			await this.focusOwnedPane(location.paneId, tabId);
+		} catch (error) {
+			if (error instanceof HerdrTabError && (error.code === "missing_pane" || error.code === "not_owned")) {
+				await this.forgetLocationLocked(location);
+			}
+			throw error;
+		}
+	}
+
+	/** Drop any live bookkeeping for a recorded (usually manually closed) pane. */
+	private async forgetLocationLocked(location: HerdrRunLocation): Promise<void> {
+		await this.forgetPaneLocked(location.paneId);
+	}
+
+	private async forgetPaneLocked(paneId: string): Promise<void> {
+		this.retainedPanes.delete(paneId);
+		this.trackedPaneIds.delete(paneId);
+		if (this.idlePaneId === paneId) {
+			this.idlePaneId = undefined;
+			this.idleChainKey = undefined;
+		}
+		for (const [runId, location] of [...this.locations]) {
+			if (location.paneId === paneId) this.locations.delete(runId);
+		}
+		await this.persistState();
 	}
 
 	private async validateCurrentTab(): Promise<boolean> {

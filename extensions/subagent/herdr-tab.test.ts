@@ -733,6 +733,78 @@ describe("HerdrTabManager focus and retained panes", () => {
 	});
 });
 
+describe("HerdrTabManager manager locations", () => {
+	test("focusLocation focuses an exact active and retained pane", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const active = await tab.acquire(run("sa-1"));
+		const retained = await tab.acquire(run("sa-2"));
+		await retained.release("failed");
+
+		await tab.focusLocation({ tabId: tab.currentTabId as string, paneId: active.paneId, retained: false });
+		await tab.focusLocation({ tabId: tab.currentTabId as string, paneId: retained.paneId, retained: true });
+		const focused = client.calls.filter((call) => call.method === "pane.focus").map((call) => call.params.pane_id);
+		expect(focused).toEqual([active.paneId, retained.paneId]);
+		await active.release("success");
+	});
+
+	test("focusLocation never creates a tab or pane", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		await expect(
+			tab.focusLocation({ tabId: "w1A:t1", paneId: "w1A:p9", retained: true }),
+		).rejects.toBeInstanceOf(HerdrTabError);
+		expect(client.callCount("tab.create")).toBe(0);
+		expect(client.callCount("pane.split")).toBe(0);
+	});
+
+	test("paneStatus reports active, retained, and missing", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const active = await tab.acquire(run("sa-1"));
+		const retained = await tab.acquire(run("sa-2"));
+		await retained.release("failed");
+		const tabId = tab.currentTabId as string;
+
+		expect(await tab.paneStatus({ tabId, paneId: active.paneId, retained: false })).toBe("active");
+		expect(await tab.paneStatus({ tabId, paneId: retained.paneId, retained: true })).toBe("retained");
+		expect(await tab.paneStatus({ tabId, paneId: "w1A:missing", retained: false })).toBe("missing");
+		expect(await tab.paneStatus({ tabId: "w1A:other", paneId: retained.paneId, retained: true })).toBe("missing");
+		await active.release("success");
+	});
+
+	test("focusLocation forgets a manually closed retained pane", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const first = await tab.acquire(run("sa-1"));
+		const second = await tab.acquire(run("sa-2"));
+		await first.release("failed");
+		await second.release("failed");
+		const tabId = tab.currentTabId as string;
+		client.forceClosePane(first.paneId);
+
+		await expect(
+			tab.focusLocation({ tabId, paneId: first.paneId, retained: true }),
+		).rejects.toBeInstanceOf(HerdrTabError);
+		expect(tab.locationForRun("sa-1")).toBeUndefined();
+		expect(tab.retainedPaneIds).not.toContain(first.paneId);
+		expect(tab.retainedPaneIds).toContain(second.paneId);
+	});
+
+	test("closeRetainedLocation closes only the recorded owned pane", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const lease = await tab.acquire(run("sa-1"));
+		await lease.release("failed");
+		const tabId = tab.currentTabId as string;
+
+		expect(await tab.closeRetainedLocation({ tabId: "w1A:other", paneId: lease.paneId, retained: true })).toBe(false);
+		expect(await tab.closeRetainedLocation({ tabId, paneId: lease.paneId, retained: true })).toBe(true);
+		expect(tab.locationForRun("sa-1")).toBeUndefined();
+		expect(client.callCount("pane.close")).toBe(1);
+	});
+});
+
 describe("HerdrTabManager reload and ownership", () => {
 	test("reload rediscovers and reuses the matching owned tab", async () => {
 		const dir = tempDir();

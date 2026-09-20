@@ -111,6 +111,9 @@ function fakeHerdrTab(
 			return lease;
 		},
 		focus: async () => {},
+		focusLocation: async () => {},
+		closeRetainedLocation: async () => false,
+		paneStatus: async () => "active",
 		dispose: async () => {},
 	};
 }
