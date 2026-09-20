@@ -78,7 +78,7 @@ labels are rendered in the frame corners:
 ```
 ╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
 │ ... input ...                                         │
-╰-< SMART >-·-< 15.9% 210k · 0.03$ >──────────────────╯
+╰-< SMART · NET? >-·-< 15.9% 210k · 0.03$ >────────────╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with `│` side
@@ -87,7 +87,9 @@ labels are rendered in the frame corners:
   autocomplete list stays outside the frame and is indented to line up.
 - Every border text label is delimited with ASCII angle tacks on both sides:
   `-< <label> >-`. When two labels share the bottom-left edge they are joined by
-  the two tacks with a centered dot: `-< <safe-mode> >-·-< <context> >-`.
+  the two tacks with a centered dot: `-< <safe-mode> · <network> >-·-< <context> >-`.
+  Safe mode and the network token always share one label and keep the spaced
+  ` · ` separator even when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - **top-right** — git dirty totals from `repo-stats`, e.g.
   `-< +1 -2 M4 · +150 -200 >-`. Rendered only when the repo is dirty. The
@@ -95,9 +97,16 @@ labels are rendered in the frame corners:
   a `·` recolored to the frame border color. In `new` mode the totals are hidden
   from the first line to avoid duplication; in `legacy` mode they stay on the
   first line.
-- **bottom-left** — safe-mode status followed by context usage and cost.
-  - Format: `-< <safe-mode> >-·-< <percent> <tokens> · <cost> >-`. The safe-mode
-    part is omitted when the producer has published nothing.
+- **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
+  - Format: `-< <safe-mode> · <NET> >-·-< <percent> <tokens> · <cost> >-`. The safe-mode
+    and network parts are omitted when their producer/core is absent.
+  - **network** — effective policy from `permissions-core`, shown only after safe
+    mode and joined with exactly ` · ` (the dot uses the frame border color).
+    Labels: `NET` (muted/gray, nothing auto-approved), `NET?` (muted/gray, trusted
+    or all traffic needs approval), `NET+` (normal/white, all valid traffic
+    auto-approved). It reflects effective state only, so PARANOID always renders
+    gray `NET?`. In `legacy` mode the token moves to the status line instead (see
+    [Display mode](#display-mode)); exactly one surface renders it.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
   - `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
@@ -155,16 +164,22 @@ labels are rendered in the frame corners:
 `displayMode` controls where context/model/safe-mode information lives:
 
 - `new` (default) — border priority.
-  - Editor frame shows the corner labels (top-left model + effort, top-right git totals, bottom-left safe-mode + context).
+  - Editor frame shows the corner labels (top-left model + effort, top-right git totals, bottom-left safe-mode · network + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
     producer items (after the `SKILLS: n/m` counter), and omits the cost suffix
     because the border already shows cost.
-  - `safe-mode`, `switch-thinking` (favorite thinking modes), model, and percent are hidden.
+  - `safe-mode`, the effective network token, `switch-thinking` (favorite thinking modes), model, and percent are hidden from the status line.
 - `legacy` — status-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).
-  - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`,
+  - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`
+    with the effective network token inserted directly after `safe-mode`,
     `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`.
+  - The network token is colored by policy (`muted` for `NET`/`NET?`, `text` for `NET+`) and is never also rendered on the border.
+  - Safe mode and the network token share one item, so the spaced ` · ` between
+    them is kept even when a crowded line switches its other items to the compact
+    `·` separator. Late `changed` events after `session_shutdown` are ignored, so a
+    closed session cannot restore a stale token.
 
 Set it with:
 
@@ -255,5 +270,7 @@ Required files:
 
 - `index.ts`
 - `contract.ts`
+- `network.ts`
+- `compose.ts`
 
 Then run `/reload`.

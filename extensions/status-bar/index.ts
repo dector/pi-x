@@ -6,6 +6,7 @@ import {
 	DynamicBorder,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type KeybindingsManager,
 	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -13,7 +14,6 @@ import {
 	type EditorOptions,
 	type EditorTheme,
 	Key,
-	type KeybindingsManager,
 	matchesKey,
 	type SelectItem,
 	SelectList,
@@ -42,6 +42,14 @@ import {
 	type StatusBarSection,
 	type StatusBarSetPayload,
 } from "./contract";
+import {
+	composeBorderBottomLeft,
+	composeLegacyLeftSection,
+	composeSectionItems,
+	hasVisibleText,
+	sanitizeStatusText,
+} from "./compose";
+import { NetworkStateStore, resolveNetworkStatus } from "./network";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -59,8 +67,6 @@ const REPO_STATS_ID = "repo-stats";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
-// Join two labels on the same border edge: the two tacks with a vertically-centered dot.
-const FRAME_LABEL_JOIN = "-·-";
 // Visible width of the `-< ` + ` >-` tack wrappers around a border label.
 const FRAME_LABEL_TACK_WIDTH = 6;
 // While streaming, the top-left model label is animated. Two styles are available:
@@ -201,6 +207,8 @@ interface FrameStatusEditorOptions {
 	bottomLeft?: FrameStatusProvider;
 	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
 	bottomLeftStatus?: FrameStatusProvider;
+	/** Effective network token, rendered immediately after the safe-mode status. */
+	bottomLeftNetwork?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
 	/** Top-right corner label (git dirty totals). */
@@ -254,13 +262,14 @@ function renderBorderLine(
  * ```
  * ╭-< cdx/5.6-sol (high) >──────-< +1 -2 M4 · +150 -200 >-╮
  * │ ... input ...                                         │
- * ╰-< SMART >-·-< 15.9% 210k · 0.03$ >────────────────────╯
+ * ╰-< SMART · NET? >-·-< 15.9% 210k · 0.03$ >────────────╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: FrameStatusProvider;
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
+	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
@@ -280,6 +289,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.getDisplayMode = options.getDisplayMode;
 		this.bottomLeftProvider = options.bottomLeft;
 		this.bottomLeftStatusProvider = options.bottomLeftStatus;
+		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
 		this.topLeftProvider = options.topLeft;
 		this.topRightProvider = options.topRight;
 		this.getWorkingAnimation = options.getWorkingAnimation;
@@ -527,8 +537,8 @@ class FrameStatusEditor extends CustomEditor {
 
 		const contextLabel = this.bottomLeftProvider?.();
 		const statusLabel = this.bottomLeftStatusProvider?.();
-		const leftSegment = this.bottomLeftSegment(contextLabel, statusLabel);
-
+		const networkLabel = this.bottomLeftNetworkProvider?.();
+		const leftSegment = this.bottomLeftSegment(contextLabel, statusLabel, networkLabel);
 		if (!leftSegment) {
 			return super.renderBottomBorder(width, hiddenLineCount);
 		}
@@ -550,33 +560,18 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Combined bottom-left segment. Safe-mode status comes first, context info
-	 * second, joined by the two tacks with a centered dot: `-< SMART >-·-< 15.9% 210k >-`.
+	 * Combined bottom-left segment. Safe mode and the effective network token
+	 * share one label joined by exactly ` · `; context info follows in its own
+	 * tacks: `-< SMART · NET? >-·-< 15.9% 210k >-`. Composition (including
+	 * safe-mode recoloring) lives in the pure `composeBorderBottomLeft` helper.
 	 */
-	private bottomLeftSegment(contextLabel?: string, statusLabel?: string): string {
-		const hasContext = hasVisibleText(contextLabel);
-		const hasStatus = hasVisibleText(statusLabel);
-		if (!hasContext && !hasStatus) return "";
-
-		const open = this.borderColor("-< ");
-		const close = this.borderColor(" >-");
-
-		if (hasStatus && hasContext) {
-			const join = this.borderColor(`${FRAME_LABEL_JOIN}< `);
-			return `${open}${this.safeModeText(statusLabel)}${this.borderColor(" >")}${join}${sanitizeStatusText(contextLabel)}${close}`;
-		}
-		if (hasStatus) return `${open}${this.safeModeText(statusLabel)}${close}`;
-		return `${open}${sanitizeStatusText(contextLabel)}${close}`;
-	}
-
-	/**
-	 * Safe-mode label. SMART matches the frame border color; other modes keep the
-	 * producer's own color.
-	 */
-	private safeModeText(label: string): string {
-		const plain = stripAnsi(sanitizeStatusText(label));
-		if (/^SMART\+?$/.test(plain)) return this.borderColor(plain);
-		return sanitizeStatusText(label);
+	private bottomLeftSegment(contextLabel?: string, statusLabel?: string, networkLabel?: string): string {
+		return composeBorderBottomLeft({
+			contextLabel,
+			statusLabel,
+			networkLabel,
+			borderColor: (text) => this.borderColor(text),
+		});
 	}
 }
 
@@ -586,7 +581,7 @@ function collectUsage(ctx: ExtensionContext): { input: number; output: number; c
 	let cacheRead = 0;
 	let cost = 0;
 
-	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
+	for (const entry of ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>) {
 		if (entry.type !== "message") continue;
 		const message = entry.message as Record<string, unknown> | undefined;
 		if (!message || message.role !== "assistant") continue;
@@ -615,7 +610,7 @@ function readCost(value: unknown): number {
 // spawn their own subagents, so recurse through the child messages as well.
 function collectSubagentCost(ctx: ExtensionContext): number {
 	let cost = 0;
-	for (const entry of ctx.sessionManager.getBranch() as Array<Record<string, unknown>>) {
+	for (const entry of ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>) {
 		if (entry.type !== "message") continue;
 		cost += collectSubagentCostFromMessage(entry.message);
 	}
@@ -804,19 +799,6 @@ function parseClearArgs(args: string): StatusBarClearPayload | undefined {
 	const id = args.trim();
 	if (!id) return undefined;
 	return { id };
-}
-
-function sanitizeStatusText(text: string): string {
-	return text.replace(/[\r\n\t]/g, " ").trim();
-}
-
-function stripAnsi(text: string): string {
-	return text.replace(/\u001B\[[0-9;]*m/g, "");
-}
-
-function hasVisibleText(value?: string): value is string {
-	if (typeof value !== "string") return false;
-	return value.trim().length > 0;
 }
 
 /** Bouncing highlight position and its direction of travel. */
@@ -1386,14 +1368,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		ids: string[],
 		overrides?: Map<string, string | undefined>,
 		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
-	): string | undefined => {
-		const items = ids
-			.map((id) => (overrides?.has(id) ? overrides.get(id) : contentById.get(id)))
-			.filter((value): value is string => hasVisibleText(value))
-			.map((value) => sanitizeStatusText(value));
-		if (items.length === 0) return undefined;
-		return items.join(joinSeparator);
-	};
+	): string | undefined => composeSectionItems(ids, (id) => contentById.get(id), joinSeparator, overrides);
 
 	const isCrowded = (width: number, left?: string, center?: string, right?: string): boolean => {
 		if (width <= 0) return true;
@@ -1444,6 +1419,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		requestFooterRender?.();
 		requestEditorRender?.();
 	};
+
+	// Live cache of the effective network state from permissions-core. `current`
+	// is `undefined` when the core is absent, so no token is rendered. Live
+	// `changed` events win over slower in-flight queries (see network.ts).
+	const networkStore = new NetworkStateStore({ events: pi.events, onChange: requestRender });
 
 	const installFooter = (ctx: ExtensionContext): void => {
 		if (!ctx.hasUI) return;
@@ -1504,13 +1484,34 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						layout.right.length > 0 ? getContextWatcherOverrides(activeCtx, theme, modelAliases) : undefined;
 
 					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
-					let left = renderSection(layout.left, undefined, joinSeparator);
+					// Network token: on the status line in `legacy` mode, on the border in
+					// `new` mode. Exactly one surface renders it, so there is no duplication.
+					const networkResolution = resolveNetworkStatus({ displayMode, state: networkStore.current, theme });
+					const networkStatusLabel =
+						networkResolution?.surface === "status-line" ? networkResolution.label : undefined;
+					// Safe mode and the network token always share one item joined by exactly
+					// ` · ` (here `networkSeparator`), so a crowded line switching to the compact
+					// separator cannot collapse that dot.
+					const renderLeft = (
+						itemSeparator: string,
+						extraOverrides?: Map<string, string | undefined>,
+					): string | undefined =>
+						composeLegacyLeftSection({
+							ids: layout.left,
+							getContent: (id) => contentById.get(id),
+							networkLabel: networkStatusLabel,
+							networkSeparator: theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR),
+							itemSeparator,
+							safeModeId: SAFE_MODE_ID,
+							overrides: extraOverrides,
+						});
+					let left = renderLeft(joinSeparator);
 					let center = renderSection(layout.center, undefined, joinSeparator);
 					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
 					if (isCrowded(width, left, center, right)) {
 						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
-						left = renderSection(layout.left, undefined, joinSeparator);
+						left = renderLeft(joinSeparator);
 						center = renderSection(layout.center, undefined, joinSeparator);
 						right = renderSection(layout.right, contextOverrides, joinSeparator);
 					}
@@ -1520,8 +1521,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const needCompactThinking = hasThinkingSection && hasVisibleText(activeThinking) && isCrowded(width, left, center, right);
 
 					if (needCompactThinking) {
-						const leftOverrides = new Map<string, string | undefined>([[SWITCH_THINKING_ID, activeThinking]]);
-						left = renderSection(layout.left, leftOverrides, joinSeparator);
+						left = renderLeft(joinSeparator, new Map([[SWITCH_THINKING_ID, activeThinking]]));
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
@@ -1550,6 +1550,14 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			getDisplayMode: () => displayMode,
 			bottomLeft: () => buildFrameContextLabel(activeContext(), activeContext().ui.theme),
 			bottomLeftStatus: () => contentById.get(SAFE_MODE_ID),
+			bottomLeftNetwork: () => {
+				const resolution = resolveNetworkStatus({
+					displayMode,
+					state: networkStore.current,
+					theme: activeContext().ui.theme,
+				});
+				return resolution?.surface === "border" ? resolution.label : undefined;
+			},
 			topLeft: (opts) =>
 				buildBorderModelLabel(
 					activeContext(),
@@ -1606,44 +1614,35 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		// Only an active session may apply live network `changed` events.
+		networkStore.activate();
 		bindContextAndRender(ctx);
+		// Refresh in the background; a live `changed` event also updates state.
+		void networkStore.refresh();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		networkStore.activate();
 		bindContextAndRender(ctx);
+		void networkStore.refresh();
 	});
 
-	const bindRenderRefresh = (
-		eventName:
-			| "session_compact"
-			| "model_select"
-			| "turn_start"
-			| "turn_end"
-			| "agent_start"
-			| "agent_end"
-			| "message_start"
-			| "message_update"
-			| "message_end"
-			| "input"
-			| "user_bash",
-	) => {
-		pi.on(eventName, async (_event, ctx) => {
-			lastContext = ctx;
-			requestRender();
-		});
+	const refreshOnEvent = async (_event: unknown, ctx: ExtensionContext): Promise<void> => {
+		lastContext = ctx;
+		requestRender();
 	};
 
-	bindRenderRefresh("session_compact");
-	bindRenderRefresh("model_select");
-	bindRenderRefresh("turn_start");
-	bindRenderRefresh("turn_end");
-	bindRenderRefresh("agent_start");
-	bindRenderRefresh("agent_end");
-	bindRenderRefresh("message_start");
-	bindRenderRefresh("message_update");
-	bindRenderRefresh("message_end");
-	bindRenderRefresh("input");
-	bindRenderRefresh("user_bash");
+	pi.on("session_compact", refreshOnEvent);
+	pi.on("model_select", refreshOnEvent);
+	pi.on("turn_start", refreshOnEvent);
+	pi.on("turn_end", refreshOnEvent);
+	pi.on("agent_start", refreshOnEvent);
+	pi.on("agent_end", refreshOnEvent);
+	pi.on("message_start", refreshOnEvent);
+	pi.on("message_update", refreshOnEvent);
+	pi.on("message_end", refreshOnEvent);
+	pi.on("input", refreshOnEvent);
+	pi.on("user_bash", refreshOnEvent);
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (ctx.hasUI) {
@@ -1664,6 +1663,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		if (lastContext === ctx) {
 			lastContext = undefined;
 		}
+		// Drop stale network state and deactivate so late `changed` events after
+		// shutdown cannot restore the previous session's effective policy.
+		networkStore.deactivate();
 		requestFooterRender = undefined;
 	});
 
@@ -1742,10 +1744,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 			const saved = saveDisplayMode(requested);
 			if (!ctx.hasUI) return;
-			if (saved.ok) {
-				ctx.ui.notify(`status-bar display mode: ${requested}`, "info");
-			} else {
+			// `=== false` (rather than a truthiness check) keeps the discriminated
+			// union narrowing working without `--strictNullChecks`.
+			if (saved.ok === false) {
 				ctx.ui.notify(`status-bar display mode: ${requested} (${saved.error})`, "warning");
+			} else {
+				ctx.ui.notify(`status-bar display mode: ${requested}`, "info");
 			}
 		},
 	});

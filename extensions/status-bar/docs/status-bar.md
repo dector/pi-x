@@ -88,6 +88,10 @@ Rules:
 
 - Include only non-empty producer content.
 - Join items **inside a section** with ` · `.
+- The `safe-mode` and effective network token are one group: they are joined by
+  exactly ` · ` (muted) even when a crowded line switches the other items to the
+  compact `·` separator. The group is placed at the `safe-mode` position, so the
+  network token always follows safe mode immediately.
 - Omit empty sections.
 - Keep section separator contract (`"  "`) as minimum inter-section gap/fallback join.
 - Do not wrap content with synthetic decorators (no `[]`, no added `|...|`).
@@ -120,7 +124,13 @@ context/model/safe-mode info:
   `context-watcher-model`, and `context-watcher-percent` are hidden. The
   `repo-stats` dirty totals also move from the first line to the frame top-right.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
-  borders, no corner labels); status line uses the default layout.
+  borders, no corner labels); status line uses the default layout with the
+  effective network token inserted directly after `safe-mode`.
+
+The effective network token (from `permissions-core`) is rendered on exactly one
+surface: the editor frame bottom-left in `new` mode, the status line in `legacy`
+mode. It is never duplicated across both. `safe-mode` and the token always share
+one label joined by exactly ` · `.
 
 Setup:
 
@@ -164,9 +174,13 @@ editor padding (`paddingX: 1`), and renders:
   the total with three decimals so small subagent spend stays visible. It
   includes every subagent in the branch, nested ones included, and is omitted
   while the total rounds to the same three-decimal value as the session cost.
-- bottom-left, before context: `safe-mode` producer content (for example `SMART`),
-  joined to the context label by the two tacks with a centered dot (`-< SMART >-·-< 15.9% >-`). `SMART`
-  uses the frame border color; other modes keep the producer's own color.
+- bottom-left, before context: `safe-mode` producer content (for example `SMART`)
+  followed by the effective network token, joined to the context label by the two
+  tacks with a centered dot (`-< SMART · NET? >-·-< 15.9% >-`). Safe mode and the
+  network token share one label joined by exactly ` · `, which is preserved under
+  crowding. `SMART` uses the frame border color; other modes keep the producer's
+  own color. The network token keeps its policy color (`muted` for `NET`/`NET?`,
+  `text` for `NET+`) and follows effective state only (PARANOID -> `NET?`).
 
 Every border text label is delimited with ASCII angle tacks on both sides (`-< <label> >-`).
 Two labels on the same edge are joined by the two tacks with a centered dot (`-< A >-·-< B >-`).

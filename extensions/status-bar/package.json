@@ -1,0 +1,14 @@
+{
+  "name": "status-bar",
+  "private": true,
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck contract.ts network.ts compose.ts index.ts"
+  }
+}
