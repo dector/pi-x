@@ -32,7 +32,7 @@ import {
 	type RpcExit,
 	type SpawnRpcChildOptions,
 } from "./rpc-client.ts";
-import type { RpcCommand, RpcExtensionUiResponse } from "./types.ts";
+import type { HerdrRetention, RpcCommand, RpcExtensionUiResponse } from "./types.ts";
 
 /** Wire protocol version exchanged in the hello/welcome handshake. */
 export const HERDR_BRIDGE_PROTOCOL = 1;
@@ -51,12 +51,23 @@ export class HerdrBridgeProtocolError extends Error {
 	}
 }
 
+/** Display metadata the pane bridge renders in its final settled summary. */
+export interface HerdrBridgeDisplay {
+	agent: string;
+	runId: string;
+	dispatchId?: string;
+	/** Per-dispatch retention intent, so the summary can explain why a pane stays. */
+	retention?: HerdrRetention;
+}
+
 /** Serializable spawn request transferred after the handshake. */
 export interface HerdrBridgeSpawnRequest {
 	command: string;
 	args: string[];
 	cwd: string;
 	env?: Record<string, string>;
+	/** Optional human-readable identity for the retained-pane summary. */
+	display?: HerdrBridgeDisplay;
 }
 
 /** Bootstrap information safe to pass to the pane bridge (no task text or Pi args). */
@@ -142,6 +153,8 @@ export interface HerdrBridgeChildOptions {
 	maxFrameBytes?: number;
 	maxStderrChars?: number;
 	maxDiagnostics?: number;
+	/** Optional identity rendered in the pane transcript's final summary. */
+	display?: HerdrBridgeDisplay;
 	/** Override the auto-created private directory (used by tests). */
 	directory?: string;
 }
@@ -339,6 +352,7 @@ export async function createHerdrBridgeChild(options: HerdrBridgeChildOptions): 
 				args: [...options.spawn.args],
 				cwd: options.spawn.cwd,
 				env: serializeEnv({ ...process.env, ...(options.spawn.env ?? {}) }),
+				...(options.display ? { display: options.display } : {}),
 			},
 		}),
 	);

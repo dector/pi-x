@@ -87,8 +87,14 @@ import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats 
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { HerdrSubagentBackend, ProcessSubagentBackend, type SubagentBackend } from "./backend.ts";
 import { createHerdrBridgeLauncher, preflightHerdr } from "./herdr-preflight.ts";
-import { createParentHerdrTab, type HerdrDisposeReason, type ParentHerdrTab } from "./herdr-tab.ts";
-import type { HerdrClient, HerdrEnvironment } from "./herdr-client.ts";
+import {
+	cleanupStaleHerdrTabRecords,
+	createParentHerdrTab,
+	resolveHerdrTabStateDirectory,
+	type HerdrDisposeReason,
+	type ParentHerdrTab,
+} from "./herdr-tab.ts";
+import { readHerdrEnvironment, type HerdrClient, type HerdrEnvironment } from "./herdr-client.ts";
 import { type RpcChild } from "./rpc-client.ts";
 import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } from "./registry.ts";
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
@@ -716,6 +722,19 @@ export default function (pi: ExtensionAPI) {
 		return session.tab.dispose({ reason }).catch(() => undefined);
 	}
 
+	/**
+	 * Fire-and-forget startup cleanup of persisted Herdr ownership records that
+	 * no longer point at a verified-owned tab. Only runs inside Herdr, only for
+	 * the current socket, and never closes a tab or pane (see `herdr-tab.ts`).
+	 * Failures are swallowed so they can never block session start.
+	 */
+	function cleanupStaleHerdrTabState(): void {
+		const environment = readHerdrEnvironment(process.env);
+		if (!environment) return;
+		const directory = resolveHerdrTabStateDirectory(getAgentDir());
+		void cleanupStaleHerdrTabRecords({ directory, socketPath: environment.socketPath }).catch(() => undefined);
+	}
+
 	function backendFor(kind: SubagentBackendKind | undefined): SubagentBackend {
 		if (kind !== "herdr") return processBackend;
 		if (!herdrSession) {
@@ -1134,6 +1153,8 @@ export default function (pi: ExtensionAPI) {
 		herdrBackend = undefined;
 		dismissedPersistedHerdrRuns.clear();
 		asyncDispatches.reset();
+		// Remove stale persisted tab records left by a crash/manual cleanup.
+		cleanupStaleHerdrTabState();
 		// Forget the previous widget content so the first refresh always
 		// republishes (and clears a stale widget from an earlier session).
 		activeWidget.reset();

@@ -64,11 +64,12 @@ describe("RPC protocol", () => {
 			events: { onStreamEvent: () => {}, onExtensionUiRequest: () => {} },
 			send: () => {},
 		});
-		void protocol.request({ id: "dup", type: "ping" }, 1000);
+		const duplicate = protocol.request({ id: "dup", type: "ping" }, 20);
 		await expect(protocol.request({ id: "dup", type: "ping" }, 1000)).rejects.toThrow(/Duplicate/);
 		await expect(protocol.request({ type: "ping" }, 1000)).rejects.toThrow(/requires an id/);
-	});
-});
+		// Settle the first duplicate's timeout so it cannot leak an unhandled rejection.
+		await expect(duplicate).rejects.toThrow(/timed out/);
+	});});
 
 describe("RPC child", () => {
 	test("correlates requests and terminates cleanly", async () => {

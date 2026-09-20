@@ -19,9 +19,10 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { HerdrClient, HerdrEnvironment, HerdrPaneInfo, HerdrPaneRect } from "./herdr-client.ts";
+import { HerdrApiError, createHerdrClient, createUnixSocketTransport } from "./herdr-client.ts";
+import type { HerdrClient, HerdrEnvironment, HerdrPaneInfo, HerdrPaneRect, HerdrTabInfo } from "./herdr-client.ts";
 import type { HerdrRetention, HerdrRunLocation, PreparedDispatchItem } from "./types.ts";
 
 /** Outcome passed to `HerdrPaneLease.release()`. */
@@ -226,13 +227,27 @@ export function createFileHerdrTabStateStore(options: { directory: string }): He
 }
 
 function parseStateRecord(value: unknown, identity: HerdrOwnershipIdentity): HerdrTabStateRecord | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const record = value as Record<string, unknown>;
-	if (record.version !== 1) return undefined;
+	const record = parseStateRecordLoose(value);
+	if (!record) return undefined;
 	if (record.ownershipKey !== herdrOwnershipKey(identity)) return undefined;
 	if (record.socketPath !== identity.socketPath) return undefined;
 	if (record.parentPaneId !== identity.parentPaneId) return undefined;
 	if (record.piSessionId !== identity.piSessionId) return undefined;
+	return record;
+}
+
+/**
+ * Structurally validate a record without binding it to a caller identity, so
+ * startup cleanup can inspect every record on disk before deciding ownership.
+ */
+function parseStateRecordLoose(value: unknown): HerdrTabStateRecord | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	if (record.version !== 1) return undefined;
+	if (typeof record.ownershipKey !== "string" || record.ownershipKey.length === 0) return undefined;
+	if (typeof record.socketPath !== "string" || record.socketPath.length === 0) return undefined;
+	if (typeof record.parentPaneId !== "string" || record.parentPaneId.length === 0) return undefined;
+	if (typeof record.piSessionId !== "string" || record.piSessionId.length === 0) return undefined;
 	if (typeof record.tabId !== "string" || typeof record.rootPaneId !== "string" || typeof record.label !== "string") {
 		return undefined;
 	}
@@ -252,6 +267,169 @@ function parseStateRecord(value: unknown, identity: HerdrOwnershipIdentity): Her
 		retainedPaneIds,
 		updatedAt,
 	};
+}
+
+/** Options for startup cleanup of persisted ownership records. */
+export interface HerdrStaleCleanupOptions {
+	/** Directory holding `<ownershipKey>.json` records. */
+	directory: string;
+	/**
+	 * Only records for this Herdr socket are inspected; records for other
+	 * servers are left untouched. Omit to inspect every record.
+	 */
+	socketPath?: string;
+	/** Client factory; defaults to a Unix-socket client for the record's socket. */
+	createClient?: (environment: HerdrEnvironment) => HerdrClient;
+	logger?: (message: string) => void;
+	/** Safety bound on how many well-formed records are probed in one pass. */
+	maxRecords?: number;
+}
+
+/** Outcome of one startup cleanup pass. Entries are ownership keys. */
+export interface HerdrStaleCleanupResult {
+	scanned: number;
+	removed: string[];
+	kept: string[];
+	skipped: string[];
+}
+
+/** Positively missing Herdr resources (as opposed to an unreachable server). */
+function isMissingHerdrResource(error: unknown): boolean {
+	if (!(error instanceof HerdrApiError)) return false;
+	// The live server reports `tab_not_found` / `pane_not_found`; tests and older
+	// builds use `not_found`. Both positively mean "the resource is gone".
+	return error.code === "not_found" || error.code === "missing_tab" || error.code.endsWith("_not_found");
+}
+
+/**
+ * Remove persisted ownership records that can no longer point at a verified
+ * extension-owned tab.
+ *
+ * Strict positive ownership checks, in order:
+ *  - a record whose filename or `ownershipKey` does not match its own identity
+ *    fields is corrupt and is removed;
+ *  - when the server is unreachable the record is skipped, never removed;
+ *  - a record whose tab no longer exists is removed (nothing is closed);
+ *  - a tab that still carries this record's `px_owner`/`px_tab` tokens is kept;
+ *  - a tab whose label still matches the persisted label is kept (the
+ *    documented no-metadata fallback), so expired tokens do not discard a
+ *    usable retained pane;
+ *  - only a tab that exists, has no matching ownership token, and no longer
+ *    matches the recorded label makes the record stale.
+ *
+ * This function never closes a tab or a pane. Cleanup only deletes state files.
+ */
+export async function cleanupStaleHerdrTabRecords(options: HerdrStaleCleanupOptions): Promise<HerdrStaleCleanupResult> {
+	const result: HerdrStaleCleanupResult = { scanned: 0, removed: [], kept: [], skipped: [] };
+	let entries: string[];
+	try {
+		entries = await readdir(options.directory);
+	} catch {
+		// No state directory yet: nothing to clean.
+		return result;
+	}
+	const maxRecords = options.maxRecords ?? 200;
+	const createClient =
+		options.createClient ??
+		((environment: HerdrEnvironment) =>
+			createHerdrClient({
+				environment,
+				transport: createUnixSocketTransport({ socketPath: environment.socketPath }),
+			}));
+
+	const candidates: Array<{ file: string; record: HerdrTabStateRecord }> = [];
+	for (const name of entries) {
+		if (!name.endsWith(".json")) continue;
+		if (candidates.length >= maxRecords) break;
+		const file = join(options.directory, name);
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(await readFile(file, "utf8"));
+		} catch {
+			await rm(file, { force: true }).catch(() => undefined);
+			continue;
+		}
+		const record = parseStateRecordLoose(parsed);
+		if (!record) {
+			await rm(file, { force: true }).catch(() => undefined);
+			continue;
+		}
+		const identity: HerdrOwnershipIdentity = {
+			socketPath: record.socketPath,
+			parentPaneId: record.parentPaneId,
+			piSessionId: record.piSessionId,
+		};
+		if (record.ownershipKey !== herdrOwnershipKey(identity) || name !== `${record.ownershipKey}.json`) {
+			// A record that does not match its own identity cannot describe a tab we own.
+			await rm(file, { force: true }).catch(() => undefined);
+			continue;
+		}
+		if (options.socketPath && record.socketPath !== options.socketPath) continue;
+		candidates.push({ file, record });
+	}
+
+	const clients = new Map<string, HerdrClient | "unreachable">();
+	for (const { file, record } of candidates) {
+		result.scanned += 1;
+		let client = clients.get(record.socketPath);
+		if (client === undefined) {
+			const candidate = createClient({
+				socketPath: record.socketPath,
+				paneId: record.parentPaneId,
+				workspaceId: "",
+			});
+			try {
+				await candidate.assertCompatible();
+				client = candidate;
+			} catch (error) {
+				options.logger?.(`skipping stale cleanup for ${record.socketPath}: ${messageOf(error)}`);
+				client = "unreachable";
+			}
+			clients.set(record.socketPath, client);
+		}
+		if (client === "unreachable") {
+			result.skipped.push(record.ownershipKey);
+			continue;
+		}
+
+		let tab: HerdrTabInfo;
+		try {
+			tab = await client.getTab(record.tabId);
+		} catch (error) {
+			if (isMissingHerdrResource(error)) {
+				await rm(file, { force: true }).catch(() => undefined);
+				result.removed.push(record.ownershipKey);
+			} else {
+				result.skipped.push(record.ownershipKey);
+			}
+			continue;
+		}
+
+		let owned = false;
+		let listed = true;
+		try {
+			const panes = await client.listPanes(tab.workspaceId);
+			owned = panes.some(
+				(pane) =>
+					pane.tabId === record.tabId &&
+					pane.tokens?.px_owner === record.ownershipKey &&
+					pane.tokens?.px_tab === pane.tabId,
+			);
+		} catch {
+			listed = false;
+		}
+
+		if (!listed || owned || tab.label === record.label) {
+			result.kept.push(record.ownershipKey);
+			continue;
+		}
+
+		// The tab exists but is not ours and no longer matches; drop the dead record.
+		await rm(file, { force: true }).catch(() => undefined);
+		result.removed.push(record.ownershipKey);
+	}
+
+	return result;
 }
 
 interface ActiveLease {

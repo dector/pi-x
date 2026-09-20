@@ -18,6 +18,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
 - **Active widget**: While children run, a non-interactive list above the input editor shows each active subagent's state, elapsed time, active tool, and task preview
+- **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
 - **Run log**: `/px:agent:log` shows each run's original task prompt and final output, including detached runs after resume
 
 ## Structure
@@ -35,6 +36,12 @@ subagent/
 ├── approval-queue.ts    # Global serialized child-dialog queue
 ├── control.ts           # Child permission and cooperative pause controls
 ├── control-ops.ts       # Tool-level stop/steer control ops (validation + execution)
+├── backend.ts           # Backend boundary: direct process plus the Herdr pane bridge
+├── herdr-client.ts      # Typed Herdr socket API adapter and exact pane focus
+├── herdr-preflight.ts   # Herdr detection, validation, and bridge launch
+├── herdr-tab.ts         # Parent-owned Herdr tab, pane leasing, retention, cleanup
+├── herdr-bridge.ts      # Parent-side authenticated Unix-socket bridge
+├── herdr-bridge-main.ts # Pane-side bridge entry point and transcript renderer
 ├── run-stop.ts          # Per-run stop escalation (cooperative abort -> forced termination)
 ├── registry.ts          # Active/recent run registry
 ├── result-output.ts     # Canonical per-result output extraction (shared with tool results)
@@ -89,6 +96,7 @@ Then run `/reload`.
 Dependencies:
 
 - `safe-mode` for child permission inheritance (optional)
+- [Bun](https://bun.sh) on `PATH` when using the opt-in Herdr backend (the pane bridge runs on Bun)
 
 ## Security Model
 
@@ -120,6 +128,96 @@ Mitigations in place:
 
 Re-read files before editing after a child may have touched them. Automatic worktrees, file ownership, and conflict resolution are out of scope.
 
+## Herdr backend (opt-in)
+
+Subagents run as direct `pi --mode rpc` processes by default. Pass an optional
+`herdr` object to run a dispatch instead in a pane of one reusable Herdr tab
+owned by the parent Pi session. The object's presence is the explicit opt-in;
+there is no automatic fallback and no config key.
+
+```ts
+// Herdr backend. A successful pane can be recycled; a failed pane is retained.
+{ agent: "worker", task: "Implement it", herdr: {} }
+
+// Keep the pane after success too.
+{ agent: "reviewer", task: "Review it", herdr: { retain: "always" } }
+```
+
+`herdr` is a per-dispatch user intent. It cannot be set in agent definition
+files, and it is rejected on `action: "stop"` / `action: "steer"` control
+calls because it describes a new dispatch rather than a control operation.
+
+### Retention
+
+| `herdr` | successful pane | failed / aborted pane |
+|---------|-----------------|-----------------------|
+| omitted | direct process (no pane) | direct process (no pane) |
+| `{}` | recycled into the tab's idle pool | retained in Herdr |
+| `{ retain: "always" }` | retained in Herdr | retained in Herdr |
+
+A retained pane is never reused automatically. It keeps the terminal
+transcript and a concise final summary; the recorded subagent result and
+`/px:agent:log` remain authoritative. If every pane in the tab is retained, the
+next run creates another split — that growth is intentional because retention
+was requested explicitly.
+
+### Shared parent tab
+
+One Herdr tab is created lazily per parent Pi session and reused for every
+Herdr dispatch from that session. Ownership is bound to
+`HERDR_SOCKET_PATH + HERDR_PANE_ID + PI_SESSION_ID` and recorded both as
+machine-readable Herdr pane tokens and as a small state record under Pi's state
+directory. The tab label is `Subagents · <short-parent-pane> · <short-pi-session>`.
+
+Panes are leased to runs:
+
+- the first run uses the tab's root pane;
+- concurrent runs split balanced leaves in the same tab, always with `--no-focus`;
+- a chain reuses one pane sequentially while that pane is idle;
+- at most one idle pane is kept, so the tab stays alive without accumulating shells;
+- every pane is labeled `<agent> · <short-run-id>`.
+
+### Jump and close from `/px:agents`
+
+A Herdr-backed run adds `Jump to Herdr pane` to its manager menu, for both
+active and retained completed runs. It validates the recorded tab/pane against
+live Herdr state, focuses the exact pane, then returns from the menu. A pane the
+user closed manually is reported as missing and its stale location is cleared; a
+missing pane is never recreated just because Jump was selected.
+
+A retained completed run also offers `Close retained pane`. It confirms first,
+closes only an extension-owned retained pane, and preserves the subagent result
+and log. A Herdr run's Details view adds `Backend`, `Herdr tab`, `Herdr pane`,
+`Retention`, and a live `Pane status` (`active` / `retained` / `missing`).
+
+### Security
+
+A pane cannot share the parent extension's stdin/stdout pipes, so the parent
+creates a private `0700` temporary directory containing a `0600` one-time token,
+launches a small Bun bridge in the pane, and authenticates it over a Unix domain
+socket before sending anything. The bridge then spawns the same `pi --mode rpc`
+command and environment the direct backend uses and relays framed JSONL.
+
+- only safe bootstrap arguments (`--socket`, `--token-file`) reach the pane
+  command line; task text, prompts, and Pi arguments travel over the authenticated socket;
+- tokens are unpredictable and consumed once; message sizes and diagnostics are bounded;
+- the pane renders a concise activity transcript, never raw protocol JSON;
+- prompts, secrets, and large model output are not dumped into the terminal by default.
+
+### Reload and shutdown
+
+- `/reload` rediscovers and reuses the same owned tab while `PI_SESSION_ID` is unchanged;
+- `/new` or `/resume` cannot adopt the previous session's tab because the session id is part of ownership;
+- shutdown stops active children through the normal lifecycle first, then closes the owned tab only when it has no explicitly retained panes; retained panes leave the tab in Herdr for the user;
+- startup cleanup removes persisted records that provably no longer point at an owned tab, but never closes a tab or pane that lacks verified ownership.
+
+### Herdr limitations
+
+- Herdr is explicit and non-default. Opting in without a usable Herdr environment fails before the async dispatch is accepted, with no fallback to direct execution.
+- Detached work is not resumable after the parent Pi process exits; retained panes preserve terminal evidence, not a live model session.
+- Remote Herdr machines and automatic worktrees are out of scope.
+- The pane transcript is a concise view; the Pi session result and `/px:agent:log` are authoritative.
+
 ## Usage
 
 By default every dispatch is **async**: the `subagent` tool returns a dispatch id and run ids immediately, and the aggregate completion arrives later. Add `execution: "blocking"` when the current turn needs the result before it can continue.
@@ -132,6 +230,12 @@ Use scout to find all authentication code
 ### Blocking agent
 ```
 Use worker to implement the validation change, execution: blocking
+```
+
+### Herdr pane (opt-in)
+```
+Use worker to implement the validation change, herdr: {}
+Use reviewer to review it and keep the pane, herdr: { retain: "always" }
 ```
 
 ### Parallel execution
@@ -381,3 +485,4 @@ Session teardown (`quit`, `/new`, `/reload`, `/resume`, fork) aborts all detache
 - Cooperative pause waits for the next turn/tool boundary; it is not hard process suspension
 - Completed manager records are retained only as a bounded recent history
 - `/px:agent:log` shows the task and final output; intermediate tool calls stay in the expanded tool result or completion view
+- Herdr-backed runs add the constraints above: explicit opt-in only, no fallback, no resumable detached work, and retained panes are terminal evidence rather than a live session

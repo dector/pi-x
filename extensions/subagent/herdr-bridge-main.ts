@@ -26,6 +26,7 @@ import {
 	HERDR_BRIDGE_PROTOCOL,
 	createFrameDecoder,
 	encodeFrame,
+	type HerdrBridgeDisplay,
 	type HerdrBridgeFrame,
 	type HerdrBridgeSpawnRequest,
 } from "./herdr-bridge.ts";
@@ -206,6 +207,8 @@ export async function runHerdrBridgeMain(argv: string[]): Promise<number> {
 
 	sendFrame({ type: "ready", pid: activeChild.pid ?? -1 });
 	writeTranscript(`[bridge] pi rpc child started (pid ${activeChild.pid ?? "?"})`);
+	const childStartedAt = Date.now();
+	let lastStderrLine = "";
 
 	const childDecoder = createJsonlDecoder(
 		(line) => {
@@ -227,7 +230,10 @@ export async function runHerdrBridgeMain(argv: string[]): Promise<number> {
 		const text = chunk.toString();
 		sendFrame({ type: "stderr", text });
 		const line = text.trim();
-		if (line) writeTranscript(`[stderr] ${truncate(line, 200)}`);
+		if (line) {
+			lastStderrLine = line;
+			writeTranscript(`[stderr] ${truncate(line, 200)}`);
+		}
 	});
 
 	// Spin up is complete; release any commands that arrived during `spawn`.
@@ -266,7 +272,7 @@ export async function runHerdrBridgeMain(argv: string[]): Promise<number> {
 
 	if (outcome.kind === "exit") {
 		sendFrame({ type: "exit", code: outcome.info.code, signal: outcome.info.signal });
-		writeTranscript(summaryForExit(outcome.info));
+		writeTranscript(summaryForExit(outcome.info, request.display, childStartedAt, lastStderrLine));
 		socket.end();
 		await delay(10);
 		return 0;
@@ -351,9 +357,45 @@ function extractAssistantText(value: unknown): string | undefined {
 	return joined.length > 0 ? joined : undefined;
 }
 
-function summaryForExit(info: RpcExit): string {
-	if (info.code === 0) return "✓ pi rpc child completed";
-	return `✗ pi rpc child exited (${info.code ?? info.signal ?? "unknown"})`;
+/**
+ * Final settled summary. With display metadata it names the run, its dispatch,
+ * duration, and whether the pane is retained; it never dumps prompts or raw
+ * protocol data. Without metadata it keeps the historical generic line.
+ */
+export function summaryForExit(
+	info: RpcExit,
+	display?: HerdrBridgeDisplay,
+	startedAt = Date.now(),
+	failureReason?: string,
+): string {
+	const success = info.code === 0;
+	if (!display) {
+		if (success) return "✓ pi rpc child completed";
+		return `✗ pi rpc child exited (${info.code ?? info.signal ?? "unknown"})`;
+	}
+	const seconds = Math.max(0, (Date.now() - startedAt) / 1000);
+	const lines = [
+		`${success ? "✓" : "✗"} ${display.agent} [${shortRunId(display.runId)}] ${success ? "completed" : "failed"} in ${seconds.toFixed(1)}s`,
+	];
+	if (display.dispatchId) lines.push(`Dispatch: ${display.dispatchId}`);
+	if (!success && failureReason && failureReason.trim()) lines.push(`Reason: ${truncate(failureReason.trim(), 200)}`);
+	lines.push("Result remains available in /px:agent:log");
+	const retained = display.retention === "always" || (display.retention === "failed" && !success);
+	if (retained) {
+		lines.push("");
+		lines.push(
+			display.retention === "always"
+				? "This pane was retained by subagent policy."
+				: "This pane was retained because the run failed.",
+		);
+	}
+	return lines.join("\n");
+}
+
+function shortRunId(runId: string): string {
+	const parts = runId.split("-");
+	if (parts.length >= 2 && parts[0].length > 0 && parts[1].length > 0) return `${parts[0]}-${parts[1]}`;
+	return runId.length > 12 ? runId.slice(0, 12) : runId;
 }
 
 function truncate(text: string, max: number): string {

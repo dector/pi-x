@@ -123,6 +123,7 @@ describe("HerdrSubagentBackend", () => {
 		const released: string[] = [];
 		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
 		let launched: { paneId: string; bootstrap: HerdrBridgeBootstrap } | undefined;
+		let childOptions: { display?: unknown } | undefined;
 		const backend = new HerdrSubagentBackend({
 			tab: fakeHerdrTab(fakeLease(released), acquired),
 			launcher: {
@@ -132,6 +133,7 @@ describe("HerdrSubagentBackend", () => {
 				},
 			},
 			createChild: async (options) => {
+				childOptions = options;
 				await options.launch({ socketPath: "/tmp/s.sock", tokenFile: "/tmp/tok", token: "secret" });
 				return fakeRpcChild();
 			},
@@ -147,6 +149,12 @@ describe("HerdrSubagentBackend", () => {
 		expect(acquired[0]?.options?.retention).toBe("always");
 		expect(launched?.paneId).toBe("w1:p2");
 		expect(launched?.bootstrap.socketPath).toBe("/tmp/s.sock");
+		expect(childOptions?.display).toEqual({
+			agent: "worker",
+			runId: "sa-1",
+			dispatchId: "dispatch-1",
+			retention: "always",
+		});
 		expect(child.herdr).toMatchObject({ tabId: "w1:t1", paneId: "w1:p2" });
 		await child.release?.("success");
 		expect(released).toEqual(["success"]);

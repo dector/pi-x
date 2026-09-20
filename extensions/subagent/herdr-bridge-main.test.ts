@@ -14,7 +14,7 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERDR_BRIDGE_PROTOCOL, encodeFrame, type HerdrBridgeFrame } from "./herdr-bridge.ts";
-import { parseBridgeArgs, renderTranscriptLine } from "./herdr-bridge-main.ts";
+import { parseBridgeArgs, renderTranscriptLine, summaryForExit } from "./herdr-bridge-main.ts";
 
 const BRIDGE_MAIN = join(import.meta.dir, "herdr-bridge-main.ts");
 const FAKE_CHILD = join(import.meta.dir, "fixtures/bridge-fake-child.mjs");
@@ -102,6 +102,46 @@ describe("renderTranscriptLine", () => {
 		);
 		expect(renderTranscriptLine(JSON.stringify({ type: "agent_start" }))).toBe("▸ agent started");
 		expect(renderTranscriptLine(JSON.stringify({ type: "agent_end" }))).toBe("▪ agent finished");
+	});
+});
+
+describe("summaryForExit", () => {
+	test("names the agent, run, dispatch, and retention policy", () => {
+		const text = summaryForExit(
+			{ code: 0, signal: null },
+			{ agent: "worker", runId: "sa-abc123-1-deadbeef", dispatchId: "dispatch-42", retention: "always" },
+			Date.now() - 1_000,
+		);
+		expect(text).toContain("✓ worker [sa-abc123] completed in");
+		expect(text).toContain("Dispatch: dispatch-42");
+		expect(text).toContain("Result remains available in /px:agent:log");
+		expect(text).toContain("This pane was retained by subagent policy.");
+	});
+
+	test("reports a short failure reason and failed-retention note", () => {
+		const text = summaryForExit(
+			{ code: 1, signal: null },
+			{ agent: "reviewer", runId: "sa-def456", retention: "failed" },
+			Date.now(),
+			"provider returned 500",
+		);
+		expect(text).toContain("✗ reviewer [sa-def456] failed in");
+		expect(text).toContain("Reason: provider returned 500");
+		expect(text).toContain("This pane was retained because the run failed.");
+	});
+
+	test("does not claim retention for a recycled successful pane", () => {
+		const text = summaryForExit(
+			{ code: 0, signal: null },
+			{ agent: "scout", runId: "sa-1", retention: "failed" },
+			Date.now(),
+		);
+		expect(text).not.toContain("retained");
+	});
+
+	test("keeps the historical generic line without display metadata", () => {
+		expect(summaryForExit({ code: 0, signal: null })).toBe("✓ pi rpc child completed");
+		expect(summaryForExit({ code: 2, signal: null })).toBe("✗ pi rpc child exited (2)");
 	});
 });
 

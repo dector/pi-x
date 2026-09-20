@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,6 +26,7 @@ import {
 import {
 	HerdrTabError,
 	HerdrTabManager,
+	cleanupStaleHerdrTabRecords,
 	createFileHerdrTabStateStore,
 	createParentHerdrTab,
 	herdrOwnershipIdentity,
@@ -34,6 +35,7 @@ import {
 	herdrTabLabel,
 	resolveHerdrTabStateDirectory,
 	type HerdrOwnershipIdentity,
+	type HerdrTabStateRecord,
 } from "./herdr-tab.ts";
 import type { PreparedDispatchItem } from "./types.ts";
 
@@ -82,6 +84,7 @@ class FakeHerdrClient implements HerdrClient {
 	readonly calls: Call[] = [];
 	failReportMetadata = false;
 	failGetLayout = false;
+	failPing = false;
 	private readonly tabs = new Map<string, FakeTab>();
 	private readonly panes = new Map<string, FakePane>();
 	private tabCounter = 0;
@@ -138,6 +141,7 @@ class FakeHerdrClient implements HerdrClient {
 	}
 
 	async assertCompatible() {
+		if (this.failPing) throw new HerdrApiError("server unreachable", { code: "transport_error", method: "ping" });
 		return this.ping();
 	}
 
@@ -151,7 +155,7 @@ class FakeHerdrClient implements HerdrClient {
 	async getTab(tabId: string): Promise<HerdrTabInfo> {
 		this.record("tab.get", { tab_id: tabId });
 		const tab = this.tabs.get(tabId);
-		if (!tab) throw new HerdrApiError(`tab not found: ${tabId}`, { code: "not_found", method: "tab.get" });
+		if (!tab) throw new HerdrApiError(`tab not found: ${tabId}`, { code: "tab_not_found", method: "tab.get" });
 		return this.tabInfo(tab);
 	}
 
@@ -412,6 +416,28 @@ function manager(
 		piSessionId: options.session ?? SESSION,
 		...(options.store ? { store: options.store } : {}),
 	});
+}
+
+function persistRecord(
+	directory: string,
+	identity: HerdrOwnershipIdentity,
+	overrides: Partial<HerdrTabStateRecord> = {},
+): Promise<void> {
+	const store = createFileHerdrTabStateStore({ directory });
+	const record: HerdrTabStateRecord = {
+		version: 1,
+		ownershipKey: herdrOwnershipKey(identity),
+		socketPath: identity.socketPath,
+		parentPaneId: identity.parentPaneId,
+		piSessionId: identity.piSessionId,
+		tabId: "w1A:t999",
+		rootPaneId: "w1A:p999",
+		label: "Subagents · p1C · session-",
+		retainedPaneIds: [],
+		updatedAt: 0,
+		...overrides,
+	};
+	return store.save(record);
 }
 
 describe("ownership helpers", () => {
@@ -854,6 +880,154 @@ describe("HerdrTabManager reload and ownership", () => {
 		const reloaded = manager(client, { store });
 		await reloaded.ensureTab();
 		expect(reloaded.currentTabId).not.toBe(tabId);
+	});
+});
+
+describe("cleanupStaleHerdrTabRecords", () => {
+	test("removes records whose tab no longer exists", async () => {
+		const dir = tempDir();
+		const store = createFileHerdrTabStateStore({ directory: dir });
+		const client = new FakeHerdrClient();
+		const first = manager(client, { store });
+		const lease = await first.acquire(run("sa-1"));
+		const tabId = first.currentTabId as string;
+		await lease.release("failed");
+		await first.dispose({ reason: "reload" });
+		client.forceClosePane(first.currentRootPaneId as string);
+		expect(client.tab(tabId)).toBeUndefined();
+
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.scanned).toBe(1);
+		expect(result.removed).toHaveLength(1);
+		expect(await store.load(herdrOwnershipIdentity(baseEnv, SESSION))).toBeUndefined();
+	});
+
+	test("keeps records whose tab still carries ownership tokens", async () => {
+		const dir = tempDir();
+		const store = createFileHerdrTabStateStore({ directory: dir });
+		const client = new FakeHerdrClient();
+		const first = manager(client, { store });
+		await first.acquire(run("sa-1"));
+		await first.dispose({ reason: "reload" });
+
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.scanned).toBe(1);
+		expect(result.kept).toHaveLength(1);
+		expect(result.removed).toHaveLength(0);
+	});
+
+	test("keeps a record when tokens expired but the tab label still matches", async () => {
+		const dir = tempDir();
+		const store = createFileHerdrTabStateStore({ directory: dir });
+		const client = new FakeHerdrClient();
+		const first = manager(client, { store });
+		await first.acquire(run("sa-1"));
+		await first.dispose({ reason: "reload" });
+		client.forceOwnership(first.currentRootPaneId as string, undefined);
+
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.kept).toHaveLength(1);
+		expect(result.removed).toHaveLength(0);
+	});
+
+	test("removes a record whose tab is no longer owned and was relabelled", async () => {
+		const dir = tempDir();
+		const store = createFileHerdrTabStateStore({ directory: dir });
+		const client = new FakeHerdrClient();
+		const first = manager(client, { store });
+		await first.acquire(run("sa-1"));
+		const tabId = first.currentTabId as string;
+		await first.dispose({ reason: "reload" });
+		client.forceOwnership(first.currentRootPaneId as string, undefined);
+		await client.renameTab(tabId, "someone else");
+
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.removed).toHaveLength(1);
+		// Cleanup never closes a foreign tab.
+		expect(client.tab(tabId)).toBeDefined();
+	});
+
+	test("skips every record when the server is unreachable", async () => {
+		const dir = tempDir();
+		const store = createFileHerdrTabStateStore({ directory: dir });
+		const client = new FakeHerdrClient();
+		const first = manager(client, { store });
+		await first.acquire(run("sa-1"));
+		await first.dispose({ reason: "reload" });
+		client.failPing = true;
+
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.scanned).toBe(1);
+		expect(result.skipped).toHaveLength(1);
+		expect(result.removed).toHaveLength(0);
+		expect(await store.load(herdrOwnershipIdentity(baseEnv, SESSION))).toBeDefined();
+	});
+
+	test("removes malformed and identity-mismatched records without probing", async () => {
+		const dir = tempDir();
+		writeFileSync(join(dir, "broken.json"), "{ not json");
+		writeFileSync(
+			join(dir, "mismatch.json"),
+			JSON.stringify({
+				version: 1,
+				ownershipKey: "deadbeef",
+				socketPath: baseEnv.socketPath,
+				parentPaneId: baseEnv.paneId,
+				piSessionId: SESSION,
+				tabId: "w1A:t1",
+				rootPaneId: "w1A:p1",
+				label: "Subagents",
+				retainedPaneIds: [],
+				updatedAt: 0,
+			}),
+		);
+		const client = new FakeHerdrClient();
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.scanned).toBe(0);
+		expect(existsSync(join(dir, "broken.json"))).toBe(false);
+		expect(existsSync(join(dir, "mismatch.json"))).toBe(false);
+	});
+
+	test("leaves records for other Herdr sockets alone", async () => {
+		const dir = tempDir();
+		const otherIdentity = herdrOwnershipIdentity({ ...baseEnv, socketPath: "/tmp/other.sock" }, SESSION);
+		await persistRecord(dir, otherIdentity, {
+			tabId: "w1A:t1",
+			rootPaneId: "w1A:p1",
+			label: "Subagents · p1C · session-a",
+		});
+		const client = new FakeHerdrClient();
+		const result = await cleanupStaleHerdrTabRecords({
+			directory: dir,
+			socketPath: baseEnv.socketPath,
+			createClient: () => client,
+		});
+		expect(result.scanned).toBe(0);
+		expect(result.removed).toHaveLength(0);
 	});
 });
 

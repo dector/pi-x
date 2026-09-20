@@ -87,6 +87,12 @@ export class HerdrSubagentBackend implements SubagentBackend {
 			child = await this.createChild({
 				spawn: options,
 				launch: (bootstrap) => this.options.launcher.launch(lease.paneId, bootstrap),
+				display: {
+					agent: context.agent,
+					runId: context.runId,
+					...(context.dispatchId ? { dispatchId: context.dispatchId } : {}),
+					...(context.herdrRetention ? { retention: context.herdrRetention } : {}),
+				},
 				...(this.options.connectTimeoutMs !== undefined ? { connectTimeoutMs: this.options.connectTimeoutMs } : {}),
 				...(this.options.handshakeTimeoutMs !== undefined ? { handshakeTimeoutMs: this.options.handshakeTimeoutMs } : {}),
 				...(this.options.maxFrameBytes !== undefined ? { maxFrameBytes: this.options.maxFrameBytes } : {}),
