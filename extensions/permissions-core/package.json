@@ -2,11 +2,12 @@
   "name": "permissions-core",
   "private": true,
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
     "@types/node": "^22.15.30",
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "test": "bun test policy.test.ts",
-    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck policy.ts"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck policy.ts contract.ts provider.ts safe-mode.ts index.ts"
   }
 }

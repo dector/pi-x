@@ -202,6 +202,11 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		const request = pending.get(reply.id);
 		if (!request || request.settled) return;
 
+		// Only targeted providers contribute to arbitration. Other extensions
+		// may blanket-reply `hub:request`, and an anonymous reply cannot be
+		// attributed to a target.
+		if (!reply.from || !request.pendingTargets.has(reply.from)) return;
+
 		for (const result of reply.results) {
 			const list = request.resultsByWhat.get(result.what) ?? [];
 			list.push(result);
@@ -209,8 +214,13 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		}
 
 		if (reply.from) request.pendingTargets.delete(reply.from);
-		const allAnswered = request.cap.every((entry) => (request.resultsByWhat.get(entry.what)?.length ?? 0) > 0);
-		if (allAnswered || request.pendingTargets.size === 0) finalize(reply.id);
+
+		// Wait for every targeted provider before finalizing so multi-provider
+		// arbitration sees every verdict (`block > confirm > allow`). A provider
+		// that never replies is bounded by the pending TTL. Providers answer
+		// even when a request is irrelevant to them, so this does not hang for
+		// the registered built-ins.
+		if (request.pendingTargets.size === 0) finalize(reply.id);
 	});
 
 	pi.registerCommand("px:hub", {

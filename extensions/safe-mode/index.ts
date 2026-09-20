@@ -51,7 +51,8 @@ const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
 const PERM_TOOL = "perm:tool";
 const HUB_TOOL_TIMEOUT_MS = 300;
-const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:net", "perm:agent"] };
+// `perm:net` is owned by permissions-core; safe-mode only handles shell/io/agent.
+const HUB_CAPS = { provide: ["perm:shell", "perm:io", "perm:agent"] };
 const ESC = "\u001b";
 const OUTER_ACCESS_FLAG = "safe-mode-outer-access";
 const SMART_ALLOWLIST_RELATIVE_PATH = ".pi/memory/safe-mode/smart-allowlist.json";

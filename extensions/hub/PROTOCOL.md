@@ -31,7 +31,7 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 | --- | --- | --- |
 | `perm:shell` | run a shell command | safe-mode |
 | `perm:io` | read/write/edit/delete a path | safe-mode |
-| `perm:net` | outbound network request | safe-mode |
+| `perm:net` | outbound network request | permissions-core |
 | `perm:agent` | run project-local subagents | safe-mode |
 | `perm:tool` | classify a tool call (`allow`/`confirm`/`block`) | tool extensions |
 
@@ -52,8 +52,19 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 `perm:net`
 
 ```ts
-{ url: string; method?: string }
+{ toolName: "http" | "http_md" | "web_search"; operation: "request" | "search"; url?: string; method?: string; query?: string }
 ```
+
+`permissions-core` validates and normalizes this data, classifies trust, and
+disposes it under the effective network policy. Malformed data blocks; invalid
+input is never turned into an approval prompt. Provider ownership of `perm:net`
+moved from `safe-mode` to `permissions-core` in Stage 2.
+
+Stage 2 answers `confirm` but does not consume it: there is no network UI yet.
+Stage 3 (HTTP enforcement) must convert an effective `confirm` into `block` with
+a clear reason whenever no UI is available, and only then route HTTP,
+`http_md`, and `web_search` through `perm:net`. Do not implement HTTP
+enforcement in Stage 2.
 
 `perm:agent`
 
@@ -84,12 +95,14 @@ requester <──hub:answer── hub <──hub:reply── provider
 ## Arbitration
 
 - Providers answer on `hub:reply`; hub collects and emits one `hub:answer`.
+- Only the providers targeted for the request contribute to arbitration.
 - Per capability, the most restrictive result wins: `block` > `confirm` > `allow`.
 - A capability no provider answered becomes `block` (`reason: "no provider answered"`).
 - If no provider is registered for any requested capability, hub answers `block`
   immediately (`reason: "no hub provider"`).
-- Hub finalizes when every requested capability is answered or every target has replied.
-  A pending request is dropped after 30 minutes.
+- Hub finalizes only after every targeted provider has replied, so a late
+  `block`/`confirm` cannot be lost to an earlier `allow` from another provider.
+  A pending request is dropped after 30 minutes if a provider never replies.
 
 ## Open
 

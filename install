@@ -82,6 +82,7 @@ extensions=(
   "no-reflection"
   "switch-thinking"
   "safe-mode"
+  "permissions-core"
   "repo-stats"
   "skill-stats"
   "flutter"
