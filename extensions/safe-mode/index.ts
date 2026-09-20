@@ -23,6 +23,7 @@ import {
 	parseToolAuthorized,
 	type SafeModeStateChanged,
 } from "./contract.ts";
+import { withHerdrBlocked } from "./herdr-blocked.ts";
 
 interface SafeModeState {
 	mode: SafeMode;
@@ -40,7 +41,6 @@ type AllowlistEntry = {
 
 const STATUS_BAR_ID = "safe-mode";
 const STATUS_BAR_SET_EVENT = "px:status-bar:set";
-const HERDR_BLOCKED_EVENT = "px:herdr:blocked";
 const TOGGLE_READER_EVENT = "px:safe-mode:toggle-reader";
 const TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
 const SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
@@ -809,19 +809,6 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		return modeLabel(mode, outerAccess, options);
 	}
 
-	function reportHerdrBlocked(active: boolean, label?: string): void {
-		pi.events.emit(HERDR_BLOCKED_EVENT, { active, label });
-	}
-
-	async function withHerdrBlocked<T>(label: string, action: () => Promise<T>): Promise<T> {
-		reportHerdrBlocked(true, label);
-		try {
-			return await action();
-		} finally {
-			reportHerdrBlocked(false);
-		}
-	}
-
 	type HubAction = "allow" | "confirm" | "block";
 
 	// Ask hub for a tool-call classification. Resolves with the answer for
@@ -1382,7 +1369,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			const agents = sanitizeApprovalText(typeof data.agents === "string" ? data.agents : "project agents");
 			const source = sanitizeApprovalText(typeof data.source === "string" ? data.source : "(unknown)");
 
-			const decision = await withHerdrBlocked("safe-mode approval: perm:agent", () =>
+			const decision = await withHerdrBlocked(pi.events.emit, "safe-mode approval: perm:agent", () =>
 				confirmApproval(
 					ctx,
 					"Run project-local agents?",
@@ -1462,12 +1449,22 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary);
-		const approval = await withHerdrBlocked(`safe-mode approval: ${event.toolName}`, () =>
-			confirmApproval(ctx, prompt.title, prompt.message, {
+		// Nest the steering prompt inside the approval interval so Herdr stays
+		// blocked continuously across the picker -> steering transition. The
+		// nested enter bumps the consumer's depth from 1 to 2 instead of
+		// dropping it to 0 before the steering prompt opens.
+		const approval = await withHerdrBlocked(pi.events.emit, `safe-mode approval: ${event.toolName}`, async () => {
+			const picked = await confirmApproval(ctx, prompt.title, prompt.message, {
 				allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
-			}),
-		);
-		if (approval === "approve-all-session") {
+			});
+			if (picked !== "steer") return { decision: picked };
+
+			const steerText = await withHerdrBlocked(pi.events.emit, "safe-mode steering", () =>
+				ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
+			);
+			return { decision: picked, steerText };
+		});
+		if (approval.decision === "approve-all-session") {
 			if (exactBashCommand) {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);
 				ctx.ui.notify("safe-mode: remembered exact bash command for this session", "info");
@@ -1476,7 +1473,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		if (approval === "approve-project") {
+		if (approval.decision === "approve-project") {
 			if (mode === "smart" && exactBashCommand) {
 				autoApprovedBashCommandsForProject.add(exactBashCommand);
 				try {
@@ -1490,15 +1487,13 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		if (approval === "approve-once") {
+		if (approval.decision === "approve-once") {
 			if (hasProviderDecision) authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 
-		if (approval === "steer") {
-			const steerText = await withHerdrBlocked("safe-mode steering", () =>
-				ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
-			);
+		if (approval.decision === "steer") {
+			const steerText = approval.steerText;
 			if (typeof steerText === "string" && steerText.trim().length > 0) {
 				pi.sendUserMessage(steerText, { deliverAs: "steer" });
 				ctx.ui.notify("safe-mode: steering message sent.", "info");

@@ -202,6 +202,24 @@ When approval is required:
 - `Esc` blocks the tool call, prompts for steering text, and sends it to the agent as a steer message
 - Existing selection navigation (arrows / j / k) remains unchanged
 
+## Herdr blocked state
+
+Safe-mode reports its interactive waits to the external Herdr integration by
+emitting `herdr:blocked` (`{ active: true, label }` immediately before the wait,
+`{ active: false }` in `finally`). This covers the three approval/steering waits
+that open a user dialog:
+
+- hub-routed `perm:agent` approval;
+- normal tool-call approval;
+- steering input after a rejection.
+
+The event name is an external Herdr contract and intentionally has **no** `px:`
+prefix; Herdr's managed integration owns and consumes it. The blocked interval
+is owned by the component that actually opens the UI, so safe-mode emits it only
+while its own approval/input dialog is open. Safe-mode does not inspect Herdr
+environment variables or require Herdr to be installed. Nested-wait accounting
+stays in the Herdr consumer.
+
 ## CLI flag
 
 - `--safe-mode <paranoid|reader|smart|yolo>`

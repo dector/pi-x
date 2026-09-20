@@ -54,6 +54,7 @@ each registering as a `perm:tool` provider.
 - [ ] **Status capability** — replace `status-bar`'s private ping/pong + duplicated constants
 - [ ] **Presence** — generic availability query instead of per-extension handshakes
 - [ ] **Observers** — `status-bar`, `herdr` subscribe to hub traffic for badges/telemetry
+  - A generic Herdr observer over hub traffic is telemetry only. It must not infer user-wait/blocked state from pending requests; that requires an explicit protocol signal (for example a correlated `hub:wait` with `kind: "user"`).
 
 ## 5. Protocol / open items
 

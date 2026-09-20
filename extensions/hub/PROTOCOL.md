@@ -148,6 +148,20 @@ requester ──hub:ask──> hub ──hub:request──> provider
 requester <──hub:answer── hub <──hub:reply── provider
 ```
 
+## Waiting state
+
+Hub pending state (a `hub:ask` awaiting `hub:answer`) means "waiting for
+providers", not necessarily "waiting for a user". Many requests are quick,
+non-interactive classifications (for example `perm:tool` and `perm:net`) and
+must not be reported as user waits.
+
+Hub does not open approval UI and does not emit user-wait/blocked state. The
+provider that opens an interactive dialog owns that interval and is responsible
+for reporting the wait to integrations such as Herdr. Today that provider is
+`safe-mode`, which emits the external `herdr:blocked` event while its dialog is
+open. A future generic hub observer must not infer a user wait from pending
+requests.
+
 ## One-time execution authorization
 
 Classification is advisory until a consumer enforces it. Extensions that
