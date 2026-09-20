@@ -1,8 +1,9 @@
 # hub roadmap
 
 Status: hub provides `register`/`unregister`/`ask`/`request`/`reply`/`answer`,
-a capability registry, most-restrictive arbitration, and `/px:hub`.
-Permissions are the first domain. See [`PROTOCOL.md`](PROTOCOL.md).
+a capability registry, most-restrictive arbitration, an explicit user-wait
+registry, and `/px:hub`. Permissions are the first domain. See
+[`PROTOCOL.md`](PROTOCOL.md).
 
 ## Principles
 
@@ -19,6 +20,8 @@ Permissions are the first domain. See [`PROTOCOL.md`](PROTOCOL.md).
 - [x] `perm:agent`: `subagent` asks, `safe-mode` decides interactively
 - [x] `perm:tool`: `safe-mode` asks, `http` classifies `http`/`http_md`/`web_search`, `sqlite` classifies `sqlite`
 - [x] HTTP risk rules moved out of safe-mode
+- [x] explicit user-wait registry (`hub:user-wait:set`/`clear`/`changed`/`ack`), `/px:hub` wait listing, and the `herdr:blocked` compatibility adapter
+- [x] `safe-mode` migrated to `withUserWait` for `perm:agent`, tool approvals, and steering input
 
 ## 1. Finish permission migration
 
@@ -54,8 +57,9 @@ each registering as a `perm:tool` provider.
 - [ ] **Status capability** — replace `status-bar`'s private ping/pong + duplicated constants
 - [ ] **Presence** — generic availability query instead of per-extension handshakes
 - [ ] **Observers** — `status-bar`, `herdr` subscribe to hub traffic for badges/telemetry
-  - A generic Herdr observer over hub traffic is telemetry only. It must not infer user-wait/blocked state from pending requests; that requires an explicit protocol signal (for example a correlated `hub:wait` with `kind: "user"`).
+  - [x] **Explicit user-wait signal** — `hub:user-wait:set`/`clear`/`changed`/`ack`; observers read the aggregate snapshot and never infer waits from pending requests. Hub maps aggregate crossings to the external `herdr:blocked` event.
   - [x] **Herdr tab status** — adjacent, not hub traffic: hub mirrors Herdr's `pane.agent_status_changed` onto its own tab label ([`herdr-tab.ts`](herdr-tab.ts); see [README](README.md#herdr-tab-status)). It does not use the capability registry.
+  - [ ] **status-bar** observer over the user-wait aggregate (badges/telemetry)
 
 ## 5. Protocol / open items
 

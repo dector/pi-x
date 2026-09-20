@@ -19,12 +19,47 @@ extensions (`perm:tool`). Safe-mode applies built-in fallback decisions when no
 `perm:tool` provider answers. Requesters include `subagent`
 (`perm:agent`) and the network tools (`perm:net`).
 
+Hub also aggregates explicit **user waits**: a UI owner declares `set` before
+opening a dialog and `clear` when it closes; hub publishes the aggregate on
+`hub:user-wait:changed` and maps it to Herdr's `herdr:blocked` event. Hub never
+infers a wait from a pending `hub:ask`.
+
 ## Commands
 
-- `/px:hub` — show registered providers and pending permission requests, plus
-  the current Herdr tab status (`<status> (<tab_id>)` or `off`).
+- `/px:hub` — show registered providers, pending permission requests, active
+  user waits (`owner/<short-id>: label`), and the current Herdr tab status
+  (`<status> (<tab_id>)` or `off`).
 
 See [`PROTOCOL.md`](PROTOCOL.md) for the channel and payload contract.
+
+## User waits
+
+Hub is the broker for explicit user-wait state, not an owner of approval UI.
+The extension that opens the dialog declares the wait; this keeps the UI and
+policy in the provider/requester that already owns them.
+
+- Pending `hub:ask` requests (including `perm:tool`/`perm:net` classifications
+  and headless `confirm`-to-block results) are **never** treated as user waits.
+- Waits are keyed by `owner` + `id`, so concurrent and nested waits from one or
+  more extensions cannot clear each other. Each concrete wait uses a generated
+  id; no shared per-owner id.
+- `hub:user-wait:changed` is the integration-neutral observer contract: observers
+  read `{ active, count, waits[] }` and must not inspect hub internals.
+- Hub answers `set`/`clear` with `hub:user-wait:ack` and emits `changed` only on
+  a real state or metadata change. Malformed payloads are ignored.
+- Labels are display text only; consumers sanitize them before rendering.
+  Request bodies, commands, and credentials must never be included.
+- Session shutdown clears the registry and emits the final release transition.
+
+### Herdr compatibility
+
+Herdr's managed integration consumes the external `herdr:blocked` event and
+keeps its own `blockedCount`. Hub emits it only on aggregate crossings:
+`0 -> 1` as `{ active: true, label }`, `1 -> 0` as `{ active: false }`, and
+nothing while the count stays non-zero. This prevents a label update or a second
+concurrent wait from incrementing Herdr's counter into a stuck state. Safe-mode's
+direct `herdr:blocked` emission is a fallback for an absent or old hub only
+(see [`../safe-mode/README.md`](../safe-mode/README.md#herdr-blocked-state)).
 
 ## Herdr tab status
 

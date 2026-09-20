@@ -204,21 +204,43 @@ When approval is required:
 
 ## Herdr blocked state
 
-Safe-mode reports its interactive waits to the external Herdr integration by
-emitting `herdr:blocked` (`{ active: true, label }` immediately before the wait,
-`{ active: false }` in `finally`). This covers the three approval/steering waits
-that open a user dialog:
+Safe-mode owns three interactive waits that open a user dialog:
 
 - hub-routed `perm:agent` approval;
 - normal tool-call approval;
 - steering input after a rejection.
 
-The event name is an external Herdr contract and intentionally has **no** `px:`
-prefix; Herdr's managed integration owns and consumes it. The blocked interval
-is owned by the component that actually opens the UI, so safe-mode emits it only
-while its own approval/input dialog is open. Safe-mode does not inspect Herdr
-environment variables or require Herdr to be installed. Nested-wait accounting
-stays in the Herdr consumer.
+Each wait goes through `withUserWait` (`user-wait.ts`), which:
+
+1. generates a unique wait id;
+2. registers a temporary `hub:user-wait:ack` listener;
+3. emits `hub:user-wait:set` **before** opening the UI;
+4. if hub acknowledges synchronously, marks the wait as `hub` mode; otherwise
+   falls back to emitting the external `herdr:blocked { active: true, label }`
+   directly and marks it `legacy` mode;
+5. clears it in `finally` using exactly the same mode — `hub:user-wait:clear`
+   for `hub`, `herdr:blocked { active: false }` for `legacy`.
+
+Hub aggregates all owners' waits and, when the aggregate leaves zero, emits the
+single `herdr:blocked { active: true }`; when the last wait clears it emits
+`herdr:blocked { active: false }`. The direct path is only a fallback for an
+absent or older hub. Safe-mode never emits both paths for one wait, which would
+double-increment Herdr's counter.
+
+The steering input opens **inside** the tool-approval wait, so the aggregate
+never drops to zero across the picker -> steering transition. Hub emits one
+block for the whole interval; nested-wait accounting stays in the aggregate
+registry, not in Herdr.
+
+The `herdr:blocked` event name is an external Herdr contract and intentionally
+has **no** `px:` prefix; Herdr's managed integration owns and consumes it.
+Safe-mode does not inspect Herdr environment variables or require Herdr to be
+installed, and it does not require hub: the fallback keeps it working with an
+absent or old hub.
+
+Pending permission requests are not user waits. A `perm:tool`/`perm:net`
+classification, an automatically allowed call, or a headless `confirm`-to-block
+never sets wait state; only an actual open dialog does.
 
 ## CLI flag
 

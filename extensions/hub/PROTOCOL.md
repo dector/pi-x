@@ -14,8 +14,13 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 | `hub:request` | hub → provider | `{ id, from?, ctx?, cap: CapRequest[], targets: string[] }` |
 | `hub:reply` | provider → hub | `{ id, from?, results: CapResult[] }` |
 | `hub:answer` | hub → client | `{ id, results: CapResult[] }` |
+| `hub:user-wait:set` | UI owner → hub | `{ id, owner, label?, kind? }` |
+| `hub:user-wait:clear` | UI owner → hub | `{ id, owner }` |
+| `hub:user-wait:changed` | hub → observers | `{ active, count, waits[] }` |
+| `hub:user-wait:ack` | hub → UI owner | `{ id, owner, operation: "set" \| "clear" }` |
 
 - `id` on `hub:ask` is a correlation id; the same `id` comes back on `hub:answer`.
+- User-wait channels are a separate protocol; see [User waits](#user-waits).
 - Clients may register at any time. Registration is idempotent (upsert by `id`).
 
 ```ts
@@ -151,19 +156,84 @@ requester ──hub:ask──> hub ──hub:request──> provider
 requester <──hub:answer── hub <──hub:reply── provider
 ```
 
-## Waiting state
+## User waits
 
 Hub pending state (a `hub:ask` awaiting `hub:answer`) means "waiting for
 providers", not necessarily "waiting for a user". Many requests are quick,
-non-interactive classifications (for example `perm:tool` and `perm:net`) and
-must not be reported as user waits.
+non-interactive classifications (for example `perm:tool` and `perm:net`), and a
+`confirm` result in headless mode becomes a block. **Hub never infers a user
+wait from pending requests, `confirm` results, or `hub:ask` activity.**
 
-Hub does not open approval UI and does not emit user-wait/blocked state. The
-provider that opens an interactive dialog owns that interval and is responsible
-for reporting the wait to integrations such as Herdr. Today that provider is
-`safe-mode`, which emits the external `herdr:blocked` event while its dialog is
-open. A future generic hub observer must not infer a user wait from pending
-requests.
+Instead, the component that actually opens the UI declares the wait. Hub stores
+those declarations and publishes the aggregate; it does not own the dialog or
+the policy behind it.
+
+### Set
+
+```ts
+{ id: string; owner: string; label?: string; kind?: "approval" | "input" | "other" }
+```
+
+### Clear
+
+```ts
+{ id: string; owner: string }
+```
+
+### Acknowledgement
+
+```ts
+{ id: string; owner: string; operation: "set" | "clear" }
+```
+
+Pi's event dispatch is synchronous, so a client can register an acknowledgement
+listener, emit `set`, and know before `emit` returns whether the installed hub
+supports this protocol. An absent or older hub stays silent, which lets the
+client fall back to a direct integration event (see the safe-mode client).
+
+### Aggregate change
+
+```ts
+{
+  active: boolean;
+  count: number;
+  waits: Array<{ id: string; owner: string; label?: string; kind?: "approval" | "input" | "other" }>;
+}
+```
+
+`hub:user-wait:changed` is the integration-neutral observer contract. Observers
+must read this snapshot and not inspect hub's internal registry.
+
+### Registry semantics
+
+- Active waits are keyed by `owner` + `id`. `set` is idempotent for the same key;
+  a repeated `set` updates metadata without incrementing the count.
+- `clear` removes only the matching `owner` + `id`, so one extension cannot
+  clear another extension's wait. Unknown or wrong-owner clears are harmless.
+- Malformed payloads are ignored and not acknowledged.
+- `changed` is emitted only when effective state or visible metadata changes.
+- Concurrent and nested waits stay active until every matching entry is cleared.
+- Each concrete UI wait uses a generated id. Do not reuse one global id per
+  owner, because nested or overlapping waits could then clear each other.
+- Session shutdown clears the entire registry and releases any Herdr block.
+- `label` is display text only. Hub does not require it and consumers must
+  sanitize it before rendering. Full prompt content must never be sent.
+- `/px:hub` lists active waits as `owner/<short-id>: label`; the full id is never
+  prompt content.
+
+### Herdr compatibility adapter
+
+Herdr's managed Pi integration listens for the external `herdr:blocked` event
+and maintains its own `blockedCount`. Hub therefore maps aggregate zero/non-zero
+crossings only:
+
+- aggregate `0 -> 1`: emit `herdr:blocked` `{ active: true, label }`;
+- aggregate `1 -> 0`: emit `herdr:blocked` `{ active: false }`;
+- `N -> N+1` or `N -> N-1` while both counts are non-zero: emit nothing.
+
+Emitting another `{ active: true }` merely to refresh a label would increment
+Herdr's counter and could leave the pane stuck as blocked. The complete updated
+list is still available on `hub:user-wait:changed`.
 
 ## One-time execution authorization
 
