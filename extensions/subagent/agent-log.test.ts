@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
 	buildAgentLogPicker,
+	findPersistedAgentLogEntry,
 	formatAgentLog,
 	formatAgentLogEntry,
 	mergeAgentLogEntries,
 	persistedAgentLogEntries,
+	recoverPersistedResult,
 	registryAgentLogEntries,
 	type AgentLogEntry,
 } from "./agent-log.ts";
@@ -709,5 +711,67 @@ describe("registry async metadata", () => {
 		});
 		expect(text).toContain("Mode: chain (step 2) [async]");
 		expect(text).toContain("Dispatch: dispatch-7");
+	});
+});
+
+describe("persisted transcript recovery", () => {
+	test("persisted entries carry the full result for read-only replay", () => {
+		const result = { runId: "sa-1", agent: "scout", task: "find", messages: [assistant("done")], exitCode: 0, usage };
+		const [entry] = persistedAgentLogEntries(branchWithDetails({ mode: "single", results: [result] }));
+		expect(entry?.result).toBe(result);
+	});
+
+	test("registry entries carry the live result", () => {
+		const run = runtime({ runId: "sa-live" });
+		const [entry] = registryAgentLogEntries([run]);
+		expect(entry?.result).toBe(run.result);
+	});
+
+	test("recovers a persisted result by run id", () => {
+		const result = { runId: "sa-2", agent: "worker", task: "fix", messages: [assistant("ok")], exitCode: 0, usage };
+		const branch = branchWithDetails({ mode: "single", results: [result] });
+		expect(recoverPersistedResult(branch, "sa-2")).toBe(result);
+	});
+
+	test("returns undefined for unknown or empty run ids", () => {
+		const branch = branchWithDetails({
+			mode: "single",
+			results: [{ runId: "sa-1", agent: "a", task: "t", messages: [], exitCode: 0, usage }],
+		});
+		expect(recoverPersistedResult(branch, "missing")).toBeUndefined();
+		expect(recoverPersistedResult(branch, "")).toBeUndefined();
+		expect(findPersistedAgentLogEntry(branch, "sa-1")?.agentName).toBe("a");
+	});
+
+	test("recovers async completion results but ignores unsettled acknowledgements", () => {
+		const result = { runId: "sa-3", agent: "worker", task: "async", messages: [assistant("done")], exitCode: 0, usage };
+		const completed = completionBranch({
+			mode: "single",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "completed",
+			results: [result],
+		});
+		expect(recoverPersistedResult(completed, "sa-3")).toBe(result);
+		const started = branchWithDetails({
+			mode: "single",
+			execution: "async",
+			dispatchId: "d-2",
+			dispatchStatus: "started",
+			results: [result],
+		});
+		expect(recoverPersistedResult(started, "sa-3")).toBeUndefined();
+	});
+
+	test("merge keeps the registry result on a runId collision", () => {
+		const run = runtime({ runId: "sa-1", completedAt: Date.now() });
+		const persisted = persistedAgentLogEntries(
+			branchWithDetails({
+				mode: "single",
+				results: [{ runId: "sa-1", agent: "scout", task: "t", messages: [assistant("old")], exitCode: 0, usage }],
+			}),
+		);
+		const [merged] = mergeAgentLogEntries(registryAgentLogEntries([run]), persisted);
+		expect(merged?.result).toBe(run.result);
 	});
 });

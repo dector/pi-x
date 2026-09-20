@@ -17,7 +17,7 @@
 import { isTerminalDispatchStatus, normalizeSubagentDetails, SUBAGENT_COMPLETION_CUSTOM_TYPE } from "./completion.ts";
 import type { SubagentRunRuntime } from "./registry.ts";
 import { getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
-import type { SubagentDetails, SubagentExecution } from "./types.ts";
+import type { SingleResult, SubagentDetails, SubagentExecution } from "./types.ts";
 
 export type AgentLogStatus = "running" | "completed" | "failed";
 export type AgentLogSource = "registry" | "persisted";
@@ -38,6 +38,13 @@ export interface AgentLogEntry {
 	dispatchId?: string;
 	/** Whether the run came from a detached async or blocking dispatch. */
 	execution?: SubagentExecution;
+	/**
+	 * Full result behind this entry, when available. Registry entries always
+	 * carry the live result; persisted entries carry the result embedded in
+	 * their completion details. Used to open a read-only transcript after the
+	 * registry entry has been pruned.
+	 */
+	result?: SingleResult;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,6 +78,7 @@ export function registryAgentLogEntries(runs: SubagentRunRuntime[]): AgentLogEnt
 			completedAt: run.completedAt,
 			dispatchId: run.dispatchId,
 			execution: run.execution,
+			result: run.result,
 		});
 	}
 	return entries;
@@ -153,6 +161,7 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 					completedAt,
 					dispatchId: details.dispatchId,
 					execution: details.execution,
+					result,
 				});
 			}
 			continue;
@@ -188,6 +197,7 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 				completedAt,
 				dispatchId: details.dispatchId,
 				execution: details.execution,
+				result,
 			});
 		}
 	}
@@ -219,6 +229,7 @@ function mergeMetadata(entry: AgentLogEntry, richer: AgentLogEntry): AgentLogEnt
 		completedAt: entry.completedAt ?? richer.completedAt,
 		dispatchId: entry.dispatchId ?? richer.dispatchId,
 		execution: entry.execution ?? richer.execution,
+		result: entry.result ?? richer.result,
 	};
 }
 
@@ -290,6 +301,25 @@ export function buildAgentLogPicker(entries: AgentLogEntry[]): {
 		labels.push(label);
 	}
 	return { labels, byLabel };
+}
+
+/**
+ * Find the persisted log entry for a run id, including the full result when the
+ * completion details still carry it. Returns `undefined` for unknown ids and
+ * for legacy records without a run id.
+ */
+export function findPersistedAgentLogEntry(branch: unknown, runId: string): AgentLogEntry | undefined {
+	if (!runId) return undefined;
+	return persistedAgentLogEntries(branch).find((entry) => entry.runId === runId);
+}
+
+/**
+ * Recover the complete persisted `SingleResult` for a run id. This is what
+ * lets a completed or pruned run reopen in the read-only attach view after
+ * `/resume`, using the same transcript model as a live run.
+ */
+export function recoverPersistedResult(branch: unknown, runId: string): SingleResult | undefined {
+	return findPersistedAgentLogEntry(branch, runId)?.result;
 }
 
 /** Full task + output view shown in the editor. */

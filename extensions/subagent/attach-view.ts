@@ -26,6 +26,8 @@ import {
 	wrapTextWithAnsi,
 	type Component,
 	type Focusable,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { buildTranscript, TranscriptViewport, type TranscriptBlock } from "./attach.ts";
 import { formatToolCall, formatToolStatus, type ThemeFg } from "./format.ts";
@@ -108,6 +110,11 @@ export interface AttachViewOptions {
 	confirmStop?: (run: AttachViewRun) => Promise<boolean>;
 	/** Terminal row count; defaults to 24 when unavailable. */
 	terminalRows?: () => number;
+	/**
+	 * Force read-only rendering. Set when viewing a persisted completed run
+	 * whose result may not carry a terminal state/exit code.
+	 */
+	forceReadOnly?: boolean;
 	/** Injectable clock for deterministic tests. */
 	now?: () => number;
 	pollIntervalMs?: number;
@@ -159,6 +166,7 @@ export class AttachView implements Component, Focusable {
 
 	/** Whether the run has settled and steering is disabled. */
 	get isReadOnly(): boolean {
+		if (this.options.forceReadOnly) return true;
 		const run = this.options.getRun();
 		if (run.completedAt !== undefined) return true;
 		const result = this.options.getResult();
@@ -262,8 +270,10 @@ export class AttachView implements Component, Focusable {
 		else if (matchesKey(data, Key.down)) this.viewport.lineDown();
 		else if (matchesKey(data, Key.pageUp)) this.viewport.pageUp();
 		else if (matchesKey(data, Key.pageDown)) this.viewport.pageDown();
-		else if (matchesKey(data, Key.home)) this.viewport.scrollToTop();
-		else if (matchesKey(data, Key.end)) this.viewport.scrollToBottom();
+		else if (matchesKey(data, Key.ctrl("u"))) this.viewport.halfPageUp();
+		else if (matchesKey(data, Key.ctrl("d"))) this.viewport.halfPageDown();
+		else if (matchesKey(data, Key.home) || matchesKey(data, "g")) this.viewport.scrollToTop();
+		else if (matchesKey(data, Key.end) || matchesKey(data, Key.shift("g"))) this.viewport.scrollToBottom();
 		else if (matchesKey(data, Key.ctrl("o"))) this.expanded = !this.expanded;
 		else if (!readOnly && this.hasControls && matchesKey(data, "p")) {
 			void this.pause();
@@ -413,6 +423,18 @@ export class AttachView implements Component, Focusable {
 		// Rendering is recomputed from live state on every frame; nothing cached.
 	}
 
+	/**
+	 * Scroll with the mouse wheel in fullscreen mode. Wheel deltas are logical
+	 * lines, negative for up. Regular mode never captures the mouse, so this is
+	 * a no-op there and keyboard scrolling stays authoritative.
+	 */
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+		this.viewport.scrollBy(event.wheelDelta * 3);
+		this.options.requestRender();
+		return { handled: true };
+	}
+
 	/** Clear the poll timer. Safe to call multiple times. */
 	dispose(): void {
 		if (this.disposed) return;
@@ -471,18 +493,33 @@ export class AttachView implements Component, Focusable {
 
 	private helpLine(width: number, readOnly: boolean): string {
 		const theme = this.options.theme;
+		const expand = this.expanded ? "collapse" : "expand";
 		if (readOnly) {
-			const expand = this.expanded ? "collapse" : "expand";
-			const help = `Esc detach · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand} · read-only`;
+			const help =
+				width >= 56
+					? `Esc detach · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand} · read-only`
+					: width >= 34
+						? `Esc detach · ↑↓/PgUp/PgDn · Ctrl+O ${expand}`
+						: "Esc detach";
 			return truncateToWidth(theme.fg("dim", help), width, "…");
 		}
 		if (this.mode === "compose") {
-			return truncateToWidth(theme.fg("dim", "Esc back · Enter send · Shift+Enter newline · Ctrl+Enter send"), width, "…");
+			const help =
+				width >= 56
+					? "Esc back · Enter send · Shift+Enter newline · Ctrl+Enter send"
+					: "Esc back · Enter send";
+			return truncateToWidth(theme.fg("dim", help), width, "…");
 		}
 		const follow = this.viewport.isFollowing ? "following" : "scrolled";
-		const expand = this.expanded ? "collapse" : "expand";
 		const controls = this.hasControls ? " · p pause · r resume · a stop" : "";
-		const help = `Esc detach · Enter steer${controls} · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`;
+		const help =
+			width >= 96
+				? `Esc detach · Enter steer${controls} · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`
+				: width >= 40
+					? `Esc detach · Enter steer${this.hasControls ? " · p/r/a" : ""} · ${follow} · PgUp/PgDn · Ctrl+O ${expand}`
+					: width >= 28
+						? `Esc detach · ${follow} · Ctrl+O`
+						: "Esc detach";
 		return truncateToWidth(theme.fg("dim", help), width, "…");
 	}
 
@@ -580,6 +617,9 @@ export class AttachView implements Component, Focusable {
 
 	private wrapWithPrefix(prefix: string, text: string, width: number): string[] {
 		const prefixWidth = visibleWidth(prefix);
+		// A prefix wider than the viewport would overflow every line; drop the
+		// hanging label and wrap the text alone instead.
+		if (prefixWidth >= width) return this.wrap(text, width);
 		const lines: string[] = [];
 		for (const raw of text.split("\n")) {
 			const wrapped = wrapTextWithAnsi(raw, Math.max(1, width - prefixWidth));

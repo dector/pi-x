@@ -206,4 +206,25 @@ describe("TranscriptViewport", () => {
 		viewport.scrollToBottom();
 		expect(viewport.scrollOffset).toBe(95);
 	});
+
+	test("half-page scrolling moves by half the viewport and disables tail-follow", () => {
+		const viewport = new TranscriptViewport(10);
+		viewport.update(100);
+		viewport.halfPageUp();
+		expect(viewport.scrollOffset).toBe(85);
+		expect(viewport.isFollowing).toBe(false);
+		viewport.halfPageDown();
+		expect(viewport.scrollOffset).toBe(90);
+		expect(viewport.isFollowing).toBe(true);
+	});
+
+	test("half-page scrolling clamps at the top and keeps a one-line minimum", () => {
+		const viewport = new TranscriptViewport(1);
+		viewport.update(100);
+		viewport.halfPageUp();
+		expect(viewport.scrollOffset).toBe(98);
+		viewport.halfPageUp();
+		viewport.halfPageUp();
+		expect(viewport.scrollOffset).toBe(96);
+	});
 });

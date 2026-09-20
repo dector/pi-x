@@ -225,6 +225,14 @@ export class TranscriptViewport {
 		this.scrollBy(this.height);
 	}
 
+	halfPageUp(): void {
+		this.scrollBy(-Math.max(1, Math.floor(this.height / 2)));
+	}
+
+	halfPageDown(): void {
+		this.scrollBy(Math.max(1, Math.floor(this.height / 2)));
+	}
+
 	scrollToTop(): void {
 		this.offset = 0;
 		this.following = false;

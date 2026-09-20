@@ -29,11 +29,13 @@ import { Container, Editor, Markdown, Spacer, Text, type EditorTheme } from "@ea
 import { Type } from "typebox";
 import {
 	buildAgentLogPicker,
+	findPersistedAgentLogEntry,
 	formatAgentLog,
 	formatAgentLogEntry,
 	mergeAgentLogEntries,
 	persistedAgentLogEntries,
 	registryAgentLogEntries,
+	type AgentLogEntry,
 } from "./agent-log.ts";
 import { type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
@@ -685,7 +687,17 @@ export default function (pi: ExtensionAPI) {
 		if (!run.completedAt) throw new Error(`Run ${run.runId} did not settle after stop; it may still be terminating.`);
 	}
 
-	async function openAttach(run: SubagentRunRuntime, ctx: ExtensionContext): Promise<void> {
+	interface AttachOverlayTarget {
+		runId: string;
+		agentName: string;
+		startedAt: number;
+		getResult: () => SingleResult;
+		getCompletedAt: () => number | undefined;
+		/** Live registry run; omitted for a read-only persisted transcript. */
+		live?: SubagentRunRuntime;
+	}
+
+	async function openAttachOverlay(target: AttachOverlayTarget, ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) return;
 		try {
 			await ctx.ui.custom<null>(
@@ -694,14 +706,14 @@ export default function (pi: ExtensionAPI) {
 						borderColor: (text) => theme.fg("accent", text),
 						selectList: getSelectListTheme(),
 					};
-					const editor = new Editor(tui, editorTheme);
+					const live = target.live;
 					const view = new AttachView({
-						getResult: () => run.result,
+						getResult: target.getResult,
 						getRun: () => ({
-							runId: run.runId,
-							agentName: run.agentName,
-							startedAt: run.startedAt,
-							completedAt: run.completedAt,
+							runId: target.runId,
+							agentName: target.agentName,
+							startedAt: target.startedAt,
+							completedAt: target.getCompletedAt(),
 						}),
 						theme: {
 							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
@@ -710,16 +722,20 @@ export default function (pi: ExtensionAPI) {
 						requestRender: () => tui.requestRender(),
 						done: (result) => done(result),
 						terminalRows: () => tui.terminal.rows,
-						editor,
+						// A recovered persisted transcript has no child to control, so it is
+						// always read-only even if its stored result lacks a final state.
+						forceReadOnly: !live,
+						editor: live ? new Editor(tui, editorTheme) : undefined,
 						// Address every control through the captured run object, not the
 						// registry, so the overlay keeps working after the registry prunes
 						// the entry once the run completes.
-						steer: (_runId, message) => sendSteer(run, message),
-						pause: () => pauseAttachedRun(run),
-						resume: () => resumeAttachedRun(run),
-						stop: () => stopAttachedRun(run),
-						confirmStop: (target) =>
-							ctx.ui.confirm("Stop subagent", `Stop ${target.agentName} [${target.runId}]?`),
+						steer: live ? (_runId, message) => sendSteer(live, message) : undefined,
+						pause: live ? () => pauseAttachedRun(live) : undefined,
+						resume: live ? () => resumeAttachedRun(live) : undefined,
+						stop: live ? () => stopAttachedRun(live) : undefined,
+						confirmStop: live
+							? (run) => ctx.ui.confirm("Stop subagent", `Stop ${run.agentName} [${run.runId}]?`)
+							: undefined,
 					});
 					closeActiveAttach = () => view.close();
 					return view;
@@ -734,6 +750,41 @@ export default function (pi: ExtensionAPI) {
 		} finally {
 			closeActiveAttach = undefined;
 		}
+	}
+
+	/** Live attach for a registry run (read-only automatically once settled). */
+	function openAttach(run: SubagentRunRuntime, ctx: ExtensionContext): Promise<void> {
+		return openAttachOverlay(
+			{
+				runId: run.runId,
+				agentName: run.agentName,
+				startedAt: run.startedAt,
+				getResult: () => run.result,
+				getCompletedAt: () => run.completedAt,
+				live: run,
+			},
+			ctx,
+		);
+	}
+
+	/**
+	 * Read-only attach for a persisted completed run. Used after registry pruning
+	 * or `/resume`, when only the completion details (not a live runtime) remain.
+	 */
+	function openRecoveredAttach(entry: AgentLogEntry, ctx: ExtensionContext): Promise<void> {
+		const result = entry.result;
+		if (!result) return Promise.resolve();
+		const completedAt = entry.completedAt ?? Date.now();
+		return openAttachOverlay(
+			{
+				runId: entry.runId || result.runId || "unknown",
+				agentName: entry.agentName || result.agent,
+				startedAt: entry.startedAt ?? completedAt,
+				getResult: () => result,
+				getCompletedAt: () => completedAt,
+			},
+			ctx,
+		);
 	}
 
 	if (!childControl) {
@@ -759,7 +810,7 @@ export default function (pi: ExtensionAPI) {
 					const run = runs[labels.indexOf(selected)];
 					if (!run) continue;
 					const actions = run.completedAt
-						? ["Attach", "Details", "Back"]
+						? ["View transcript", "Details", "Back"]
 						: [
 							"Attach",
 							"Details",
@@ -770,7 +821,7 @@ export default function (pi: ExtensionAPI) {
 						];
 					const action = await ctx.ui.select(`${run.agentName} [${run.runId}]`, actions);
 					if (!action || action === "Back") continue;
-					if (action === "Attach") {
+					if (action === "Attach" || action === "View transcript") {
 						await openAttach(run, ctx);
 						continue;
 					}
@@ -848,7 +899,41 @@ export default function (pi: ExtensionAPI) {
 				const title = entry.runId
 					? `Subagent log: ${entry.agentName} [${entry.runId}]`
 					: `Subagent log: ${entry.agentName}`;
+				const run = entry.runId ? registry.get(entry.runId) : undefined;
+				const canViewTranscript = Boolean(run || (entry.result && entry.status !== "running"));
+				if (canViewTranscript) {
+					const action = await ctx.ui.select(title, ["View transcript", "View text", "Back"]);
+					if (!action || action === "Back") return;
+					if (action === "View transcript") {
+						if (run) await openAttach(run, ctx);
+						else await openRecoveredAttach(entry, ctx);
+						return;
+					}
+				}
 				await ctx.ui.editor(title, formatAgentLogEntry(entry));
+			},
+		});
+
+		pi.registerCommand("px:agent:attach", {
+			description: "Attach to a subagent run by id (read-only when completed)",
+			handler: async (args, ctx) => {
+				if (!ctx.hasUI) return;
+				const runId = (args ?? "").trim();
+				if (!runId) {
+					ctx.ui.notify("Usage: /px:agent:attach <runId>", "warning");
+					return;
+				}
+				const run = registry.get(runId);
+				if (run) {
+					await openAttach(run, ctx);
+					return;
+				}
+				const entry = findPersistedAgentLogEntry(ctx.sessionManager.getBranch(), runId);
+				if (entry?.result) {
+					await openRecoveredAttach(entry, ctx);
+					return;
+				}
+				ctx.ui.notify(`No subagent run found for ${runId}.`, "error");
 			},
 		});
 	}

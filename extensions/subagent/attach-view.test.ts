@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { ATTACH_POLL_INTERVAL_MS, AttachView, type AttachEditor, type AttachViewTimers } from "./attach-view.ts";
 import type { SingleResult } from "./types.ts";
 
@@ -11,6 +11,10 @@ const PAGE_DOWN = "\x1b[6~";
 const END = "\x1b[F";
 const ENTER = "\r";
 const CTRL_O = "\x0f";
+const CTRL_U = "\x15";
+const CTRL_D = "\x04";
+const LOWER_G = "g";
+const UPPER_G = "G";
 const CTRL_ENTER = "\x1b[13;5u";
 const PAUSE_KEY = "p";
 const RESUME_KEY = "r";
@@ -107,6 +111,10 @@ function makeFakeTimers() {
 	};
 }
 
+function makeWheel(wheelDelta: number): TuiMouseEvent {
+	return { type: "wheel", button: "none", x: 0, y: 0, screenX: 0, screenY: 0, width: 80, height: 24, shift: false, alt: false, ctrl: false, wheelDelta };
+}
+
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function makeView(options: {
@@ -122,6 +130,7 @@ function makeView(options: {
 	resume?: (runId: string) => Promise<void>;
 	stop?: (runId: string) => Promise<void>;
 	confirmStop?: (run: { runId: string; agentName: string }) => Promise<boolean>;
+	forceReadOnly?: boolean;
 } = {}) {
 	const result = options.result ?? makeResult();
 	const startedAt = Date.now() - 42_000;
@@ -140,6 +149,7 @@ function makeView(options: {
 		resume: options.resume,
 		stop: options.stop,
 		confirmStop: options.confirmStop,
+		forceReadOnly: options.forceReadOnly,
 	});
 	return { view, result };
 }
@@ -505,5 +515,79 @@ describe("AttachView", () => {
 		const text = view.render(80).join("\n");
 		expect(text).toContain("approval (approved): Write file?");
 		expect(text).toContain("approval (pending): Run command?");
+	});
+
+	test("Ctrl+U and Ctrl+D scroll by half a page and resume at the bottom", () => {
+		const { view } = makeView({ rows: 12, result: makeLongResult() });
+		view.render(60);
+		view.handleInput(CTRL_U);
+		expect(view.isFollowing).toBe(false);
+		view.handleInput(CTRL_D);
+		expect(view.isFollowing).toBe(true);
+	});
+
+	test("g jumps to the top and G resumes tail-follow", () => {
+		const { view } = makeView({ rows: 12, result: makeLongResult() });
+		view.render(60);
+		view.handleInput(LOWER_G);
+		expect(view.isFollowing).toBe(false);
+		view.handleInput(UPPER_G);
+		expect(view.isFollowing).toBe(true);
+	});
+
+	test("mouse wheel scrolls the transcript and disables tail-follow", () => {
+		const { view } = makeView({ rows: 12, result: makeLongResult() });
+		view.render(60);
+		expect(view.handleMouse?.(makeWheel(-1))).toEqual({ handled: true });
+		expect(view.isFollowing).toBe(false);
+		expect(view.handleMouse?.(makeWheel(100))).toEqual({ handled: true });
+		expect(view.isFollowing).toBe(true);
+		expect(view.handleMouse?.({ ...makeWheel(0), type: "move" })).toBeUndefined();
+	});
+
+	test("renders compact help on a narrow terminal and full help when wide", () => {
+		const { view } = makeView({ rows: 12 });
+		const narrow = view.render(24).join("\n");
+		expect(narrow).toContain("Esc detach");
+		expect(narrow).not.toContain("PgUp");
+		const wide = view.render(80).join("\n");
+		expect(wide).toContain("PgUp");
+		expect(wide).toContain("Ctrl+O");
+	});
+
+	test("narrow terminals never overflow for live or read-only views", () => {
+		for (const width of [1, 2, 6, 12, 24, 39]) {
+			const live = makeView({ rows: 8, result: makeLongResult() }).view;
+			for (const line of live.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			const readOnly = makeView({ rows: 8, result: makeLongResult(), forceReadOnly: true }).view;
+			for (const line of readOnly.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	test("forceReadOnly renders a recovered persisted transcript without controls", () => {
+		const fake = makeFakeEditor();
+		const result = makeResult({
+			exitCode: undefined as never,
+			state: undefined,
+			messages: [
+				{ role: "assistant", content: [{ type: "text", text: "I will inspect." }] },
+				{ role: "assistant", content: [{ type: "thinking", thinking: "Check callers." }] },
+				{ role: "assistant", content: [{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } }] },
+				{ role: "toolResult", toolCallId: "t1", toolName: "read", content: [{ type: "text", text: "file contents" }], isError: false },
+			] as never,
+		});
+		const { view } = makeView({ result, editor: fake.editor, forceReadOnly: true });
+		const text = view.render(80).join("\n");
+		expect(text).toContain("read-only");
+		expect(text).toContain("I will inspect.");
+		expect(text).toContain("Check callers.");
+		expect(text).not.toContain("[steer-editor");
+		expect(fake.editor.disableSubmit).toBe(true);
+		// Control keys are ignored and the view stays detachable.
+		let detached: null | undefined;
+		const detachedView = makeView({ result, forceReadOnly: true, done: (value) => (detached = value) }).view;
+		detachedView.handleInput(PAUSE_KEY);
+		detachedView.handleInput(ESC);
+		expect(detached).toBeNull();
 	});
 });
