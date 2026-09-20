@@ -25,3 +25,14 @@ test("registry orders active runs first and bounds completed history", () => {
 	registry.complete("active");
 	expect(registry.list()).toHaveLength(1);
 });
+
+test("registry notifies on start and on each completion", () => {
+	const changes: number[] = [];
+	const registry = new SubagentRegistry(30, () => changes.push(registry.list().filter((item) => !item.completedAt).length));
+	registry.start(run("one"));
+	registry.start(run("two"));
+	registry.complete("one");
+	registry.complete("one");
+	registry.complete("two");
+	expect(changes).toEqual([1, 2, 1, 0]);
+});

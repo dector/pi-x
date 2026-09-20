@@ -13,6 +13,8 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Inherited permissions**: Each child snapshots the parent's safe mode and outer-access setting at spawn
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
+- **Status-bar row**: While children run, publishes one row with the running count, sorted above the `proc` row
+- **Run log**: `/px:agent:log` shows each run's original task prompt and final output
 
 ## Structure
 
@@ -25,6 +27,10 @@ subagent/
 ├── approval-queue.ts    # Global serialized child-dialog queue
 ├── control.ts           # Child permission and cooperative pause controls
 ├── registry.ts          # Active/recent run registry
+├── result-output.ts     # Canonical per-result output extraction (shared with tool results)
+├── run-id.ts            # Restart-safe unique run IDs
+├── agent-log.ts         # Pure merge/format helpers for `/px:agent:log`
+├── status-row.ts        # Pure formatter and presence probe for the running-count status row
 ├── agents/              # Sample agent definitions
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans
@@ -47,7 +53,6 @@ From the repository root, symlink the files:
 mkdir -p ~/.pi/agent/extensions/subagent
 ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
 ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
-
 # Symlink agents
 mkdir -p ~/.pi/agent/agents
 for f in packages/coding-agent/examples/extensions/subagent/agents/*.md; do
@@ -60,6 +65,11 @@ for f in packages/coding-agent/examples/extensions/subagent/prompts/*.md; do
   ln -sf "$(pwd)/$f" ~/.pi/agent/prompts/$(basename "$f")
 done
 ```
+
+Dependencies:
+
+- [`status-bar`](../status-bar/README.md) for the running-count row (optional but recommended)
+- `safe-mode` for child permission inheritance (optional)
 
 ## Security Model
 
@@ -107,7 +117,7 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 |------|-----------|-------------|
 | Single | `{ agent, task }` | One agent, one task |
 | Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
-| Chain | `{ chain: [...] }` | Sequential with `{previous}` placeholder |
+| Chain | `{ chain: [...] }` | Sequential; `{previous}` in a step's task is interpolated with the previous step's final output (empty for the first step) |
 
 ## Runtime manager
 
@@ -119,6 +129,44 @@ Run `/px:agents` to list active and recent children. Select a run to:
 - abort it after confirmation.
 
 Pause takes effect at the next safe boundary, before a provider turn or tool call. It does not interrupt a provider request or tool already in progress, so the state may remain `pause-requested` briefly.
+
+## Status bar
+
+While at least one child is running, `subagent` publishes one generic
+[`status-bar`](../status-bar/README.md) row with the running count, using
+`order: 50` so it sorts above the `proc` row (`order: 100`). The row is cleared
+when the last child finishes and on `session_shutdown`.
+
+```text
+◆ 2 subagents running
+● vite 48231  ·  ● npm 48255
+```
+
+The row is optional: `subagent` works without `status-bar`, it only loses the
+row. When the first run starts, the extension pings `status-bar`; if no pong
+arrives within a short delay it shows one warning, then stops probing for the
+session. The warning is cancelled if the run finishes (or the running count
+returns to zero) before the delay elapses, so a short run never warns.
+
+## Run log (`/px:agent:log`)
+
+`/px:agent:log` lists every agent run seen in this session. Select one to see
+the exact task prompt it was started with and the final output it returned, or
+pick `View all runs` to open every run in one editor.
+
+Sources are merged and deduplicated by `runId`:
+
+- the live `SubagentRegistry` (active runs and recent completed runs);
+- persisted `subagent` tool results in the current session branch, so runs stay
+  visible after registry pruning or `/resume`.
+
+The registry entry wins on a `runId` collision because it carries live state,
+but richer persisted metadata (`mode`, `step`, and timestamps) is preserved.
+Persisted results without a `runId` fall back to a content signature to avoid
+double-reporting. Picker labels are made unique, so duplicate-looking runs open
+the entry you selected. With no UI the command returns quietly, and with no
+recorded runs it notifies
+`No subagent runs recorded in this session.`
 
 ## Output Display
 
@@ -175,7 +223,7 @@ The `thinking` field accepts pi thinking levels: `off`, `minimal`, `low`, `mediu
 Levels the chosen model does not support are clamped by pi.
 
 **Locations:**
-- `~/.pi/agent/agents/*.md` - User-level (always loaded)
+- `~/.pi/agent/agents/*.md` - User-level (loaded with the default `agentScope: "user"` and with `"both"`; skipped by `"project"`)
 - `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
 
 Project agents override user agents with the same name when `agentScope: "both"`.
@@ -214,3 +262,4 @@ Project agents override user agents with the same name when `agentScope: "both"`
 - Parallel mode limited to 8 tasks, 4 concurrent
 - Cooperative pause waits for the next turn/tool boundary; it is not hard process suspension
 - Completed manager records are retained only as a bounded recent history
+- `/px:agent:log` shows the task and final output; intermediate tool calls stay in the expanded tool result view

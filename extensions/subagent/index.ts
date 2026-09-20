@@ -16,7 +16,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
@@ -28,6 +27,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+	buildAgentLogPicker,
+	formatAgentLog,
+	formatAgentLogEntry,
+	mergeAgentLogEntries,
+	persistedAgentLogEntries,
+	registryAgentLogEntries,
+} from "./agent-log.ts";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
 import { registerChildControls } from "./control.ts";
@@ -41,7 +48,15 @@ import {
 import { interpolatePrevious, mapWithConcurrencyLimit } from "./execution.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { sendControl, SubagentRegistry } from "./registry.ts";
+import { getFinalOutput, getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
+import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
+import {
+	formatSubagentStatusRow,
+	StatusBarPresence,
+	SUBAGENT_STATUS_ROW_ID,
+	SUBAGENT_STATUS_ROW_ORDER,
+} from "./status-row.ts";
 import type { SingleResult, SubagentDetails, ToolRunStatus } from "./types.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -55,6 +70,15 @@ const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 const PERM_AGENT = "perm:agent";
+
+// Generic status-bar row contract (see extensions/status-bar/contract.ts).
+const STATUS_BAR_EVENTS = {
+	rowSet: "px:status-bar:row:set",
+	rowClear: "px:status-bar:row:clear",
+	ping: "px:status-bar:ping",
+	pong: "px:status-bar:pong",
+} as const;
+const STATUS_BAR_WARNING_DELAY_MS = 500;
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -162,29 +186,6 @@ function formatToolCall(
 	}
 }
 
-
-function getFinalOutput(messages: Message[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
-			}
-		}
-	}
-	return "";
-}
-
-function isFailedResult(result: SingleResult): boolean {
-	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-}
-
-function getResultOutput(result: SingleResult): string {
-	if (isFailedResult(result)) {
-		return result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
-	}
-	return getFinalOutput(result.messages) || "(no output)";
-}
 
 function truncateParallelOutput(output: string): string {
 	const byteLength = Buffer.byteLength(output, "utf8");
@@ -319,7 +320,7 @@ async function runSingleAgent(
 		}
 		if (onUpdate) {
 			onUpdate({
-				content: [{ type: "text", text: getFinalOutput(currentResult.messages) || currentResult.liveText || "(running...)" }],
+				content: [{ type: "text", text: getRunningOutput(currentResult) }],
 				details: makeDetails([currentResult]),
 			});
 		}
@@ -577,7 +578,7 @@ const TaskItem = Type.Object({
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
+	task: Type.String({ description: "Task; {previous} is replaced with the previous step's final output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
@@ -608,9 +609,51 @@ export default function (pi: ExtensionAPI) {
 	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
 	const activeChildren = new Set<RpcChild>();
 	const approvalQueue = new ApprovalQueue();
-	const registry = new SubagentRegistry();
-	let nextRunNumber = 1;
-	const newRunId = () => `sa-${nextRunNumber++}`;
+
+	let sessionContext: ExtensionContext | undefined;
+	let shuttingDown = false;
+
+	const statusBarPresence = new StatusBarPresence({
+		delayMs: STATUS_BAR_WARNING_DELAY_MS,
+		timers: {
+			set: (fn, delayMs) => setTimeout(fn, delayMs),
+			clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+		},
+		onPing: () => pi.events.emit(STATUS_BAR_EVENTS.ping, { id: SUBAGENT_STATUS_ROW_ID }),
+		onWarn: () => {
+			if (sessionContext?.hasUI) {
+				sessionContext.ui.notify(
+					"subagent: status-bar extension not detected; the running-count row will not show",
+					"warning",
+				);
+			}
+		},
+	});
+
+	const registry = new SubagentRegistry(30, () => publishSubagentRow());
+	const newRunId = createRunIdGenerator();
+
+	function runningSubagentCount(): number {
+		return registry.list().filter((run) => !run.completedAt).length;
+	}
+
+	// Publish one generic status-bar row (order 50, above proc's 100) only while
+	// at least one child is running. When the last child finishes, clear it and
+	// cancel any pending "status-bar missing" warning.
+	function publishSubagentRow(): void {
+		const content = shuttingDown ? undefined : formatSubagentStatusRow(runningSubagentCount());
+		if (!content) {
+			statusBarPresence.cancel();
+			pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
+			return;
+		}
+		statusBarPresence.watch();
+		pi.events.emit(STATUS_BAR_EVENTS.rowSet, {
+			id: SUBAGENT_STATUS_ROW_ID,
+			content,
+			order: SUBAGENT_STATUS_ROW_ORDER,
+		});
+	}
 
 	if (!childControl) {
 		pi.registerCommand("px:agents", {
@@ -686,12 +729,63 @@ export default function (pi: ExtensionAPI) {
 				}
 			},
 		});
+
+		pi.registerCommand("px:agent:log", {
+			description: "View the task prompt and final output for each subagent run",
+			handler: async (_args, ctx) => {
+				if (!ctx.hasUI) return;
+				const persisted = persistedAgentLogEntries(ctx.sessionManager.getBranch());
+				const entries = mergeAgentLogEntries(registryAgentLogEntries(registry.list()), persisted);
+				if (entries.length === 0) {
+					ctx.ui.notify("No subagent runs recorded in this session.", "info");
+					return;
+				}
+				const { labels, byLabel } = buildAgentLogPicker(entries);
+				const selectable = [...labels, "View all runs", "Close"];
+				const selected = await ctx.ui.select("Subagent log", selectable);
+				if (!selected || selected === "Close") return;
+				if (selected === "View all runs") {
+					await ctx.ui.editor("Subagent log (all runs)", formatAgentLog(entries));
+					return;
+				}
+				const entry = byLabel.get(selected);
+				if (!entry) return;
+				const title = entry.runId
+					? `Subagent log: ${entry.agentName} [${entry.runId}]`
+					: `Subagent log: ${entry.agentName}`;
+				await ctx.ui.editor(title, formatAgentLogEntry(entry));
+			},
+		});
 	}
 
+	pi.events.on(STATUS_BAR_EVENTS.pong, (payload) => {
+		const id = (payload as { id?: unknown } | undefined)?.id;
+		if (id !== SUBAGENT_STATUS_ROW_ID) return;
+		statusBarPresence.markAvailable();
+	});
+
+	pi.on("session_start", async (_event, ctx) => {
+		sessionContext = ctx;
+		shuttingDown = false;
+		statusBarPresence.reset();
+		statusBarPresence.ping();
+		publishSubagentRow();
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		sessionContext = ctx;
+		publishSubagentRow();
+	});
+
 	pi.on("session_shutdown", async () => {
+		shuttingDown = true;
+		statusBarPresence.reset();
+		sessionContext = undefined;
+		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
 		await Promise.all([...activeChildren].map((child) => child.terminate()));
 		activeChildren.clear();
 	});
+
 	const registeredAgents = formatAgentList(discoverAgents(process.cwd(), "user").agents, 50);
 	const agentListText =
 		registeredAgents.remaining > 0
@@ -741,7 +835,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Subagent",
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,

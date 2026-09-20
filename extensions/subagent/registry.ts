@@ -14,10 +14,14 @@ export interface SubagentRunRuntime {
 
 export class SubagentRegistry {
 	private runs = new Map<string, SubagentRunRuntime>();
-	constructor(private readonly completedLimit = 30) {}
+	constructor(
+		private readonly completedLimit = 30,
+		private readonly onChange?: () => void,
+	) {}
 
 	start(run: SubagentRunRuntime): void {
 		this.runs.set(run.runId, run);
+		this.onChange?.();
 	}
 
 	complete(runId: string): void {
@@ -31,6 +35,7 @@ export class SubagentRegistry {
 			const oldest = completed.shift();
 			if (oldest) this.runs.delete(oldest.runId);
 		}
+		this.onChange?.();
 	}
 
 	get(runId: string): SubagentRunRuntime | undefined {

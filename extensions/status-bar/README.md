@@ -67,7 +67,9 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - Empty/whitespace-only content is skipped. Rows are hidden while no producer
   has published content.
 - Rows are display-mode agnostic (rendered in both `new` and `legacy`).
-- Current producer: [`proc`](../proc/README.md) (id `proc`, order `100`).
+- Current producers:
+  - [`proc`](../proc/README.md) (id `proc`, order `100`).
+  - [`subagent`](../subagent/README.md) (id `subagent`, order `50`, shown only while a child is running).
 
 ### Editor frame
 
@@ -94,9 +96,10 @@ labels are rendered in the frame corners:
 - **top-right** — git dirty totals from `repo-stats`, e.g.
   `-< +1 -2 M4 · +150 -200 >-`. Rendered only when the repo is dirty. The
   producer's `[ ]` and `|` are not shown; the file/line groups are separated by
-  a `·` recolored to the frame border color. In `new` mode the totals are hidden
-  from the first line to avoid duplication; in `legacy` mode they stay on the
-  first line.
+  a `·` recolored to the frame border color. On narrow frames, spaces between
+  values are removed (for example `+1-2M4·+150-200`) when the spaced form would
+  leave no room for the model label. In `new` mode the totals are hidden from the
+  first line to avoid duplication; in `legacy` mode they stay on the first line.
 - **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
   - Format: `-< <safe-mode> · <NET> >-·-< <percent> <tokens> · <cost> >-`. The safe-mode
     and network parts are omitted when their producer/core is absent.
@@ -246,7 +249,8 @@ First-line producers (example):
 
 Extra-row producers:
 
-- `proc` (id `proc`)
+- `proc` (id `proc`, order `100`)
+- `subagent` (id `subagent`, order `50`, running count only)
 
 ## Commands
 
