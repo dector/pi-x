@@ -47,6 +47,7 @@ import {
 } from "./events.ts";
 import {
 	type DispatchRunner,
+	type MakeDetails,
 	type OnUpdateCallback,
 	runDispatch,
 } from "./dispatch.ts";
@@ -62,7 +63,13 @@ import {
 	SUBAGENT_STATUS_ROW_ORDER,
 } from "./status-row.ts";
 import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
-import type { SingleResult, SubagentDetails, ToolRunStatus } from "./types.ts";
+import type {
+	DispatchDefaults,
+	SingleResult,
+	SubagentDetails,
+	SubagentDispatchStatus,
+	ToolRunStatus,
+} from "./types.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
 
@@ -242,11 +249,6 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
-interface DispatchDefaults {
-	model?: string;
-	thinkingLevel?: ThinkingLevel;
-}
-
 async function runSingleAgent(
 	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
@@ -257,7 +259,7 @@ async function runSingleAgent(
 	step: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
-	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	makeDetails: MakeDetails,
 	getSafeModeSnapshot: () => Promise<SafeModeSnapshot | undefined>,
 	runId: string,
 	activeChildren: Set<RpcChild>,
@@ -319,7 +321,7 @@ async function runSingleAgent(
 		if (onUpdate) {
 			onUpdate({
 				content: [{ type: "text", text: getRunningOutput(currentResult) }],
-				details: makeDetails([currentResult]),
+				details: makeDetails([currentResult], "started"),
 			});
 		}
 	};
@@ -860,8 +862,10 @@ export default function (pi: ExtensionAPI) {
 
 			const makeDetails =
 				(mode: "single" | "parallel" | "chain") =>
-				(results: SingleResult[]): SubagentDetails => ({
+				(results: SingleResult[], dispatchStatus: SubagentDispatchStatus): SubagentDetails => ({
 					mode,
+					execution: "blocking",
+					dispatchStatus,
 					agentScope,
 					projectAgentsDir: discovery.projectAgentsDir,
 					results,
@@ -875,7 +879,7 @@ export default function (pi: ExtensionAPI) {
 							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${availableAgents}`,
 						},
 					],
-					details: makeDetails("single")([]),
+					details: makeDetails("single")([], "failed"),
 				};
 			}
 
@@ -904,7 +908,7 @@ export default function (pi: ExtensionAPI) {
 					if (decision !== "allow")
 						return {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
-							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
+							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([], "aborted"),
 						};
 				}
 			}

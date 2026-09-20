@@ -14,16 +14,20 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { aggregateDispatchStatus, formatParallelAggregate } from "./completion.ts";
 import { interpolatePrevious, mapWithConcurrencyLimit } from "./execution.ts";
-import { getFinalOutput, getResultOutput, isFailedResult } from "./result-output.ts";
-import type { SingleResult, SubagentDetails } from "./types.ts";
+import { getFinalOutput, getResultOutput, isAbortedResult, isFailedResult } from "./result-output.ts";
+import type { SingleResult, SubagentDetails, SubagentDispatchStatus } from "./types.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
-export const PER_TASK_OUTPUT_CAP = 50 * 1024;
+export { PER_TASK_OUTPUT_CAP } from "./completion.ts";
 
 export type DispatchMode = SubagentDetails["mode"];
 export type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
+
+/** Builds a `SubagentDetails` for the current mode with an explicit dispatch status. */
+export type MakeDetails = (results: SingleResult[], dispatchStatus: SubagentDispatchStatus) => SubagentDetails;
 
 export interface DispatchTask {
 	agent: string;
@@ -47,7 +51,7 @@ export interface SingleRunRequest {
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: OnUpdateCallback;
-	makeDetails: (results: SingleResult[]) => SubagentDetails;
+	makeDetails: MakeDetails;
 }
 
 /**
@@ -55,21 +59,10 @@ export interface SingleRunRequest {
  * `runSingleAgent()`; tests supply fakes.
  */
 export interface DispatchRunner {
-	makeDetails: (mode: DispatchMode) => (results: SingleResult[]) => SubagentDetails;
+	makeDetails: (mode: DispatchMode) => MakeDetails;
 	runSingle: (request: SingleRunRequest) => Promise<SingleResult>;
 	/** Agent list rendered by the invalid-parameters fallback. */
 	availableAgents?: string;
-}
-
-function truncateParallelOutput(output: string): string {
-	const byteLength = Buffer.byteLength(output, "utf8");
-	if (byteLength <= PER_TASK_OUTPUT_CAP) return output;
-
-	let truncated = output.slice(0, PER_TASK_OUTPUT_CAP);
-	while (Buffer.byteLength(truncated, "utf8") > PER_TASK_OUTPUT_CAP) {
-		truncated = truncated.slice(0, -1);
-	}
-	return `${truncated}\n\n[Output truncated: ${byteLength - Buffer.byteLength(truncated, "utf8")} bytes omitted. Full output preserved in tool details.]`;
 }
 
 /**
@@ -100,7 +93,7 @@ export async function runDispatch(
 							const allResults = [...results, currentResult];
 							onUpdate({
 								content: partial.content,
-								details: runner.makeDetails("chain")(allResults),
+								details: runner.makeDetails("chain")(allResults, "started"),
 							});
 						}
 					}
@@ -122,7 +115,7 @@ export async function runDispatch(
 				const errorMsg = getResultOutput(result);
 				return {
 					content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
-					details: runner.makeDetails("chain")(results),
+					details: runner.makeDetails("chain")(results, isAbortedResult(result) ? "aborted" : "failed"),
 					isError: true,
 				};
 			}
@@ -130,7 +123,7 @@ export async function runDispatch(
 		}
 		return {
 			content: [{ type: "text", text: getFinalOutput(results[results.length - 1].messages) || "(no output)" }],
-			details: runner.makeDetails("chain")(results),
+			details: runner.makeDetails("chain")(results, "completed"),
 		};
 	}
 
@@ -143,7 +136,7 @@ export async function runDispatch(
 						text: `Too many parallel tasks (${request.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
 					},
 				],
-				details: runner.makeDetails("parallel")([]),
+				details: runner.makeDetails("parallel")([], "failed"),
 			};
 
 		// Track all results for streaming updates
@@ -170,7 +163,7 @@ export async function runDispatch(
 					content: [
 						{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
 					],
-					details: runner.makeDetails("parallel")([...allResults]),
+					details: runner.makeDetails("parallel")([...allResults], "started"),
 				});
 			}
 		};
@@ -196,22 +189,9 @@ export async function runDispatch(
 			return result;
 		});
 
-		const successCount = results.filter((r) => !isFailedResult(r)).length;
-		const summaries = results.map((r) => {
-			const output = truncateParallelOutput(getResultOutput(r));
-			const status = isFailedResult(r)
-				? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
-				: "completed";
-			return `### [${r.agent}] ${status}\n\n${output}`;
-		});
 		return {
-			content: [
-				{
-					type: "text",
-					text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
-				},
-			],
-			details: runner.makeDetails("parallel")(results),
+			content: [{ type: "text", text: formatParallelAggregate(results) }],
+			details: runner.makeDetails("parallel")(results, aggregateDispatchStatus(results, { aborted: results.some(isAbortedResult) })),
 		};
 	}
 
@@ -230,19 +210,19 @@ export async function runDispatch(
 			const errorMsg = getResultOutput(result);
 			return {
 				content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-				details: runner.makeDetails("single")([result]),
+				details: runner.makeDetails("single")([result], isAbortedResult(result) ? "aborted" : "failed"),
 				isError: true,
 			};
 		}
 		return {
 			content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-			details: runner.makeDetails("single")([result]),
+			details: runner.makeDetails("single")([result], "completed"),
 		};
 	}
 
 	const available = runner.availableAgents ?? "none";
 	return {
 		content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
-		details: runner.makeDetails("single")([]),
+		details: runner.makeDetails("single")([], "failed"),
 	};
 }

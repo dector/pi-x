@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentScope } from "./agents.ts";
+import type { AgentConfig, AgentScope } from "./agents.ts";
 import type { SafeMode } from "./safe-mode.ts";
 import type { SubagentTiming } from "./timing.ts";
 
@@ -35,6 +35,40 @@ export interface ToolRunRecord {
 	summary?: string;
 }
 
+export type SubagentExecution = "async" | "blocking";
+export type SubagentDispatchStatus = "started" | "completed" | "failed" | "aborted";
+export type SubagentMode = "single" | "parallel" | "chain";
+
+/** Model/thinking defaults snapshotted for a dispatch when it is prepared. */
+export interface DispatchDefaults {
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+}
+
+/** One fully-allocated task in a prepared dispatch. */
+export interface PreparedDispatchItem {
+	runId: string;
+	agent: string;
+	task: string;
+	cwd?: string;
+	step?: number;
+}
+
+/**
+ * A validated dispatch with all run IDs allocated, ready for either blocking
+ * execution or detaching into the background (Stage 2+).
+ */
+export interface PreparedSubagentDispatch {
+	dispatchId: string;
+	execution: SubagentExecution;
+	mode: SubagentMode;
+	agentScope: AgentScope;
+	projectAgentsDir: string | null;
+	agents: AgentConfig[];
+	dispatchDefaults: DispatchDefaults;
+	items: PreparedDispatchItem[];
+}
+
 export interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
@@ -61,11 +95,39 @@ export interface SingleResult {
 	timing?: SubagentTiming;
 }
 
+/**
+ * Persisted/rendered dispatch record.
+ *
+ * `execution`, `dispatchId`, and `dispatchStatus` are optional so records
+ * persisted before the async work keep parsing. Readers normalize missing
+ * metadata to the historical blocking/completed meaning; see
+ * `completion.ts:normalizeSubagentDetails()`.
+ */
 export interface SubagentDetails {
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentMode;
 	agentScope: AgentScope;
 	projectAgentsDir: string | null;
+	execution?: SubagentExecution;
+	dispatchId?: string;
+	dispatchStatus?: SubagentDispatchStatus;
 	results: SingleResult[];
+}
+
+/** `SubagentDetails` with compatibility metadata resolved to concrete values. */
+export interface NormalizedSubagentDetails extends SubagentDetails {
+	execution: SubagentExecution;
+	dispatchStatus: SubagentDispatchStatus;
+}
+
+/**
+ * Canonical settled-dispatch payload: model-visible text plus the full
+ * `SubagentDetails`. Blocking tool results, async completion messages, and
+ * persisted log extraction all derive from this shape.
+ */
+export interface SubagentAggregateResult {
+	text: string;
+	details: SubagentDetails;
+	isError?: boolean;
 }
 
 export interface RpcCommand {

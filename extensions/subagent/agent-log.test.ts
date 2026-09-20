@@ -146,6 +146,26 @@ describe("persistedAgentLogEntries", () => {
 		expect(entry?.completedAt).toBe(completedAt);
 	});
 
+	test("ignores async acknowledgements that have not settled", () => {
+		const started = branchWithDetails({
+			mode: "parallel",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "started",
+			results: [{ runId: "sa-1", agent: "scout", task: "t", messages: [assistant("partial")], exitCode: -1, usage }],
+		});
+		expect(persistedAgentLogEntries(started)).toEqual([]);
+
+		const completed = branchWithDetails({
+			mode: "parallel",
+			execution: "async",
+			dispatchId: "d-1",
+			dispatchStatus: "completed",
+			results: [{ runId: "sa-1", agent: "scout", task: "t", messages: [assistant("done")], exitCode: 0, usage }],
+		});
+		expect(persistedAgentLogEntries(completed)).toHaveLength(1);
+	});
+
 	test("leaves runId empty when the persisted result has none", () => {
 		const entries = persistedAgentLogEntries(
 			branchWithDetails({ mode: "single", results: [{ agent: "scout", task: "t", messages: [assistant("o")] }] }),

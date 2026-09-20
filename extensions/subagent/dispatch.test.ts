@@ -17,8 +17,8 @@ import {
 	type SingleRunRequest,
 } from "./dispatch.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { isFailedResult } from "./result-output.ts";
-import type { SingleResult, SubagentDetails } from "./types.ts";
+import { isAbortedResult, isFailedResult } from "./result-output.ts";
+import type { SingleResult, SubagentDetails, SubagentDispatchStatus } from "./types.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
@@ -40,10 +40,11 @@ function singleResult(agent: string, output: string | undefined, overrides: Part
 }
 
 function makeDetails(mode: "single" | "parallel" | "chain") {
-	return (results: SingleResult[]): SubagentDetails => ({
+	return (results: SingleResult[], dispatchStatus: SubagentDispatchStatus): SubagentDetails => ({
 		mode,
 		agentScope: "user",
 		projectAgentsDir: null,
+		dispatchStatus,
 		results,
 	});
 }
@@ -95,6 +96,7 @@ describe("single dispatch", () => {
 		expect(textOf(result)).toBe("worker output");
 		expect(result.isError).toBeUndefined();
 		expect(result.details?.mode).toBe("single");
+		expect(result.details?.dispatchStatus).toBe("completed");
 		expect(result.details?.results.map((r) => r.agent)).toEqual(["worker"]);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.task).toBe("do it");
@@ -116,12 +118,24 @@ describe("single dispatch", () => {
 		const reasonResult = await runDispatch({ agent: "worker", task: "t" }, withReason.runner, undefined, undefined);
 		expect(textOf(reasonResult)).toBe("Agent error: boom");
 		expect(reasonResult.isError).toBe(true);
+		expect(reasonResult.details?.dispatchStatus).toBe("failed");
 		expect(isFailedResult(reasonResult.details?.results[0] ?? {})).toBe(true);
 
 		const noReason = createRunner(() => singleResult("worker", undefined, { exitCode: 1, stderr: "trace" }));
 		const noReasonResult = await runDispatch({ agent: "worker", task: "t" }, noReason.runner, undefined, undefined);
 		expect(textOf(noReasonResult)).toBe("Agent failed: trace");
 		expect(noReasonResult.isError).toBe(true);
+		expect(noReasonResult.details?.dispatchStatus).toBe("failed");
+	});
+
+	test("aborted single run reports aborted, not failed, in details", async () => {
+		const { runner } = createRunner(() =>
+			singleResult("worker", undefined, { exitCode: 0, stopReason: "aborted", errorMessage: "stopped" }),
+		);
+		const result = await runDispatch({ agent: "worker", task: "t" }, runner, undefined, undefined);
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe("Agent aborted: stopped");
+		expect(result.details?.dispatchStatus).toBe("aborted");
 	});
 });
 
@@ -146,7 +160,7 @@ describe("signal and update forwarding", () => {
 		expect(calls[0]?.onUpdate).toBe(onUpdate);
 		const partial: AgentToolResult<SubagentDetails> = {
 			content: [{ type: "text", text: "partial" }],
-			details: makeDetails("single")([]),
+			details: makeDetails("single")([], "started"),
 		};
 		calls[0]?.onUpdate?.(partial);
 		expect(updates).toEqual([partial]);
@@ -201,6 +215,7 @@ describe("signal and update forwarding", () => {
 
 		expect(textOf(result)).toBe("Invalid parameters. Available agents: scout (user), worker (project)");
 		expect(result.details?.mode).toBe("single");
+		expect(result.details?.dispatchStatus).toBe("failed");
 		expect(result.details?.results).toEqual([]);
 		expect(result.isError).toBeUndefined();
 		expect(calls).toHaveLength(0);
@@ -229,6 +244,7 @@ describe("chain dispatch", () => {
 		expect(calls.map((c) => c.step)).toEqual([1, 2]);
 		expect(textOf(result)).toBe("seen:use A-out twice A-out");
 		expect(result.details?.mode).toBe("chain");
+		expect(result.details?.dispatchStatus).toBe("completed");
 		expect(result.details?.results.map((r) => r.agent)).toEqual(["a", "b"]);
 		expect(result.isError).toBeUndefined();
 	});
@@ -254,6 +270,7 @@ describe("chain dispatch", () => {
 
 		expect(textOf(result)).toBe("Chain stopped at step 2 (b): boom");
 		expect(result.isError).toBe(true);
+		expect(result.details?.dispatchStatus).toBe("failed");
 		expect(result.details?.results).toHaveLength(2);
 		expect(calls.map((c) => c.agent)).toEqual(["a", "b"]);
 	});
@@ -280,11 +297,12 @@ describe("chain dispatch", () => {
 		const partial = singleResult("b", undefined, { exitCode: -1 });
 		pending[1]?.request.onUpdate?.({
 			content: [{ type: "text", text: "partial-b" }],
-			details: makeDetails("chain")([partial]),
+			details: makeDetails("chain")([partial], "started"),
 		});
 
 		const streamed = updates.at(-1);
 		expect(streamed?.details?.results.map((r) => r.agent)).toEqual(["a", "b"]);
+		expect(streamed?.details?.dispatchStatus).toBe("started");
 		expect(textOf(streamed as AgentToolResult<SubagentDetails>)).toBe("partial-b");
 
 		pending[1]?.resolve(singleResult("b", "b-out"));
@@ -386,8 +404,47 @@ describe("parallel dispatch", () => {
 		);
 		expect(result.isError).toBeUndefined();
 		expect(result.details?.results.map((r) => r.agent)).toEqual(["a", "b", "c"]);
+		expect(result.details?.dispatchStatus).toBe("completed");
 		// The failure stays in details for the UI even though the aggregate is not an error.
 		expect(isFailedResult(result.details?.results[1] ?? {})).toBe(true);
+	});
+
+	test("marks a fully-failed parallel dispatch as failed", async () => {
+		const { runner } = createRunner((request) =>
+			singleResult(request.agent, undefined, { exitCode: 1, stopReason: "error", errorMessage: "boom" }),
+		);
+		const result = await runDispatch(
+			{
+				tasks: [
+					{ agent: "a", task: "1" },
+					{ agent: "b", task: "2" },
+				],
+			},
+			runner,
+			undefined,
+			undefined,
+		);
+		expect(result.details?.dispatchStatus).toBe("failed");
+	});
+
+	test("marks a parallel dispatch with an aborted task as aborted", async () => {
+		const { runner } = createRunner((request) => {
+			if (request.agent === "b")
+				return singleResult("b", undefined, { exitCode: 0, stopReason: "aborted", errorMessage: "stopped" });
+			return singleResult(request.agent, `${request.agent}-out`);
+		});
+		const result = await runDispatch(
+			{
+				tasks: [
+					{ agent: "a", task: "1" },
+					{ agent: "b", task: "2" },
+				],
+			},
+			runner,
+			undefined,
+			undefined,
+		);
+		expect(result.details?.dispatchStatus).toBe("aborted");
 	});
 
 	test("rejects more than the maximum parallel tasks before running any child", async () => {
@@ -399,6 +456,7 @@ describe("parallel dispatch", () => {
 		const result = await runDispatch({ tasks }, runner, undefined, undefined);
 
 		expect(textOf(result)).toBe(`Too many parallel tasks (${MAX_PARALLEL_TASKS + 1}). Max is ${MAX_PARALLEL_TASKS}.`);
+		expect(result.details?.dispatchStatus).toBe("failed");
 		expect(result.details?.results).toEqual([]);
 		expect(calls).toHaveLength(0);
 	});
@@ -420,10 +478,11 @@ describe("parallel dispatch", () => {
 
 		pending[0]?.request.onUpdate?.({
 			content: [{ type: "text", text: "partial-a" }],
-			details: makeDetails("parallel")([singleResult("a", "partial-a", { exitCode: -1 })]),
+			details: makeDetails("parallel")([singleResult("a", "partial-a", { exitCode: -1 })], "started"),
 		});
 		const running = updates.at(-1);
 		expect(textOf(running as AgentToolResult<SubagentDetails>)).toBe("Parallel: 0/2 done, 2 running...");
+		expect(running?.details?.dispatchStatus).toBe("started");
 		expect(running?.details?.results.map((r) => r.exitCode)).toEqual([-1, -1]);
 
 		pending[0]?.resolve(singleResult("a", "a-out"));
@@ -488,5 +547,14 @@ describe("50 KB parallel output cap", () => {
 		const chainResult = await runDispatch({ chain: [{ agent: "a", task: "t" }] }, chain.runner, undefined, undefined);
 		expect(textOf(chainResult)).toBe(huge);
 		expect(textOf(chainResult)).not.toContain("[Output truncated:");
+	});
+});
+
+describe("aborted result detection", () => {
+	test("only treats an aborted stopReason as aborted", () => {
+		expect(isAbortedResult({ stopReason: "aborted" })).toBe(true);
+		expect(isAbortedResult({ stopReason: "error" })).toBe(false);
+		expect(isAbortedResult({ stopReason: "end" })).toBe(false);
+		expect(isAbortedResult({})).toBe(false);
 	});
 });

@@ -45,6 +45,15 @@ export function isFailedResult(result: ResultStatusFields): boolean {
 }
 
 /**
+ * True when a settled result ended because the child was aborted. Aborted
+ * results also satisfy `isFailedResult()`, so this must be checked first when
+ * choosing a dispatch status.
+ */
+export function isAbortedResult(result: ResultStatusFields): boolean {
+	return typeof result.stopReason === "string" && result.stopReason === "aborted";
+}
+
+/**
  * Canonical output for a finished result: failures prefer the error message
  * then stderr, everything else falls back to the final assistant text.
  */

@@ -12,6 +12,7 @@
  * back to a content signature so they do not double-report registry runs.
  */
 
+import { isTerminalDispatchStatus, normalizeSubagentDetails } from "./completion.ts";
 import type { SubagentRunRuntime } from "./registry.ts";
 import { getResultOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import type { SubagentDetails } from "./types.ts";
@@ -45,12 +46,6 @@ function readTimestamp(value: unknown): number | undefined {
 		if (!Number.isNaN(parsed)) return parsed;
 	}
 	return undefined;
-}
-
-function isSubagentDetails(value: unknown): value is SubagentDetails {
-	if (!isRecord(value)) return false;
-	if (value.mode !== "single" && value.mode !== "parallel" && value.mode !== "chain") return false;
-	return Array.isArray(value.results);
 }
 
 /** Convert active/recent registry entries into log entries. */
@@ -107,8 +102,10 @@ export function persistedAgentLogEntries(branch: unknown): AgentLogEntry[] {
 
 		if (message.role !== "toolResult") continue;
 		if (typeof message.toolName === "string" && message.toolName !== "subagent") continue;
-		const details = message.details;
-		if (!isSubagentDetails(details)) continue;
+		const details = normalizeSubagentDetails(message.details);
+		if (!details) continue;
+		// Async acknowledgements are non-terminal: never surface them as history.
+		if (!isTerminalDispatchStatus(details.dispatchStatus)) continue;
 
 		const completedAt = readTimestamp(message.timestamp) ?? readTimestamp(entry.timestamp);
 		const startedAt =
