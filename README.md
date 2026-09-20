@@ -31,7 +31,7 @@ This repo currently contains the following extension(s):
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
 | [`hub`](extensions/hub/README.md) | Central signal hub: routes and arbitrates capability requests between extensions (`perm:shell`, `perm:io`, `perm:net`, `perm:agent`, `perm:tool`). | |
-| [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents. Async by default with automatic completion injection, plus explicit `execution: "blocking"`. Includes permission inheritance, approval relay, `/px:agents` runtime controls, a running-count status row, and `/px:agent:log`. | `status-bar`, `safe-mode` optional |
+| [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents. Async by default with automatic completion injection, plus explicit `execution: "blocking"`. Includes permission inheritance, approval relay, model-callable `action: "stop"`/`"steer"` controls, `/px:agents` runtime controls, a running-count status row, and `/px:agent:log`. | `status-bar`, `safe-mode` optional |
 
 ## Network permissions (`perm:net`)
 

@@ -12,7 +12,8 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Parallel streaming**: Blocking parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
-- **Abort support**: Ctrl+C aborts blocking children; detached children are aborted from `/px:agents` or on session shutdown
+- **Abort support**: Ctrl+C aborts blocking children; detached children are aborted by the `action: "stop"` tool control, from `/px:agents`, or on session shutdown
+- **Model-driven controls**: the `subagent` tool accepts `action: "stop"` or `action: "steer"` addressed by dispatch id or run id, so the parent model can abort or redirect running children without shell-killing processes
 - **Inherited permissions**: Each dispatch snapshots the parent's safe mode and outer-access setting when it is prepared, before an async dispatch is accepted
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
@@ -33,6 +34,8 @@ subagent/
 ├── rpc-client.ts        # RPC process transport and JSONL framing
 ├── approval-queue.ts    # Global serialized child-dialog queue
 ├── control.ts           # Child permission and cooperative pause controls
+├── control-ops.ts       # Tool-level stop/steer control ops (validation + execution)
+├── run-stop.ts          # Per-run stop escalation (cooperative abort -> forced termination)
 ├── registry.ts          # Active/recent run registry
 ├── result-output.ts     # Canonical per-result output extraction (shared with tool results)
 ├── run-id.ts            # Restart-safe unique run IDs
@@ -185,6 +188,24 @@ Run `/px:agents` to list active and recent children, async and blocking alike. S
 
 Pause takes effect at the next safe boundary, before a provider turn or tool call. It does not interrupt a provider request or tool already in progress, so the state may remain `pause-requested` briefly.
 
+## Tool-level controls
+
+The parent model can stop or steer a running dispatch through the same `subagent` tool, so it never needs to shell-kill a child (which would leave `/px:agents` stale). A control call sets `action` and addresses exactly one of:
+
+- `dispatchId` — every active run of that dispatch;
+- `runId` — one child.
+
+| `action` | target | behavior |
+|----------|--------|----------|
+| `stop` | dispatch | Aborts the detached controller (or every active run for a blocking dispatch). The normal aggregate completion still arrives, marked `aborted`. Repeating `stop` forces termination. |
+| `stop` | run | Aborts just that child. Sibling runs continue; for an async dispatch the aggregate status reflects the aborted child. Repeating `stop` forces termination. |
+| `steer` | dispatch | Delivers `message` to every active run over the child's native RPC `steer`. |
+| `steer` | run | Delivers `message` to that child. |
+
+The first `stop` asks the child to abort cooperatively; if it does not settle within a bounded grace period, the run is force-terminated so its registry entry cannot stay stale. `steer` requires a non-empty `message`. A control call cannot also include any dispatch field (`agent`, `task`, `tasks`, `chain`, `execution`, `cwd`, `agentScope`, `confirmProjectAgents`); omit `action` for a normal dispatch. A partial dispatch steer is reported as success plus the run ids that could not be reached.
+
+Pi 0.85.1 only marks a tool result as an error when `execute` throws, so a control call that names no live target, or whose steers all fail, throws with a model-visible diagnostic. Unknown, finished, and pruned targets therefore surface as errors instead of silently starting work.
+
 ## Status bar
 
 While at least one child is running, `subagent` publishes one generic
@@ -318,6 +339,7 @@ Project agents override user agents with the same name when `agentScope: "both"`
 - **stopReason "aborted"**: Aborting asks the child to stop, then terminates it with bounded escalation
 - **Chain mode**: Stops at the first failing step and reports which step failed. The async completion message lists later unstarted steps as `not run` and counts them in the summary; blocking chain results only report the failing step.
 - **Async dispatch**: A partial failure is delivered as a completed aggregate that keeps successful sibling output, and an orchestration failure becomes one failed completion message. No completion is emitted after session shutdown begins.
+- **Control calls**: `action: "stop"`/`"steer"` requires exactly one of `dispatchId`/`runId`, and `steer` requires `message`. A control call rejects dispatch fields. Unknown, finished, or pruned targets throw a tool error instead of starting work, matching Pi 0.85.1's throw-to-signal-error contract. A repeated `stop` escalates to forced termination, and a first `stop` escalates on a bounded grace timer, so the registry cannot stay stale.
 
 Session teardown (`quit`, `/new`, `/reload`, `/resume`, fork) aborts all detached dispatches, terminates active RPC children, awaits settlement, then clears runtime state. A completion from a replaced session is never delivered into the replacement session.
 

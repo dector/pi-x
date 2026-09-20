@@ -289,6 +289,53 @@ describe("signal and update forwarding", () => {
 		expect(calls).toHaveLength(2);
 		expect(calls.map((call) => call.signal)).toEqual([controller.signal, controller.signal]);
 	});
+
+	test("an already-aborted signal prevents every queued parallel run from starting", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const { runner, calls } = createRunner(() => {
+			throw new Error("an aborted run must never start");
+		});
+
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+				{ agent: "c", task: "3" },
+				{ agent: "d", task: "4" },
+				{ agent: "e", task: "5" },
+			]),
+			runner,
+			controller.signal,
+			undefined,
+		);
+
+		expect(calls).toHaveLength(0);
+		expect(result.details?.dispatchStatus).toBe("aborted");
+		expect(result.details?.results).toHaveLength(5);
+		expect(result.details?.results.every((item) => isAbortedResult(item))).toBe(true);
+	});
+
+	test("an already-aborted signal prevents later chain steps from starting", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const { runner, calls } = createRunner(() => {
+			throw new Error("an aborted run must never start");
+		});
+
+		const result = await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
+			runner,
+			controller.signal,
+			undefined,
+		);
+
+		expect(calls).toHaveLength(0);
+		expect(result.details?.dispatchStatus).toBe("aborted");
+	});
 });
 
 describe("pre-allocated run IDs", () => {
@@ -751,10 +798,10 @@ describe("partial results on child rejection", () => {
 		expect(text).toContain("child exploded");
 	});
 
-	test("classifies a rejected child as aborted when the dispatch signal is aborted", async () => {
+	test("classifies a rejected child as aborted when the dispatch signal aborts mid-run", async () => {
 		const controller = new AbortController();
-		controller.abort();
 		const { runner } = createRunner(() => {
+			controller.abort();
 			throw new Error("aborted by parent");
 		});
 		const result = await runPreparedDispatch(

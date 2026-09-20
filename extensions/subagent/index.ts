@@ -39,6 +39,13 @@ import { type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
 import { registerChildControls } from "./control.ts";
 import {
+	executeSubagentControl,
+	formatControlCall,
+	isSubagentControlRequest,
+	parseSubagentControl,
+	type SubagentControlInput,
+} from "./control-ops.ts";
+import {
 	applyRpcStreamEvent,
 	emptyUsage,
 	interruptActiveTools,
@@ -63,7 +70,8 @@ import {
 import { AsyncDispatchManager } from "./lifecycle.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
-import { sendControl, SubagentRegistry } from "./registry.ts";
+import { sendControl, sendSteer, SubagentRegistry } from "./registry.ts";
+import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
@@ -279,6 +287,28 @@ async function runSingleAgent(
 	const timing = new SubagentTimingTracker();
 	const agent = agents.find((a) => a.name === agentName);
 
+	// A queued child can start after its dispatch (or parent turn) was already
+	// aborted. Never spawn or prompt it; report an aborted result immediately so
+	// the aggregate still accounts for the planned item.
+	if (signal?.aborted) {
+		return {
+			agent: agentName,
+			agentSource: agent?.source ?? "unknown",
+			task,
+			cwd: cwd ?? defaultCwd,
+			exitCode: 1,
+			messages: [],
+			stderr: "Subagent was aborted before it started",
+			errorMessage: "Subagent was aborted before it started",
+			stopReason: "aborted",
+			usage: emptyUsage(),
+			step,
+			runId,
+			state: "failed",
+			timing: timing.finish(),
+		};
+	}
+
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
 		return {
@@ -342,6 +372,7 @@ async function runSingleAgent(
 
 	let child: RpcChild | undefined;
 	let removeAbortListener: (() => void) | undefined;
+	let stop: RunStopController | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
@@ -497,6 +528,42 @@ async function runSingleAgent(
 			},
 		});
 		activeChildren.add(child);
+
+		// Stop escalation for this run: the first stop aborts the child
+		// cooperatively, a later stop or the grace timer forces termination so a
+		// wedged child cannot keep its registry entry stale.
+		const runStop = new RunStopController(
+			{
+				requestAbort: () => {
+					child?.send({ id: `abort-${runId}`, type: "abort" });
+				},
+				terminate: () => child?.terminate(),
+			},
+			{
+				graceMs: DEFAULT_STOP_ESCALATION_MS,
+				onAbort: () => {
+					wasAborted = true;
+					currentResult.state = "aborting";
+					interruptActiveTools(currentResult, "Parent aborted the subagent");
+					emitUpdate();
+				},
+			},
+		);
+		stop = runStop;
+		// A dispatch-level abort (Ctrl+C, session shutdown, `/px:agents`, or a
+		// dispatch `action: "stop"`) is cooperative: if a control stop already
+		// started this run, do not escalate it twice for the same event.
+		const onSignalAbort = () => {
+			if (!runStop.stopped) runStop.request();
+		};
+		if (signal) {
+			if (signal.aborted) onSignalAbort();
+			else {
+				signal.addEventListener("abort", onSignalAbort, { once: true });
+				removeAbortListener = () => signal.removeEventListener("abort", onSignalAbort);
+			}
+		}
+
 		registry.start({
 			runId,
 			agentName: agent.name,
@@ -507,28 +574,11 @@ async function runSingleAgent(
 			child,
 			dispatchId: dispatch.dispatchId,
 			execution: dispatch.execution,
+			abort: () => runStop.request(),
 		});
 
-		const abort = () => {
-			wasAborted = true;
-			currentResult.state = "aborting";
-			interruptActiveTools(currentResult, "Parent aborted the subagent");
-			emitUpdate();
-			try {
-				child?.send({ id: `abort-${runId}`, type: "abort" });
-			} catch {
-				void child?.terminate();
-			}
-		};
-		if (signal) {
-			if (signal.aborted) abort();
-			else {
-				signal.addEventListener("abort", abort, { once: true });
-				removeAbortListener = () => signal.removeEventListener("abort", abort);
-			}
-		}
-
 		try {
+			if (runStop.stopped) throw new SubagentAbortError(currentResult);
 			const acknowledgement = await child.request(
 				{ id: `prompt-${runId}`, type: "prompt", message: `Task: ${task}` },
 				30_000,
@@ -562,6 +612,7 @@ async function runSingleAgent(
 	} finally {
 		if (updateTimer) clearTimeout(updateTimer);
 		removeAbortListener?.();
+		stop?.dispose();
 		approvalQueue.cancelRun(runId);
 		currentResult.timing = timing.finish();
 		registry.complete(runId);
@@ -606,6 +657,21 @@ const SubagentParams = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
+	action: Type.Optional(
+		StringEnum(["stop", "steer"] as const, {
+			description:
+				'Control a running subagent instead of starting one: "stop" aborts (repeating it escalates to forced termination), "steer" sends guidance. Requires dispatchId or runId (exactly one), and message for "steer". Do not combine with dispatch fields (agent/task/tasks/chain/execution/cwd/agentScope/confirmProjectAgents).',
+		}),
+	),
+	dispatchId: Type.Optional(
+		Type.String({ description: 'Target every active run of one dispatch (async or blocking id); dispatch ids come from an async acknowledgement or a blocking aggregate result. For action "stop"/"steer".' }),
+	),
+	runId: Type.Optional(
+		Type.String({ description: 'Target one child run in either execution mode. For action "stop"/"steer".' }),
+	),
+	message: Type.Optional(
+		Type.String({ description: 'Guidance to deliver to the child (required for action "steer", ignored for "stop").' }),
+	),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
@@ -759,9 +825,11 @@ export default function (pi: ExtensionAPI) {
 							run.result.state = "aborting";
 							// Detached dispatches own an independent controller. Aborting it
 							// classifies the final completion as aborted and stops any remaining
-							// chain/parallel work. Blocking runs have no manager entry and fall
-							// back to the child abort below.
+							// chain/parallel work. `run.abort` covers blocking runs (no manager
+							// entry) through the run's own controller so classification is fixed
+							// for them too.
 							if (run.dispatchId) asyncDispatches.abort(run.dispatchId);
+							run.abort?.();
 							try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
 							await run.child?.terminate();
 						}
@@ -962,6 +1030,7 @@ export default function (pi: ExtensionAPI) {
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
 			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn. Detached children may modify the shared working tree, so re-read affected files before editing them.',
+			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
@@ -969,6 +1038,23 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			// Control calls never prepare a dispatch: they act on runs that already
+			// exist, so they stay available even while the session is shutting down
+			// (which is exactly when a parent may want to stop a runaway child).
+			if (isSubagentControlRequest(params)) {
+				const parsed = parseSubagentControl(params as SubagentControlInput);
+				if (!parsed.ok) throw new Error(parsed.error);
+				return executeSubagentControl(
+					parsed.request,
+					{
+						runs: () => registry.list(),
+						getRun: (runId) => registry.get(runId),
+						abortDispatch: (dispatchId) => asyncDispatches.abort(dispatchId),
+						steer: (run, message, options) => sendSteer(run, message, options),
+					},
+					{ signal },
+				);
+			}
 			// Refuse before preparation once teardown starts: an accepted dispatch
 			// must never outlive the session that owns it. Re-checked again below
 			// because preparation is async and can straddle a shutdown event.
@@ -1033,6 +1119,7 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, _context) {
 			const scope: AgentScope = args.agentScope ?? "user";
+			if (args.action) return new Text(formatControlCall(args, theme), 0, 0);
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +

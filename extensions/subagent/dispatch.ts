@@ -101,6 +101,11 @@ async function runChild(
 	signal: AbortSignal | undefined,
 	fallbackCwd?: string,
 ): Promise<SingleResult> {
+	// A queued parallel item (or a later chain step) must never start, and in
+	// particular must never prompt a child, once its dispatch is aborted.
+	if (signal?.aborted) {
+		return failedResultFor(item, new Error("Subagent was aborted before it started"), signal, fallbackCwd);
+	}
 	try {
 		return await deps.runSingle(request);
 	} catch (error) {

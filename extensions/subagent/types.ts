@@ -104,6 +104,23 @@ export interface SingleResult {
 	timing?: SubagentTiming;
 }
 
+export type SubagentControlAction = "stop" | "steer";
+
+/**
+ * Metadata attached to a tool result that performed a control operation
+ * (stop/steer) instead of starting a dispatch. `results` stays empty so a
+ * control call never appears as completed history in `/px:agent:log`.
+ */
+export interface SubagentControlDetails {
+	action: SubagentControlAction;
+	targetKind: "dispatch" | "run";
+	targetId: string;
+	/** Runs the action was applied to (steered, or successfully aborted). */
+	runIds: string[];
+	/** Per-run failures when a partial operation could not reach every run. */
+	failures: Array<{ runId: string; error: string }>;
+}
+
 /**
  * Persisted/rendered dispatch record.
  *
@@ -119,6 +136,8 @@ export interface SubagentDetails {
 	execution?: SubagentExecution;
 	dispatchId?: string;
 	dispatchStatus?: SubagentDispatchStatus;
+	/** Set only on tool results that performed a stop/steer control call. */
+	control?: SubagentControlDetails;
 	/**
 	 * Every item the dispatch was planned to run, including chain steps that
 	 * never started. Optional so records persisted before this field keep

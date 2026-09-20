@@ -1,3 +1,4 @@
+import { raceWithAbort, throwIfAborted } from "./run-stop.ts";
 import type { RpcChild } from "./rpc-client.ts";
 import type { SingleResult, SubagentExecution } from "./types.ts";
 
@@ -14,6 +15,12 @@ export interface SubagentRunRuntime {
 	dispatchId?: string;
 	/** Whether the owning dispatch runs detached or blocking. */
 	execution?: SubagentExecution;
+	/**
+	 * Stop just this run. First call asks the child to abort cooperatively;
+	 * repeating it escalates to bounded forced termination. Set by the runner
+	 * so tool-level control can stop one child without cancelling its dispatch.
+	 */
+	abort?: () => void;
 }
 
 export class SubagentRegistry {
@@ -55,12 +62,46 @@ export class SubagentRegistry {
 	}
 }
 
-export async function sendControl(run: SubagentRunRuntime, command: string, timeoutMs = 2000): Promise<void> {
+/** Optional cancellation and deadline for a child control RPC. */
+export interface ChildControlOptions {
+	/** Parent tool-call signal; aborts the wait without waiting for the deadline. */
+	signal?: AbortSignal;
+	/** RPC deadline in milliseconds. */
+	timeoutMs?: number;
+}
+
+function assertRunActive(run: SubagentRunRuntime): RpcChild {
 	if (!run.child || run.child.exited || run.completedAt) throw new Error("Run is no longer active");
+	return run.child;
+}
+
+export async function sendControl(run: SubagentRunRuntime, command: string, options: number | ChildControlOptions = 2000): Promise<void> {
+	const { signal, timeoutMs = 2000 } = typeof options === "number" ? { signal: undefined, timeoutMs: options } : options;
+	const child = assertRunActive(run);
+	throwIfAborted(signal);
 	const id = `control-${run.runId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-	const response = await run.child.request(
-		{ id, type: "prompt", message: `/px:subagent-control ${command}` },
-		timeoutMs,
+	const response = await raceWithAbort(
+		child.request({ id, type: "prompt", message: `/px:subagent-control ${command}` }, timeoutMs),
+		signal,
 	);
+	if (!response.success) throw new Error(response.error);
+}
+
+/**
+ * Deliver a steering message to one running child over the native RPC `steer`
+ * command. Throws when the child is gone, the parent signal aborts, or the
+ * child rejects the message, so the caller can report a precise per-run
+ * failure. The RPC deadline is independent of the abort signal.
+ */
+export async function sendSteer(
+	run: SubagentRunRuntime,
+	message: string,
+	options: number | ChildControlOptions = 5000,
+): Promise<void> {
+	const { signal, timeoutMs = 5000 } = typeof options === "number" ? { signal: undefined, timeoutMs: options } : options;
+	const child = assertRunActive(run);
+	throwIfAborted(signal);
+	const id = `steer-${run.runId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+	const response = await raceWithAbort(child.request({ id, type: "steer", message }, timeoutMs), signal);
 	if (!response.success) throw new Error(response.error);
 }

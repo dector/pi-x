@@ -245,6 +245,7 @@ export function formatAsyncAcknowledgement(input: AsyncAcknowledgementInput): st
 	lines.push(
 		"",
 		"The dispatch is running in the background. Do not poll or wait for it unless the user asks. The final result will arrive automatically when the whole dispatch settles. Children may modify the shared working tree, so re-read affected files before editing them.",
+		'To stop or steer it, call subagent with action: "stop" or "steer" and the dispatch id above (or one run id).',
 	);
 	return lines.join("\n");
 }
