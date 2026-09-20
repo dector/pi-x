@@ -18,11 +18,11 @@ describe("permissions-core network state contract", () => {
 		expect(
 			parseNetworkStateResponse({
 				id: "request-1",
-				state: { configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
+				state: { configured: "auto", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 			}),
 		).toEqual({
 			id: "request-1",
-			state: { configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
+			state: { configured: "auto", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		});
 	});
 
@@ -43,17 +43,27 @@ describe("permissions-core network state contract", () => {
 		expect(
 			parseNetworkStateResponse({
 				id: "r",
-				state: { configured: "allow-all", effective: "ask-all", overriddenByParanoid: false },
+				state: { configured: "allow-all", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: false },
+			}),
+		).toBeUndefined();
+		expect(
+			parseNetworkStateResponse({
+				id: "r",
+				state: { configured: "allow-all", effective: "allow-all", autoEffective: "allow-all", overriddenByParanoid: false },
 			}),
 		).toBeUndefined();
 	});
 
 	test("createNetworkStateChanged flattens validated state with an optional source", () => {
 		expect(
-			createNetworkStateChanged({ configured: "auto", effective: "allow-trusted", overriddenByParanoid: false }, "safe-mode"),
+			createNetworkStateChanged(
+				{ configured: "auto", effective: "allow-trusted", autoEffective: "allow-trusted", overriddenByParanoid: false },
+				"safe-mode",
+			),
 		).toEqual({
 			configured: "auto",
 			effective: "allow-trusted",
+			autoEffective: "allow-trusted",
 			overriddenByParanoid: false,
 			source: "safe-mode",
 		});
@@ -61,25 +71,42 @@ describe("permissions-core network state contract", () => {
 
 	test("parseNetworkStateChanged round-trips changed payloads and rejects malformed ones", () => {
 		const changed = createNetworkStateChanged(
-			{ configured: "allow-all", effective: "ask-all", overriddenByParanoid: true },
+			{ configured: "allow-all", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: true },
 			"session-reset",
 		);
 		expect(parseNetworkStateChanged(changed)).toEqual(changed);
 		expect(
-			parseNetworkStateChanged({ configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false }),
-		).toEqual({ configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false, source: undefined });
+			parseNetworkStateChanged({
+				configured: "auto",
+				effective: "ask-untrusted",
+				autoEffective: "ask-untrusted",
+				overriddenByParanoid: false,
+			}),
+		).toEqual({
+			configured: "auto",
+			effective: "ask-untrusted",
+			autoEffective: "ask-untrusted",
+			overriddenByParanoid: false,
+			source: undefined,
+		});
 
 		for (const value of [undefined, null, 42, "x", [], {}]) {
 			expect(parseNetworkStateChanged(value)).toBeUndefined();
 		}
 		// Inconsistent state and invalid sources are rejected.
 		expect(
-			parseNetworkStateChanged({ configured: "allow-all", effective: "ask-all", overriddenByParanoid: false }),
+			parseNetworkStateChanged({
+				configured: "allow-all",
+				effective: "ask-all",
+				autoEffective: "ask-all",
+				overriddenByParanoid: false,
+			}),
 		).toBeUndefined();
 		expect(
 			parseNetworkStateChanged({
 				configured: "auto",
 				effective: "ask-untrusted",
+				autoEffective: "ask-untrusted",
 				overriddenByParanoid: false,
 				source: "",
 			}),
@@ -88,6 +115,7 @@ describe("permissions-core network state contract", () => {
 			parseNetworkStateChanged({
 				configured: "auto",
 				effective: "ask-untrusted",
+				autoEffective: "ask-untrusted",
 				overriddenByParanoid: false,
 				source: "x".repeat(129),
 			}),

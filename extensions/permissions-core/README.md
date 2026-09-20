@@ -5,11 +5,12 @@ safe-mode's network disposition. Classification, disposition, and state are
 pure and independently tested; `index.ts` wires the policy engine into the hub
 and the local event bus.
 
-Stage 2 status: loadable, provides `perm:net` through the hub, persists the
-configured policy per session, observes safe-mode, and exposes a validated
-state contract. Stage 3 connects the `http`, `http_md`, and `web_search` tools
-to this provider; the `/px:net` UI and status-bar rendering arrive in later
-stages.
+Status: provides `perm:net` through the hub, persists the configured policy per
+session, observes safe-mode, and exposes a validated state contract. The
+`http`, `http_md`, and `web_search` tools consume this provider, and the
+`/px:net` selector in [`../permissions-ui/`](../permissions-ui/README.md) reads
+and changes the state through the same contract. Status-bar rendering arrives
+in Stage 5.
 
 ## Model
 
@@ -85,7 +86,8 @@ effective `confirm` becomes a `block` when no UI is available, and the HTTP
 extension additionally requires a one-time execution authorization from
 safe-mode (see [`../http/README.md`](../http/README.md)). Without safe-mode's
 final allow/user-approval handoff, no network request executes. The `/px:net`
-UI and status-bar rendering arrive in later stages.
+selector (Stage 4) is available in [`../permissions-ui/`](../permissions-ui/README.md);
+status-bar rendering arrives in Stage 5.
 
 ## State contract and persistence
 
@@ -96,10 +98,15 @@ Read-only and mutation channels (payloads validated by `contract.ts`):
 | `px:permissions-core:net:state:request` | consumer → core | `{ id }` |
 | `px:permissions-core:net:state:response` | core → consumer | `{ id, state }` |
 | `px:permissions-core:net:state:set` | consumer → core | `{ setting, source? }` |
-| `px:permissions-core:net:state:changed` | core → consumers | `{ configured, effective, overriddenByParanoid, source? }` |
+| `px:permissions-core:net:state:changed` | core → consumers | `{ configured, effective, autoEffective, overriddenByParanoid, source? }` |
 
-`state` is `{ configured, effective, overriddenByParanoid }`. A changed event is
-emitted only when the validated state actually changes. Session reset and
+`state` is `{ configured, effective, autoEffective, overriddenByParanoid }`.
+`effective` is the policy actually applied to requests. `autoEffective` is the
+safe-mode-derived Auto policy, independent of `configured`; under PARANOID (or
+an unknown safe mode) it is `ask-all`. Consumers use `autoEffective` to render
+the Auto row even while an explicit policy is configured. A changed event is
+emitted only when the validated state actually changes (including when only
+`autoEffective` changes, so the Auto row stays live). Session reset and
 `session_tree` re-derivation go through the same path, so consumers are notified
 whenever a new/resumed session changes the effective policy (they can never be
 left rendering a previous session's state).
@@ -142,9 +149,10 @@ and summaries never echo an unnormalized URL, so credentials cannot leak
 through normalized output. Summary text strips every control character.
 
 `parseNetworkPermissionState` rejects inconsistent persisted state: explicit
-policies must be effective verbatim unless PARANOID is active, Auto effective
-values must be derivable from a canonical safe mode, and PARANOID (or a
-fail-closed unknown mode) must be `ask-all`.
+policies must be effective verbatim unless PARANOID is active, Auto's
+`effective` must equal its `autoEffective`, `autoEffective` must be derivable
+from a canonical safe mode, and PARANOID (or a fail-closed unknown mode) must be
+`ask-all` for both `effective` and `autoEffective`.
 
 ## Tests
 

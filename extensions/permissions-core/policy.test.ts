@@ -346,7 +346,12 @@ test("resolveNetworkPermissionState: Auto tracks safe mode", () => {
 		["yolo", "allow-trusted"],
 	] as const) {
 		const state = resolveNetworkPermissionState({ configured: "auto", safeMode });
-		expect(state).toEqual({ configured: "auto", effective: expected, overriddenByParanoid: safeMode === "paranoid" });
+		expect(state).toEqual({
+			configured: "auto",
+			effective: expected,
+			autoEffective: expected,
+			overriddenByParanoid: safeMode === "paranoid",
+		});
 	}
 });
 
@@ -380,7 +385,7 @@ test("resolveNetworkPermissionState: leaving PARANOID restores the retained poli
 		expect(paranoid.effective).toBe("ask-all");
 
 		const restored = resolveNetworkPermissionState({ configured: paranoid.configured, safeMode: "smart" });
-		expect(restored).toEqual({ configured, effective: configured, overriddenByParanoid: false });
+		expect(restored).toEqual({ configured, effective: configured, autoEffective: "ask-untrusted", overriddenByParanoid: false });
 	}
 });
 
@@ -392,11 +397,13 @@ test("resolveNetworkPermissionState: leaving PARANOID resumes Auto derivation", 
 	expect(resolveNetworkPermissionState({ configured: "auto", safeMode: "smart" })).toEqual({
 		configured: "auto",
 		effective: "ask-untrusted",
+		autoEffective: "ask-untrusted",
 		overriddenByParanoid: false,
 	});
 	expect(resolveNetworkPermissionState({ configured: "auto", safeMode: "yolo" })).toEqual({
 		configured: "auto",
 		effective: "allow-trusted",
+		autoEffective: "allow-trusted",
 		overriddenByParanoid: false,
 	});
 });
@@ -405,6 +412,7 @@ test("createInitialNetworkPermissionState: new sessions start at Auto", () => {
 	expect(createInitialNetworkPermissionState("smart")).toEqual({
 		configured: "auto",
 		effective: "ask-untrusted",
+		autoEffective: "ask-untrusted",
 		overriddenByParanoid: false,
 	});
 });
@@ -413,11 +421,13 @@ test("resolveNetworkPermissionState: invalid configured settings fail closed", (
 	expect(resolveNetworkPermissionState({ configured: "bogus" as never, safeMode: "smart" })).toEqual({
 		configured: "ask-all",
 		effective: "ask-all",
+		autoEffective: "ask-untrusted",
 		overriddenByParanoid: false,
 	});
 	expect(resolveNetworkPermissionState({ configured: "bogus" as never, safeMode: "paranoid" })).toEqual({
 		configured: "ask-all",
 		effective: "ask-all",
+		autoEffective: "ask-all",
 		overriddenByParanoid: true,
 	});
 });
@@ -428,11 +438,11 @@ test("resolveNetworkPermissionState: invalid configured settings fail closed", (
 
 test("serialize/parse NetworkPermissionState: round trips", () => {
 	const states = [
-		{ configured: "auto", effective: "ask-all", overriddenByParanoid: false },
-		{ configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
-		{ configured: "auto", effective: "allow-trusted", overriddenByParanoid: false },
-		{ configured: "allow-all", effective: "allow-all", overriddenByParanoid: false },
-		{ configured: "allow-all", effective: "ask-all", overriddenByParanoid: true },
+		{ configured: "auto", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: false },
+		{ configured: "auto", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
+		{ configured: "auto", effective: "allow-trusted", autoEffective: "allow-trusted", overriddenByParanoid: false },
+		{ configured: "allow-all", effective: "allow-all", autoEffective: "ask-untrusted", overriddenByParanoid: false },
+		{ configured: "allow-all", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: true },
 	] as const;
 	for (const state of states) {
 		const json = serializeNetworkPermissionState(state);
@@ -444,32 +454,42 @@ test("serialize/parse NetworkPermissionState: round trips", () => {
 
 test("parseNetworkPermissionState: accepts every canonical consistent state", () => {
 	for (const configured of NETWORK_POLICY_SETTINGS) {
-		const effective = configured === "auto" ? "ask-untrusted" : configured;
-		expect(parseNetworkPermissionState({ configured, effective, overriddenByParanoid: false })).toEqual({
+		const autoEffective = "ask-untrusted";
+		const effective = configured === "auto" ? autoEffective : configured;
+		expect(parseNetworkPermissionState({ configured, effective, autoEffective, overriddenByParanoid: false })).toEqual({
 			configured,
 			effective,
+			autoEffective,
 			overriddenByParanoid: false,
 		});
-		expect(parseNetworkPermissionState({ configured, effective: "ask-all", overriddenByParanoid: true })).toEqual({
-			configured,
-			effective: "ask-all",
-			overriddenByParanoid: true,
-		});
+		expect(
+			parseNetworkPermissionState({
+				configured,
+				effective: "ask-all",
+				autoEffective: "ask-all",
+				overriddenByParanoid: true,
+			}),
+		).toEqual({ configured, effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: true });
 	}
 });
 
 test("parseNetworkPermissionState: rejects inconsistent effective state", () => {
 	const cases: unknown[] = [
 		// Explicit choices must be effective verbatim without PARANOID.
-		{ configured: "allow-trusted", effective: "allow-all", overriddenByParanoid: false },
-		{ configured: "deny-all", effective: "ask-all", overriddenByParanoid: false },
-		{ configured: "allow-all", effective: "ask-untrusted", overriddenByParanoid: false },
+		{ configured: "allow-trusted", effective: "allow-all", autoEffective: "ask-untrusted", overriddenByParanoid: false },
+		{ configured: "deny-all", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: false },
+		{ configured: "allow-all", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		// Auto can only derive ask-all / ask-untrusted / allow-trusted.
-		{ configured: "auto", effective: "deny-all", overriddenByParanoid: false },
-		{ configured: "auto", effective: "allow-all", overriddenByParanoid: false },
-		// PARANOID (and fail-closed unknown modes) must be ask-all.
-		{ configured: "auto", effective: "allow-all", overriddenByParanoid: true },
-		{ configured: "allow-all", effective: "allow-trusted", overriddenByParanoid: true },
+		{ configured: "auto", effective: "deny-all", autoEffective: "deny-all", overriddenByParanoid: false },
+		{ configured: "auto", effective: "allow-all", autoEffective: "allow-all", overriddenByParanoid: false },
+		// Auto's effective policy must match its derived policy.
+		{ configured: "auto", effective: "ask-untrusted", autoEffective: "allow-trusted", overriddenByParanoid: false },
+		// PARANOID (and fail-closed unknown modes) must be ask-all everywhere.
+		{ configured: "auto", effective: "allow-all", autoEffective: "allow-all", overriddenByParanoid: true },
+		{ configured: "allow-all", effective: "allow-trusted", autoEffective: "ask-all", overriddenByParanoid: true },
+		{ configured: "allow-all", effective: "ask-all", autoEffective: "allow-trusted", overriddenByParanoid: true },
+		// autoEffective itself must be derivable.
+		{ configured: "allow-all", effective: "allow-all", autoEffective: "deny-all", overriddenByParanoid: false },
 	];
 	for (const value of cases) {
 		expect(parseNetworkPermissionState(value)).toBeUndefined();
@@ -483,10 +503,12 @@ test("parseNetworkPermissionState: rejects malformed or inconsistent state", () 
 		"auto",
 		[],
 		{},
-		{ configured: "bogus", effective: "ask-all", overriddenByParanoid: false },
-		{ configured: "auto", effective: "bogus", overriddenByParanoid: false },
-		{ configured: "auto", effective: "ask-all", overriddenByParanoid: "no" },
-		{ configured: "auto", effective: "allow-all", overriddenByParanoid: true },
+		{ configured: "bogus", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: false },
+		{ configured: "auto", effective: "bogus", autoEffective: "ask-all", overriddenByParanoid: false },
+		{ configured: "auto", effective: "ask-all", autoEffective: "bogus", overriddenByParanoid: false },
+		{ configured: "auto", effective: "ask-all", overriddenByParanoid: false },
+		{ configured: "auto", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: "no" },
+		{ configured: "auto", effective: "allow-all", autoEffective: "allow-all", overriddenByParanoid: true },
 	];
 	for (const value of cases) {
 		expect(parseNetworkPermissionState(value)).toBeUndefined();

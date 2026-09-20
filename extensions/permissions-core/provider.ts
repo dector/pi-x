@@ -61,6 +61,7 @@ function sameState(a: NetworkPermissionState, b: NetworkPermissionState): boolea
 	return (
 		a.configured === b.configured &&
 		a.effective === b.effective &&
+		a.autoEffective === b.autoEffective &&
 		a.overriddenByParanoid === b.overriddenByParanoid
 	);
 }

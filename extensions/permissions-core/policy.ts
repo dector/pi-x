@@ -57,6 +57,9 @@ export interface NetworkPermissionDecision {
 export interface NetworkPermissionState {
 	configured: NetworkPolicySetting;
 	effective: NetworkPolicy;
+	// Safe-mode-derived Auto policy, independent of `configured`. Under
+	// PARANOID (or an unknown safe mode) it is always `ask-all`.
+	autoEffective: NetworkPolicy;
 	overriddenByParanoid: boolean;
 }
 
@@ -324,7 +327,8 @@ export function deriveAutoNetworkPolicy(safeMode: unknown): NetworkPolicy {
 }
 
 // Auto derivation can only ever yield one of these policies. Persisted state
-// with any other `effective` value under `auto` is inconsistent and rejected.
+// whose `autoEffective` (or `effective` under `auto`) is anything else is
+// inconsistent and rejected.
 const AUTO_DERIVABLE_POLICIES: ReadonlySet<NetworkPolicy> = new Set(
 	NETWORK_SAFE_MODES.map((mode) => deriveAutoNetworkPolicy(mode)),
 );
@@ -348,16 +352,20 @@ export function resolveNetworkPermissionState(args: {
 }): NetworkPermissionState {
 	const configured = parseNetworkPolicySetting(args.configured) ?? "ask-all";
 	const safeMode = parseNetworkSafeMode(args.safeMode);
+	// Auto derivation is independent of the configured choice, so the UI can
+	// always show what Auto would do even while an explicit policy is active.
+	const autoEffective = deriveAutoNetworkPolicy(safeMode);
 	if (!safeMode) {
-		return { configured, effective: "ask-all", overriddenByParanoid: true };
+		return { configured, effective: "ask-all", autoEffective, overriddenByParanoid: true };
 	}
 
 	const paranoid = safeMode === "paranoid";
-	const derived = configured === "auto" ? deriveAutoNetworkPolicy(safeMode) : configured;
+	const derived = configured === "auto" ? autoEffective : configured;
 
 	return {
 		configured,
 		effective: paranoid ? "ask-all" : derived,
+		autoEffective,
 		overriddenByParanoid: paranoid,
 	};
 }
@@ -371,6 +379,7 @@ export function serializeNetworkPermissionState(state: NetworkPermissionState): 
 	return JSON.stringify({
 		configured: state.configured,
 		effective: state.effective,
+		autoEffective: state.autoEffective,
 		overriddenByParanoid: state.overriddenByParanoid,
 	});
 }
@@ -380,20 +389,27 @@ export function parseNetworkPermissionState(value: unknown): NetworkPermissionSt
 
 	const configured = parseNetworkPolicySetting(value.configured);
 	const effective = parseNetworkPolicy(value.effective);
-	if (!configured || !effective || typeof value.overriddenByParanoid !== "boolean") return undefined;
+	const autoEffective = parseNetworkPolicy(value.autoEffective);
+	if (!configured || !effective || !autoEffective || typeof value.overriddenByParanoid !== "boolean") {
+		return undefined;
+	}
+
+	// Auto can only derive the policies reachable from canonical safe modes.
+	if (!AUTO_DERIVABLE_POLICIES.has(autoEffective)) return undefined;
 
 	if (value.overriddenByParanoid) {
-		// PARANOID (or a fail-closed unknown safe mode) always yields ask-all.
-		if (effective !== "ask-all") return undefined;
+		// PARANOID (or a fail-closed unknown safe mode) always yields ask-all
+		// for both the effective and the Auto-derived policy.
+		if (effective !== "ask-all" || autoEffective !== "ask-all") return undefined;
 	} else if (configured === "auto") {
-		// Auto can only derive the policies reachable from canonical safe modes.
-		if (!AUTO_DERIVABLE_POLICIES.has(effective)) return undefined;
+		// Auto's effective policy is exactly its derived policy.
+		if (effective !== autoEffective) return undefined;
 	} else if (effective !== configured) {
 		// Explicit choices are effective verbatim while PARANOID is inactive.
 		return undefined;
 	}
 
-	return { configured, effective, overriddenByParanoid: value.overriddenByParanoid };
+	return { configured, effective, autoEffective, overriddenByParanoid: value.overriddenByParanoid };
 }
 
 export function deserializeNetworkPermissionState(json: string): NetworkPermissionState | undefined {

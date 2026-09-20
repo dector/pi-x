@@ -160,7 +160,12 @@ describe("permissions-core network state", () => {
 			channel: NETWORK_STATE_EVENTS.response,
 			payload: {
 				id: "state-1",
-				state: { configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
+				state: {
+					configured: "auto",
+					effective: "ask-untrusted",
+					autoEffective: "ask-untrusted",
+					overriddenByParanoid: false,
+				},
 			},
 		});
 
@@ -177,6 +182,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "allow-all",
 			effective: "allow-all",
+			autoEffective: "ask-untrusted",
 			overriddenByParanoid: false,
 		});
 		expect(harness.entries).toEqual([
@@ -186,6 +192,7 @@ describe("permissions-core network state", () => {
 		expect(harness.changed()[0]?.payload).toEqual({
 			configured: "allow-all",
 			effective: "allow-all",
+			autoEffective: "ask-untrusted",
 			overriddenByParanoid: false,
 			source: "permissions-ui",
 		});
@@ -224,6 +231,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "auto",
 			effective: "ask-all",
+			autoEffective: "ask-all",
 			overriddenByParanoid: true,
 		});
 
@@ -232,6 +240,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "allow-all",
 			effective: "ask-all",
+			autoEffective: "ask-all",
 			overriddenByParanoid: true,
 		});
 		expect(harness.entries).toEqual([
@@ -243,6 +252,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "allow-all",
 			effective: "allow-all",
+			autoEffective: "ask-untrusted",
 			overriddenByParanoid: false,
 		});
 	});
@@ -254,6 +264,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "auto",
 			effective: "ask-all",
+			autoEffective: "ask-all",
 			overriddenByParanoid: true,
 		});
 	});
@@ -265,6 +276,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "allow-trusted",
 			effective: "allow-trusted",
+			autoEffective: "ask-untrusted",
 			overriddenByParanoid: false,
 		});
 
@@ -275,6 +287,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "auto",
 			effective: "ask-untrusted",
+			autoEffective: "ask-untrusted",
 			overriddenByParanoid: false,
 		});
 	});
@@ -290,12 +303,14 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "auto",
 			effective: "ask-all",
+			autoEffective: "ask-all",
 			overriddenByParanoid: true,
 		});
 		expect(harness.changed().length).toBe(1);
 		expect(harness.changed()[0]?.payload).toEqual({
 			configured: "auto",
 			effective: "ask-all",
+			autoEffective: "ask-all",
 			overriddenByParanoid: true,
 			source: "session-reset",
 		});
@@ -318,6 +333,7 @@ describe("permissions-core network state", () => {
 		expect(harness.service.getState()).toEqual({
 			configured: "ask-all",
 			effective: "ask-all",
+			autoEffective: "allow-trusted",
 			overriddenByParanoid: false,
 		});
 	});

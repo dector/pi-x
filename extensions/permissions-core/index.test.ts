@@ -142,21 +142,21 @@ describe("permissions-core index wiring", () => {
 
 		bus.emit(NETWORK_STATE_EVENTS.set, { setting: "allow-all", source: "test" });
 		expect(await requestState(bus, "s1")).toMatchObject({
-			state: { configured: "allow-all", effective: "allow-all", overriddenByParanoid: false },
+			state: { configured: "allow-all", effective: "allow-all", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		});
 
 		// session_tree with a persisted explicit choice: reset (Auto) then restore.
 		const branch = [{ type: "custom", customType: "permissions-core-net", data: { configured: "allow-trusted" } }];
 		await fireLifecycle(pi, "session_tree", branch);
 		expect(await requestState(bus, "s2")).toMatchObject({
-			state: { configured: "allow-trusted", effective: "allow-trusted", overriddenByParanoid: false },
+			state: { configured: "allow-trusted", effective: "allow-trusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		});
 
 		// session_tree with an empty branch must not leave the previous explicit
 		// choice visible to consumers.
 		await fireLifecycle(pi, "session_tree", []);
 		expect(await requestState(bus, "s3")).toMatchObject({
-			state: { configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
+			state: { configured: "auto", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		});
 		expect(changed.length).toBeGreaterThanOrEqual(3);
 	});
@@ -176,7 +176,7 @@ describe("permissions-core index wiring", () => {
 		await fireLifecycle(pi, "session_start");
 		expect(await requestState(bus, "state-1")).toEqual({
 			id: "state-1",
-			state: { configured: "auto", effective: "ask-untrusted", overriddenByParanoid: false },
+			state: { configured: "auto", effective: "ask-untrusted", autoEffective: "ask-untrusted", overriddenByParanoid: false },
 		});
 	});
 
@@ -185,11 +185,11 @@ describe("permissions-core index wiring", () => {
 		await fireLifecycle(pi, "session_start");
 		safeMode.setMode("paranoid");
 		expect(await requestState(bus, "p1")).toMatchObject({
-			state: { configured: "auto", effective: "ask-all", overriddenByParanoid: true },
+			state: { configured: "auto", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: true },
 		});
 		safeMode.setMode("yolo");
 		expect(await requestState(bus, "y1")).toMatchObject({
-			state: { configured: "auto", effective: "allow-trusted", overriddenByParanoid: false },
+			state: { configured: "auto", effective: "allow-trusted", autoEffective: "allow-trusted", overriddenByParanoid: false },
 		});
 	});
 
@@ -204,7 +204,7 @@ describe("permissions-core index wiring", () => {
 
 		await fireLifecycle(pi, "session_start");
 		expect(await requestState(bus, "absent")).toMatchObject({
-			state: { configured: "auto", effective: "ask-all", overriddenByParanoid: true },
+			state: { configured: "auto", effective: "ask-all", autoEffective: "ask-all", overriddenByParanoid: true },
 		});
 		// The provider still answers and fails closed to approval.
 		expect((await askPermNet(bus, "absent-ask"))[0]).toMatchObject({ what: "perm:net", action: "confirm" });

@@ -1,0 +1,14 @@
+{
+  "name": "permissions-ui",
+  "private": true,
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@earendil-works/pi-tui": "^0.75.5",
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck contract.ts apply.ts options.ts query.ts commands.ts ui.ts index.ts"
+  }
+}

@@ -81,6 +81,7 @@ export function createNetworkStateChanged(
 	return {
 		configured: state.configured,
 		effective: state.effective,
+		autoEffective: state.autoEffective,
 		overriddenByParanoid: state.overriddenByParanoid,
 		source,
 	};
