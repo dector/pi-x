@@ -35,6 +35,19 @@ export class ApprovalQueue {
 		if (this.active?.entry.runId === runId) this.active.controller.abort();
 	}
 
+	/**
+	 * Reject every queued and active dialog. Used on session shutdown so no
+	 * child approval can keep running against a torn-down UI context.
+	 */
+	clear(): void {
+		for (const entry of this.queue) {
+			this.keys.delete(`${entry.runId}\0${entry.requestId}`);
+			entry.resolve(undefined);
+		}
+		this.queue = [];
+		if (this.active) this.active.controller.abort();
+	}
+
 	private async drain(): Promise<void> {
 		if (this.active) return;
 		const entry = this.queue.shift();

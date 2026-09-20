@@ -13,6 +13,7 @@ import {
 	MAX_CONCURRENCY,
 	PER_TASK_OUTPUT_CAP,
 	runPreparedDispatch,
+	SubagentAbortError,
 	type DispatchRuntimeDependencies,
 	type SingleRunRequest,
 } from "./dispatch.ts";
@@ -721,5 +722,99 @@ describe("aborted result detection", () => {
 		expect(isAbortedResult({ stopReason: "error" })).toBe(false);
 		expect(isAbortedResult({ stopReason: "end" })).toBe(false);
 		expect(isAbortedResult({})).toBe(false);
+	});
+});
+
+describe("partial results on child rejection", () => {
+	test("keeps successful parallel siblings when a child throws", async () => {
+		const { runner } = createRunner((request) => {
+			if (request.agent === "b") throw new Error("child exploded");
+			return singleResult(request.agent, `${request.agent}-out`);
+		});
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+				{ agent: "c", task: "3" },
+			]),
+			runner,
+			undefined,
+			undefined,
+		);
+
+		expect(result.details?.results.map((r) => r.agent)).toEqual(["a", "b", "c"]);
+		expect(isFailedResult(result.details?.results[1] ?? {})).toBe(true);
+		expect(result.details?.dispatchStatus).toBe("completed");
+		const text = textOf(result);
+		expect(text).toContain("a-out");
+		expect(text).toContain("c-out");
+		expect(text).toContain("child exploded");
+	});
+
+	test("classifies a rejected child as aborted when the dispatch signal is aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const { runner } = createRunner(() => {
+			throw new Error("aborted by parent");
+		});
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "a", task: "1" }]),
+			runner,
+			controller.signal,
+			undefined,
+		);
+
+		expect(result.details?.dispatchStatus).toBe("aborted");
+		expect(textOf(result)).toBe("Agent aborted: aborted by parent");
+	});
+
+	test("preserves and reclassifies a mid-flight abort snapshot from SubagentAbortError", async () => {
+		const { runner } = createRunner((request) => {
+			// Mirrors `runSingleAgent`'s snapshot before it sets stopReason.
+			throw new SubagentAbortError(singleResult(request.agent, "half written", { exitCode: -1, state: "aborting" }));
+		});
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "a", task: "1" }]),
+			runner,
+			undefined,
+			undefined,
+		);
+
+		expect(result.details?.dispatchStatus).toBe("aborted");
+		expect(result.details?.results[0]?.stopReason).toBe("aborted");
+		expect(result.details?.results[0]?.messages).toEqual([assistant("half written")]);
+	});
+
+	test("uses a fallback abort diagnostic when the snapshot has no output", async () => {
+		const { runner } = createRunner((request) => {
+			throw new SubagentAbortError(singleResult(request.agent, undefined, { exitCode: -1, state: "aborting" }));
+		});
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "a", task: "1" }]),
+			runner,
+			undefined,
+			undefined,
+		);
+
+		expect(result.details?.dispatchStatus).toBe("aborted");
+		expect(textOf(result)).toBe("Agent aborted: Subagent was aborted");
+	});
+
+	test("stamps cwd on synthesized failure results", async () => {
+		const { runner } = createRunner(() => {
+			throw new Error("boom");
+		});
+		const dispatch = preparedDispatch(
+			"parallel",
+			[
+				{ agent: "a", task: "1", cwd: "/work/a" },
+				{ agent: "b", task: "2" },
+			],
+			{ cwd: "/parent" },
+		);
+		const result = await runPreparedDispatch(dispatch, runner, undefined, undefined);
+
+		expect(result.details?.results[0]?.cwd).toBe("/work/a");
+		expect(result.details?.results[1]?.cwd).toBe("/parent");
 	});
 });

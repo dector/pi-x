@@ -108,7 +108,7 @@ describe("single preparation", () => {
 		if (!result.ok) return;
 		expect(result.dispatch).toEqual({
 			dispatchId: "dispatch-1",
-			execution: "blocking",
+			execution: "async",
 			mode: "single",
 			agentScope: "user",
 			projectAgentsDir: "/repo/.pi/agents",
@@ -129,10 +129,20 @@ describe("single preparation", () => {
 
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
+		expect(result.dispatch.execution).toBe("async");
 		expect(result.dispatch.agentScope).toBe("user");
 		expect(result.dispatch.dispatchDefaults).toEqual({ model: undefined, thinkingLevel: undefined });
 		expect(result.dispatch.safeModeSnapshot).toBeUndefined();
 		expect(calls.discover).toEqual([{ cwd: "/work", scope: "user" }]);
+	});
+
+	test('preserves an explicit execution: "blocking" request', async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t", execution: "blocking" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.execution).toBe("blocking");
 	});
 });
 

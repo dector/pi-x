@@ -48,8 +48,12 @@ import {
 import {
 	type DispatchRuntimeDependencies,
 	type SingleRunRequest,
+	buildDispatchExceptionResult,
 	runPreparedDispatch,
+	SubagentAbortError,
 } from "./dispatch.ts";
+import { buildAsyncStartResult, buildNotStartedResult } from "./completion.ts";
+import { AsyncDispatchManager } from "./lifecycle.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { sendControl, SubagentRegistry } from "./registry.ts";
@@ -299,6 +303,7 @@ async function runSingleAgent(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
+		cwd: cwd ?? defaultCwd,
 		exitCode: -1,
 		messages: [],
 		stderr: "",
@@ -526,7 +531,7 @@ async function runSingleAgent(
 				return currentResult;
 			}
 			await completion;
-			if (wasAborted) throw new Error("Subagent was aborted");
+			if (wasAborted) throw new SubagentAbortError(currentResult);
 			if (streamState.settled) {
 				currentResult.exitCode = 0;
 			} else {
@@ -537,7 +542,7 @@ async function runSingleAgent(
 				currentResult.errorMessage ||= child.stderr || "RPC child exited before settling";
 			}
 		} catch (error) {
-			if (wasAborted) throw new Error("Subagent was aborted");
+			if (wasAborted) throw new SubagentAbortError(currentResult);
 			interruptActiveTools(currentResult, "Subagent failed before the tool completed");
 			currentResult.exitCode = 1;
 			currentResult.state = "failed";
@@ -596,6 +601,13 @@ const SubagentParams = Type.Object({
 	confirmProjectAgents: Type.Optional(
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
 	),
+	execution: Type.Optional(
+		StringEnum(["async", "blocking"] as const, {
+			description:
+				'Run detached in the background ("async", default) or await the full result ("blocking").',
+			default: "async",
+		}),
+	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
@@ -633,6 +645,19 @@ export default function (pi: ExtensionAPI) {
 	const registry = new SubagentRegistry(30, () => publishSubagentRow());
 	const newRunId = createRunIdGenerator();
 	const newDispatchId = createRunIdGenerator("dispatch");
+
+	// Extension-owned detached dispatches. Independent of any parent tool
+	// invocation: `deliver` is fire-and-forget and failures are swallowed so a
+	// stale extension instance or a replacement session can never throw here.
+	const asyncDispatches = new AsyncDispatchManager({
+		deliver: (message, options) => {
+			try {
+				pi.sendMessage(message, options);
+			} catch {
+				// Stale extension instance or replacement session.
+			}
+		},
+	});
 
 	function runningSubagentCount(): number {
 		return registry.list().filter((run) => !run.completedAt).length;
@@ -768,6 +793,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
+		asyncDispatches.reset();
 		statusBarPresence.reset();
 		statusBarPresence.ping();
 		publishSubagentRow();
@@ -779,11 +805,18 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Order matters: flip the shutdown flag, abort detached controllers,
+		// terminate active RPC children, await settled dispatch promises, then
+		// clear runtime state. Completion delivery is suppressed by the manager
+		// as soon as `shutdown()` sets its flag.
 		shuttingDown = true;
 		statusBarPresence.reset();
 		sessionContext = undefined;
 		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
+		const dispatchesSettled = asyncDispatches.shutdown();
+		approvalQueue.clear();
 		await Promise.all([...activeChildren].map((child) => child.terminate()));
+		await dispatchesSettled;
 		activeChildren.clear();
 	});
 
@@ -837,6 +870,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
+			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles. Use execution: "blocking" to stream progress and wait for the final result in this turn.',
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
@@ -844,6 +878,12 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			// Refuse before preparation once teardown starts: an accepted dispatch
+			// must never outlive the session that owns it. Re-checked again below
+			// because preparation is async and can straddle a shutdown event.
+			if (shuttingDown) {
+				return buildNotStartedResult("Subagent dispatch not started: the session is shutting down.");
+			}
 			const preparation = await prepareSubagentDispatch(params as SubagentRequest, {
 				discoverAgents,
 				requestPermission: (what, data) => askHubPermission(what, data, ctx),
@@ -865,11 +905,39 @@ export default function (pi: ExtensionAPI) {
 				parentContext: ctx,
 				registry,
 			};
-			const runner: DispatchRuntimeDependencies = {
-				runSingle: (request) => runSingleAgent(request, dispatch, runtime),
-			};
+			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
+				runSingle: (request) => runSingleAgent(request, target, runtime),
+			});
 
-			return runPreparedDispatch(dispatch, runner, signal, onUpdate);
+			if (dispatch.execution === "blocking") {
+				// Explicit blocking keeps the tool signal and streaming callback.
+				return runPreparedDispatch(dispatch, makeRunner(dispatch), signal, onUpdate);
+			}
+
+			// Async acceptance is guarded against shutdown (which may have begun
+			// during the awaited preparation) and against an already-aborted parent
+			// turn. A refused dispatch is terminal, never a started acknowledgement.
+			if (shuttingDown || !asyncDispatches.canStart(signal)) {
+				const reason = shuttingDown ? "the session is shutting down" : "the parent turn was aborted";
+				return buildDispatchExceptionResult(dispatch, new Error(`Subagent dispatch not started: ${reason}.`), {
+					aborted: true,
+				});
+			}
+
+			// Async: detach with an independent controller. Never pass the parent
+			// tool signal or the completed invocation's onUpdate callback; live UI
+			// comes from the registry and status row instead.
+			const handle = asyncDispatches.start(dispatch, (dispatchSignal) =>
+				runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
+			);
+			if (!handle) {
+				return buildDispatchExceptionResult(
+					dispatch,
+					new Error("Subagent dispatch not started: the session is shutting down."),
+					{ aborted: true },
+				);
+			}
+			return buildAsyncStartResult(dispatch);
 		},
 
 		renderCall(args, theme, _context) {

@@ -10,7 +10,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	PER_TASK_OUTPUT_CAP,
 	aggregateDispatchStatus,
+	buildAsyncStartResult,
 	formatAsyncAcknowledgement,
+	formatAsyncCompletion,
 	formatParallelAggregate,
 	formatTaskStatus,
 	isTerminalDispatchStatus,
@@ -18,7 +20,7 @@ import {
 	normalizeSubagentDetails,
 	truncateTaskOutput,
 } from "./completion.ts";
-import type { SingleResult } from "./types.ts";
+import type { PreparedSubagentDispatch, SingleResult } from "./types.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
@@ -225,6 +227,7 @@ describe("formatAsyncAcknowledgement", () => {
 	test("announces the dispatch, lists runs, and tells the parent not to poll", () => {
 		const text = formatAsyncAcknowledgement({
 			dispatchId: "dispatch-1",
+			execution: "async",
 			mode: "parallel",
 			items: [
 				{ agent: "scout", runId: "sa-1", task: "find code", cwd: "/tmp/repo" },
@@ -233,10 +236,170 @@ describe("formatAsyncAcknowledgement", () => {
 		});
 		expect(text).toContain("dispatch-1");
 		expect(text).toContain("background");
+		expect(text).toContain("async");
 		expect(text).toContain("scout [sa-1] (cwd: /tmp/repo): find code");
 		expect(text).toContain("worker [sa-2]: apply fix");
 		expect(text).toContain("Do not poll or wait");
 		expect(text).toContain("arrive automatically");
 		expect(text).toContain("re-read affected files");
+	});
+});
+
+function preparedDispatch(overrides: Partial<PreparedSubagentDispatch> = {}): PreparedSubagentDispatch {
+	return {
+		dispatchId: "dispatch-1",
+		execution: "async",
+		mode: "single",
+		agentScope: "user",
+		projectAgentsDir: null,
+		agents: [],
+		dispatchDefaults: {},
+		cwd: "/tmp/parent",
+		items: [{ runId: "sa-1", agent: "worker", task: "do it" }],
+		...overrides,
+	};
+}
+
+describe("buildAsyncStartResult", () => {
+	test("returns a non-terminal started acknowledgement with the dispatch cwd", () => {
+		const dispatch = preparedDispatch({ items: [{ runId: "sa-1", agent: "worker", task: "do it" }] });
+		const result = buildAsyncStartResult(dispatch);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(text).toContain("dispatch-1");
+		expect(text).toContain("worker [sa-1] (cwd: /tmp/parent): do it");
+		expect(text).toContain("async");
+		expect(result.details).toMatchObject({
+			mode: "single",
+			execution: "async",
+			dispatchId: "dispatch-1",
+			dispatchStatus: "started",
+			results: [],
+		});
+	});
+});
+
+describe("formatAsyncCompletion", () => {
+	test("summarizes every prepared run with status, task, and output", () => {
+		const dispatch = preparedDispatch({
+			mode: "parallel",
+			dispatchId: "dispatch-9",
+			items: [
+				{ runId: "sa-1", agent: "a", task: "one" },
+				{ runId: "sa-2", agent: "b", task: "two" },
+			],
+		});
+		const text = formatAsyncCompletion(dispatch, {
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "parallel",
+				execution: "async",
+				dispatchId: "dispatch-9",
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [
+					singleResult("a", "a-out", { runId: "sa-1" }),
+					singleResult("b", undefined, {
+						runId: "sa-2",
+						exitCode: 1,
+						stopReason: "error",
+						errorMessage: "boom",
+					}),
+				],
+			},
+		});
+
+		expect(text).toContain("dispatch-9 completed");
+		expect(text).toContain("### [a] [sa-1] completed");
+		expect(text).toContain("Task: one");
+		expect(text).toContain("Output: a-out");
+		expect(text).toContain("### [b] [sa-2] failed (error)");
+		expect(text).toContain("Failure: boom");
+		expect(text).toContain("Summary: 1/2 succeeded.");
+	});
+
+	test("includes the child working directory from results and prepared items", () => {
+		const dispatch = preparedDispatch({
+			mode: "parallel",
+			items: [
+				{ runId: "sa-1", agent: "a", task: "one", cwd: "/work/a" },
+				{ runId: "sa-2", agent: "b", task: "two" },
+			],
+		});
+		const text = formatAsyncCompletion(dispatch, {
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "parallel",
+				execution: "async",
+				dispatchId: dispatch.dispatchId,
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [
+					singleResult("a", "a-out", { runId: "sa-1", cwd: "/work/a" }),
+					singleResult("b", "b-out", { runId: "sa-2", cwd: "/work/b" }),
+				],
+			},
+		});
+
+		expect(text).toContain("Directory: /work/a");
+		expect(text).toContain("Directory: /work/b");
+	});
+
+	test("falls back to the dispatch cwd when a result has none", () => {
+		const dispatch = preparedDispatch({ cwd: "/parent", items: [{ runId: "sa-1", agent: "a", task: "one" }] });
+		const text = formatAsyncCompletion(dispatch, {
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "single",
+				execution: "async",
+				dispatchId: dispatch.dispatchId,
+				dispatchStatus: "completed",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [singleResult("a", "a-out", { runId: "sa-1" })],
+			},
+		});
+
+		expect(text).toContain("Directory: /parent");
+	});
+
+	test("uses the requested item count as the summary denominator for a stopped chain", () => {
+		const dispatch = preparedDispatch({
+			mode: "chain",
+			dispatchId: "chain-1",
+			items: [
+				{ runId: "sa-1", agent: "a", task: "one", step: 1 },
+				{ runId: "sa-2", agent: "b", task: "two", step: 2 },
+				{ runId: "sa-3", agent: "c", task: "three", step: 3 },
+			],
+		});
+		const text = formatAsyncCompletion(dispatch, {
+			content: [{ type: "text", text: "ignored" }],
+			details: {
+				mode: "chain",
+				execution: "async",
+				dispatchId: "chain-1",
+				dispatchStatus: "aborted",
+				agentScope: "user",
+				projectAgentsDir: null,
+				results: [
+					singleResult("a", "a-out", { runId: "sa-1", step: 1 }),
+					singleResult("b", undefined, {
+						runId: "sa-2",
+						step: 2,
+						exitCode: 1,
+						stopReason: "aborted",
+						errorMessage: "stopped",
+					}),
+				],
+			},
+		});
+
+		expect(text).toContain("### [c] [sa-3] not run");
+		expect(text).toContain("Not run: the chain stopped before this step.");
+		expect(text).toContain("Summary: 1/3 succeeded, 1 not run.");
+		expect(text).not.toContain("### [c] [sa-3] failed");
 	});
 });

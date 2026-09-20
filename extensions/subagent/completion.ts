@@ -13,10 +13,13 @@
  * treated as completed history.
  */
 
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getResultOutput, isFailedResult, type ResultStatusFields } from "./result-output.ts";
 import type {
 	NormalizedSubagentDetails,
+	PreparedSubagentDispatch,
 	SingleResult,
+	SubagentDetails,
 	SubagentDispatchStatus,
 	SubagentExecution,
 	SubagentMode,
@@ -153,6 +156,7 @@ export interface AsyncAcknowledgementItem {
 
 export interface AsyncAcknowledgementInput {
 	dispatchId: string;
+	execution?: SubagentExecution;
 	mode: SubagentMode;
 	items: readonly AsyncAcknowledgementItem[];
 }
@@ -164,7 +168,7 @@ export interface AsyncAcknowledgementInput {
  */
 export function formatAsyncAcknowledgement(input: AsyncAcknowledgementInput): string {
 	const lines: string[] = [
-		`Subagent dispatch ${input.dispatchId} started in the background (${input.mode}).`,
+		`Subagent dispatch ${input.dispatchId} started in the background (${input.mode}, ${input.execution ?? "async"}).`,
 		"",
 		"Tasks:",
 	];
@@ -177,4 +181,110 @@ export function formatAsyncAcknowledgement(input: AsyncAcknowledgementInput): st
 		"The dispatch is running in the background. Do not poll or wait for it unless the user asks. The final result will arrive automatically when the whole dispatch settles. Children may modify the shared working tree, so re-read affected files before editing them.",
 	);
 	return lines.join("\n");
+}
+
+/**
+ * Build the immediate tool result returned when a dispatch is detached. It is a
+ * non-terminal `"started"` acknowledgement, not a completion record, so it must
+ * never be surfaced as finished history.
+ */
+export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): AgentToolResult<SubagentDetails> {
+	return {
+		content: [
+			{
+				type: "text",
+				text: formatAsyncAcknowledgement({
+					dispatchId: dispatch.dispatchId,
+					execution: dispatch.execution,
+					mode: dispatch.mode,
+					items: dispatch.items.map((item) => ({
+						agent: item.agent,
+						runId: item.runId,
+						task: item.task,
+						cwd: item.cwd ?? dispatch.cwd,
+					})),
+				}),
+			},
+		],
+		details: {
+			mode: dispatch.mode,
+			execution: "async",
+			dispatchId: dispatch.dispatchId,
+			dispatchStatus: "started",
+			agentScope: dispatch.agentScope,
+			projectAgentsDir: dispatch.projectAgentsDir,
+			results: [],
+		},
+	};
+}
+
+/**
+ * Model-visible text for the single aggregate completion message. Carries the
+ * dispatch identity, every requested run, its original task, working
+ * directory, terminal status, and output/diagnostic, plus an aggregate
+ * summary. Per-task output stays under the same 50 KB cap as blocking
+ * summaries.
+ *
+ * The summary denominator is the number of *requested* items, not the number
+ * of results, so a chain that stopped early reports `N/M succeeded` rather
+ * than a misleading `N/N`. Later chain steps that never started are reported as
+ * `not run` instead of as failures.
+ */
+export function formatAsyncCompletion(
+	dispatch: PreparedSubagentDispatch,
+	result: AgentToolResult<SubagentDetails>,
+): string {
+	const results = result.details?.results ?? [];
+	const byRunId = new Map<string, SingleResult>();
+	for (const single of results) {
+		if (single.runId) byRunId.set(single.runId, single);
+	}
+
+	const dispatchStatus = result.details?.dispatchStatus ?? "completed";
+	const successCount = results.filter((single) => !isFailedResult(single)).length;
+	const notRunCount = dispatch.items.filter((item) => !byRunId.has(item.runId)).length;
+	const lines: string[] = [
+		`Subagent dispatch ${dispatch.dispatchId} ${dispatchStatus} (mode: ${dispatch.mode}, execution: ${dispatch.execution}).`,
+	];
+
+	for (const item of dispatch.items) {
+		const single = byRunId.get(item.runId);
+		const cwd = single?.cwd ?? item.cwd ?? dispatch.cwd;
+		const status = single ? formatTaskStatus(single) : dispatch.mode === "chain" ? "not run" : "failed (no result)";
+		lines.push("", `### [${item.agent}] [${item.runId}] ${status}`, `Task: ${item.task}`);
+		if (cwd) lines.push(`Directory: ${cwd}`);
+		if (single) {
+			const output = truncateTaskOutput(getResultOutput(single));
+			lines.push(isFailedResult(single) ? `Failure: ${output}` : `Output: ${output}`);
+		} else if (dispatch.mode === "chain") {
+			lines.push("Not run: the chain stopped before this step.");
+		} else {
+			lines.push("Failure: the run produced no result.");
+		}
+	}
+
+	const notRunSuffix = notRunCount > 0 ? `, ${notRunCount} not run` : "";
+	lines.push("", `Summary: ${successCount}/${dispatch.items.length} succeeded${notRunSuffix}.`);
+	return lines.join("\n");
+}
+
+/**
+ * Minimal terminal result used when a dispatch is refused before preparation
+ * (for example the session is already shutting down). It is a completed
+ * failure, never a `started` acknowledgement, so it cannot be mistaken for
+ * background work.
+ */
+export function buildNotStartedResult(text: string, isError = true): AgentToolResult<SubagentDetails> {
+	return {
+		content: [{ type: "text", text }],
+		details: {
+			mode: "single",
+			execution: "async",
+			dispatchStatus: "aborted",
+			agentScope: "user",
+			projectAgentsDir: null,
+			results: [],
+		},
+		...(isError ? { isError: true as const } : {}),
+	};
 }

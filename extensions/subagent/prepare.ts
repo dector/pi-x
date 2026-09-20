@@ -30,6 +30,7 @@ import type {
 	PreparedSubagentDispatch,
 	SubagentDetails,
 	SubagentDispatchStatus,
+	SubagentExecution,
 	SubagentMode,
 } from "./types.ts";
 
@@ -45,7 +46,7 @@ export interface SubagentTaskInput {
 	cwd?: string;
 }
 
-/** Raw tool arguments. Mirrors the tool's TypeBox schema (no `execution` yet). */
+/** Raw tool arguments. Mirrors the tool's TypeBox schema. */
 export interface SubagentRequest {
 	agent?: string;
 	task?: string;
@@ -54,6 +55,8 @@ export interface SubagentRequest {
 	chain?: SubagentTaskInput[];
 	agentScope?: AgentScope;
 	confirmProjectAgents?: boolean;
+	/** Omitted means `"async"`; only an explicit `"blocking"` opts into awaiting. */
+	execution?: SubagentExecution;
 }
 
 /** Parent context snapshotted into the prepared dispatch. */
@@ -96,6 +99,8 @@ export async function prepareSubagentDispatch(
 	deps: PreparationDependencies,
 ): Promise<PreparationResult> {
 	const agentScope: AgentScope = request.agentScope ?? "user";
+	// Async is the default for every capability, including editing agents.
+	const execution: SubagentExecution = request.execution === "blocking" ? "blocking" : "async";
 	const discovery = deps.discoverAgents(deps.context.cwd, agentScope);
 	const agents = discovery.agents;
 	const availableAgents = agents.map((agent) => `${agent.name} (${agent.source})`).join(", ") || "none";
@@ -111,7 +116,7 @@ export async function prepareSubagentDispatch(
 			content: [{ type: "text", text }],
 			details: {
 				mode: failureMode,
-				execution: "blocking",
+				execution,
 				dispatchStatus: status,
 				agentScope,
 				projectAgentsDir: discovery.projectAgentsDir,
@@ -201,7 +206,7 @@ export async function prepareSubagentDispatch(
 		ok: true,
 		dispatch: {
 			dispatchId,
-			execution: "blocking",
+			execution,
 			mode,
 			agentScope,
 			projectAgentsDir: discovery.projectAgentsDir,

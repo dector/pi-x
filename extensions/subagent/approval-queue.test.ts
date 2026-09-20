@@ -22,3 +22,18 @@ test("cancelling a run leaves other requests queued", async () => {
 	expect(await removed).toBeUndefined();
 	expect(await retained).toBe("kept");
 });
+
+test("clear cancels the active dialog and drops every queued request", async () => {
+	const queue = new ApprovalQueue();
+	const active = queue.enqueue({ runId: "a", requestId: "1", run: (signal) => new Promise<string>((resolve) => signal.addEventListener("abort", () => resolve("aborted"), { once: true })) });
+	const queued = queue.enqueue({ runId: "b", requestId: "1", async run() { return "never"; } });
+
+	queue.clear();
+
+	expect(await active).toBe("aborted");
+	expect(await queued).toBeUndefined();
+
+	// The queue is reusable after a shutdown clear.
+	const later = queue.enqueue({ runId: "c", requestId: "1", async run() { return "later"; } });
+	expect(await later).toBe("later");
+});

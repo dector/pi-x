@@ -80,6 +80,8 @@ export interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
 	task: string;
+	/** Working directory the child ran in; carried into completion details. */
+	cwd?: string;
 	exitCode: number;
 	messages: Message[];
 	stderr: string;
