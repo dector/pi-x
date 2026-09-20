@@ -393,6 +393,24 @@ describe("createUnixSocketTransport", () => {
 		await expect(transport.request("ping", {})).rejects.toThrow(HerdrProtocolError);
 	});
 
+	test("rejects a structurally invalid envelope without throwing uncaught", async () => {
+		// Valid JSON that is not an object: the transport's own validation used to
+		// throw inside the socket data handler, escaping as an uncaughtException.
+		const { socketPath } = startServer((_request, socket) => {
+			socket.end("[1,2,3]\n");
+		});
+		const transport = createUnixSocketTransport({ socketPath, timeoutMs: 2000 });
+		await expect(transport.request("ping", {})).rejects.toThrow(HerdrProtocolError);
+	});
+
+	test("rejects a non-object error envelope without throwing uncaught", async () => {
+		const { socketPath } = startServer((_request, socket) => {
+			socket.end(`${JSON.stringify({ id: "x", error: "boom" })}\n`);
+		});
+		const transport = createUnixSocketTransport({ socketPath, timeoutMs: 2000 });
+		await expect(transport.request("pane.get", { pane_id: "x" })).rejects.toThrow(HerdrProtocolError);
+	});
+
 	test("opens a fresh connection per request", async () => {
 		let connections = 0;
 		const { socketPath } = startServer((_request, socket) => {

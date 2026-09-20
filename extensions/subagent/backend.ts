@@ -34,6 +34,11 @@ export interface RunBackendContext {
 	task?: string;
 	/** Herdr retention intent for this run's pane. */
 	herdrRetention?: HerdrRetention;
+	/**
+	 * Stable key for a sequential chain; steps sharing it reuse one pane.
+	 * Undefined for single/parallel runs, which always get distinct panes.
+	 */
+	chainKey?: string;
 }
 
 export interface SubagentBackend {
@@ -81,6 +86,7 @@ export class HerdrSubagentBackend implements SubagentBackend {
 		};
 		const lease = await this.options.tab.acquire(run, {
 			...(context.herdrRetention ? { retention: context.herdrRetention } : {}),
+			...(context.chainKey ? { chainKey: context.chainKey } : {}),
 		});
 		let child: RpcChild;
 		try {
@@ -98,12 +104,23 @@ export class HerdrSubagentBackend implements SubagentBackend {
 				...(this.options.maxFrameBytes !== undefined ? { maxFrameBytes: this.options.maxFrameBytes } : {}),
 			});
 		} catch (error) {
-			// A failed bridge launch must not strand the pane as in-use.
-			await lease.release("failed").catch(() => undefined);
+			// A bridge that never launched leaves an empty pane. Force-recycle it so
+			// a launch failure cannot strand an invisible retained pane; real run
+			// failures still retain according to policy.
+			await lease.release("failed", { retain: false }).catch(() => undefined);
 			throw error;
 		}
 		return withLease(child, lease);
 	}
+}
+
+/**
+ * The location to record for a settled run. A recycled (non-retained) pane is
+ * free for another run, so keeping its location would make Jump focus a pane
+ * owned by a different run; only retained panes keep a persisted location.
+ */
+export function retainedHerdrLocation(location: HerdrRunLocation | undefined): HerdrRunLocation | undefined {
+	return location?.retained ? location : undefined;
 }
 
 /** Wrap a bridge child so it also reports and releases its pane lease. */

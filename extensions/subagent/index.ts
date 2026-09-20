@@ -84,9 +84,15 @@ import {
 	type ManagerRunDescriptor,
 } from "./manager.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
+import { combineAbortSignals } from "./execution.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
-import { HerdrSubagentBackend, ProcessSubagentBackend, type SubagentBackend } from "./backend.ts";
-import { createHerdrBridgeLauncher, preflightHerdr } from "./herdr-preflight.ts";
+import {
+	HerdrSubagentBackend,
+	ProcessSubagentBackend,
+	retainedHerdrLocation,
+	type SubagentBackend,
+} from "./backend.ts";
+import { createHerdrBridgeLauncher, createSingleFlight, preflightHerdr } from "./herdr-preflight.ts";
 import {
 	cleanupStaleHerdrTabRecords,
 	createParentHerdrTab,
@@ -177,6 +183,8 @@ interface SingleAgentRuntimeDependencies {
 	registry: SubagentRegistry;
 	/** Select the RPC transport for a prepared dispatch (process or Herdr). */
 	backendFor: (kind: SubagentBackendKind | undefined) => SubagentBackend;
+	/** Session-level abort signal; aborted once during shutdown. */
+	shutdownSignal: AbortSignal;
 	/** Refresh the active-subagents widget after a visible progress change. */
 	onProgress?: () => void;
 }
@@ -186,7 +194,11 @@ async function runSingleAgent(
 	dispatch: PreparedSubagentDispatch,
 	runtime: SingleAgentRuntimeDependencies,
 ): Promise<SingleResult> {
-	const { agent: agentName, task, cwd, step, signal, onUpdate, makeDetails, runId } = request;
+	const { agent: agentName, task, cwd, step, signal: parentSignal, onUpdate, makeDetails, runId, chainKey } = request;
+	// A blocking run must also abort when the session shuts down. Combine the
+	// tool signal with the session-level shutdown signal so a Herdr pane is
+	// never spawned (or left running) after teardown began.
+	const signal = combineAbortSignals(parentSignal, runtime.shutdownSignal);
 	const defaultCwd = dispatch.cwd;
 	const dispatchDefaults = dispatch.dispatchDefaults;
 	const agents = dispatch.agents;
@@ -460,6 +472,7 @@ async function runSingleAgent(
 			agent: agent.name,
 			task,
 			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
+			...(chainKey ? { chainKey } : {}),
 		});
 		if (dispatch.backend) currentResult.backend = dispatch.backend;
 		if (child.herdr) currentResult.herdr = child.herdr;
@@ -570,11 +583,13 @@ async function runSingleAgent(
 				// A release failure must not skip pane termination/cleanup.
 			}
 			// Retention is applied during release, so refresh the recorded location.
-			if (child.herdr) {
-				currentResult.herdr = child.herdr;
-				const run = registry.get(runId);
-				if (run) run.herdr = child.herdr;
-			}
+			// A recycled (non-retained) pane is now free for another run, so its
+			// location must be dropped: keeping it would make Jump focus a pane that
+			// belongs to a different run.
+			const location = retainedHerdrLocation(child.herdr);
+			currentResult.herdr = location;
+			const run = registry.get(runId);
+			if (run) run.herdr = location;
 			await child.terminate();
 			activeChildren.delete(child);
 		}
@@ -668,6 +683,14 @@ export default function (pi: ExtensionAPI) {
 
 	let sessionContext: ExtensionContext | undefined;
 	let shuttingDown = false;
+	// Session-scoped abort signal and in-flight dispatch tracking. Together they
+	// let shutdown abort and await blocking runs before disposing the owned tab,
+	// closing the window where a late spawn could adopt a torn-down tab.
+	let sessionShutdown = new AbortController();
+	const inFlightDispatches = new Set<Promise<unknown>>();
+	// Bumped on every session_start so a preflight that straddles a session
+	// replacement can never install the previous session's tab.
+	let sessionEpoch = 0;
 
 	const registry = new SubagentRegistry(30, () => publishActiveSubagentWidget());
 
@@ -749,13 +772,43 @@ export default function (pi: ExtensionAPI) {
 		return herdrBackend;
 	}
 
-	/** Validate Herdr and prepare the owned tab; called before acceptance. */
-	async function runHerdrPreflight(): Promise<{ ok: true } | { ok: false; error: string }> {
+	/**
+	 * Validate Herdr and prepare the owned tab; called before acceptance.
+	 *
+	 * Concurrent callers share one in-flight preflight so two dispatches cannot
+	 * build separate tab managers and create two tabs. `ensureTab: false` is the
+	 * read-only manager path: it prepares a client/tab manager but never creates
+	 * or splits a tab as a side effect of viewing Details or Jump.
+	 */
+	let herdrPreflightInFlight = createSingleFlight<{ ok: true } | { ok: false; error: string }>();
+	async function runHerdrPreflight(
+		piSessionId: string,
+		options: { ensureTab?: boolean } = {},
+	): Promise<{ ok: true } | { ok: false; error: string }> {
+		const ensureTab = options.ensureTab !== false;
+		// Never share a read-only probe with a mutating preflight.
+		if (!ensureTab) return runHerdrPreflightOnce(piSessionId, false);
+		return herdrPreflightInFlight.run(() => runHerdrPreflightOnce(piSessionId, true));
+	}
+
+	async function runHerdrPreflightOnce(
+		piSessionId: string,
+		ensureTab: boolean,
+	): Promise<{ ok: true } | { ok: false; error: string }> {
+		const epoch = sessionEpoch;
 		const result = await preflightHerdr({
 			existing: herdrSession,
-			createTab: (client) => createParentHerdrTab({ client, agentDir: getAgentDir() }),
+			ensureTab,
+			createTab: (client) => createParentHerdrTab({ client, agentDir: getAgentDir(), piSessionId }),
 		});
 		if (!result.ok) return { ok: false, error: result.error };
+		// Shutdown or a session replacement may have begun while preflight was
+		// awaiting. Never install a fresh tab after teardown; dispose it and report
+		// a refusal instead.
+		if (shuttingDown || epoch !== sessionEpoch) {
+			await result.tab.dispose({ reason: "quit" }).catch(() => undefined);
+			return { ok: false, error: "Subagent dispatch not started: the session is shutting down." };
+		}
 		// A different environment means a different tab manager; drop any cached
 		// backend so it cannot address the previous session's tab.
 		if (herdrSession && herdrSession.tab !== result.tab) herdrBackend = undefined;
@@ -951,10 +1004,12 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
-	/** Resolve the Herdr tab (running preflight on demand) for manager actions. */
+	/** Resolve the Herdr tab for manager actions without ever creating one. */
 	async function managerHerdrActions(ctx: ExtensionContext): Promise<ManagerHerdrActions | undefined> {
 		if (!herdrSession) {
-			const result = await runHerdrPreflight();
+			// Read-only path: validate the environment and adopt any stored owned
+			// tab, but never create one just because the user opened Details/Jump.
+			const result = await runHerdrPreflight(ctx.sessionManager.getSessionId(), { ensureTab: false });
 			if (!result.ok) {
 				ctx.ui.notify(result.error, "error");
 				return undefined;
@@ -1148,6 +1203,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
+		sessionEpoch += 1;
+		sessionShutdown = new AbortController();
+		herdrPreflightInFlight.reset();
 		// A replacement session must not adopt the previous session's Herdr tab.
 		herdrSession = undefined;
 		herdrBackend = undefined;
@@ -1175,6 +1233,7 @@ export default function (pi: ExtensionAPI) {
 		// clear runtime state. Completion delivery is suppressed by the manager
 		// as soon as `shutdown()` sets its flag.
 		shuttingDown = true;
+		sessionShutdown.abort();
 		// Close the live attach overlay first: it clears the view's poll timer and
 		// resolves the suspended `ctx.ui.custom()` promise before the session
 		// context is dropped. A close failure must not block run cleanup.
@@ -1196,6 +1255,10 @@ export default function (pi: ExtensionAPI) {
 		// settle every termination attempt before awaiting the dispatches.
 		await Promise.allSettled(childrenToTerminate.map((child) => child.terminate()));
 		await dispatchesSettled;
+		// Blocking runs are not tracked by the async manager. Wait for them (and
+		// the pre-spawn window) to settle before disposing the owned tab, so a late
+		// acquire/spawn can never race tab teardown.
+		await Promise.allSettled([...inFlightDispatches]);
 		for (const child of childrenToTerminate) activeChildren.delete(child);
 		// Children are settled first; `dispose` then closes the owned tab only
 		// when no explicitly retained panes remain (`reload` keeps the tab).
@@ -1360,7 +1423,7 @@ export default function (pi: ExtensionAPI) {
 				requestPermission: (what, data) => askHubPermission(what, data, ctx),
 				snapshotSafeMode: getSafeModeSnapshot,
 				preflightHerdr: async (herdr) => {
-					const result = await runHerdrPreflight();
+					const result = await runHerdrPreflight(ctx.sessionManager.getSessionId());
 					if (!result.ok) return result;
 					return { ok: true, retention: herdr.retain ?? "failed" };
 				},
@@ -1381,41 +1444,52 @@ export default function (pi: ExtensionAPI) {
 				parentContext: ctx,
 				registry,
 				backendFor,
+				shutdownSignal: sessionShutdown.signal,
 				onProgress: publishActiveSubagentWidget,
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
 				runSingle: (request) => runSingleAgent(request, target, runtime),
 			});
 
-			if (dispatch.execution === "blocking") {
-				// Explicit blocking keeps the tool signal and streaming callback.
-				return runPreparedDispatch(dispatch, makeRunner(dispatch), signal, onUpdate);
-			}
+			// Track the whole post-preparation execution so shutdown can abort and
+			// await blocking runs (and the pre-spawn window) before disposing the tab.
+			const execution = (async () => {
+				if (dispatch.execution === "blocking") {
+					// Explicit blocking keeps the tool signal and streaming callback.
+					return runPreparedDispatch(dispatch, makeRunner(dispatch), signal, onUpdate);
+				}
 
-			// Async acceptance is guarded against shutdown (which may have begun
-			// during the awaited preparation) and against an already-aborted parent
-			// turn. A refused dispatch is terminal, never a started acknowledgement.
-			if (shuttingDown || !asyncDispatches.canStart(signal)) {
-				const reason = shuttingDown ? "the session is shutting down" : "the parent turn was aborted";
-				return buildDispatchExceptionResult(dispatch, new Error(`Subagent dispatch not started: ${reason}.`), {
-					aborted: true,
-				});
-			}
+				// Async acceptance is guarded against shutdown (which may have begun
+				// during the awaited preparation) and against an already-aborted parent
+				// turn. A refused dispatch is terminal, never a started acknowledgement.
+				if (shuttingDown || !asyncDispatches.canStart(signal)) {
+					const reason = shuttingDown ? "the session is shutting down" : "the parent turn was aborted";
+					return buildDispatchExceptionResult(dispatch, new Error(`Subagent dispatch not started: ${reason}.`), {
+						aborted: true,
+					});
+				}
 
-			// Async: detach with an independent controller. Never pass the parent
-			// tool signal or the completed invocation's onUpdate callback; live UI
-			// comes from the registry and active-subagents widget instead.
-			const handle = asyncDispatches.start(dispatch, (dispatchSignal) =>
-				runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
-			);
-			if (!handle) {
-				return buildDispatchExceptionResult(
-					dispatch,
-					new Error("Subagent dispatch not started: the session is shutting down."),
-					{ aborted: true },
+				// Async: detach with an independent controller. Never pass the parent
+				// tool signal or the completed invocation's onUpdate callback; live UI
+				// comes from the registry and active-subagents widget instead.
+				const handle = asyncDispatches.start(dispatch, (dispatchSignal) =>
+					runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
 				);
+				if (!handle) {
+					return buildDispatchExceptionResult(
+						dispatch,
+						new Error("Subagent dispatch not started: the session is shutting down."),
+						{ aborted: true },
+					);
+				}
+				return buildAsyncStartResult(dispatch);
+			})();
+			inFlightDispatches.add(execution);
+			try {
+				return await execution;
+			} finally {
+				inFlightDispatches.delete(execution);
 			}
-			return buildAsyncStartResult(dispatch);
 		},
 
 		renderCall(args, theme, _context) {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { HerdrSubagentBackend, ProcessSubagentBackend } from "./backend.ts";
+import { HerdrSubagentBackend, ProcessSubagentBackend, retainedHerdrLocation } from "./backend.ts";
 import type { HerdrBridgeBootstrap } from "./herdr-bridge.ts";
 import type { HerdrAcquireOptions, HerdrPaneLease, ParentHerdrTab } from "./herdr-tab.ts";
 import type { RpcChild, RpcChildEvents, RpcExit } from "./rpc-client.ts";
@@ -86,7 +86,11 @@ function fakeRpcChild(): RpcChild {
 	};
 }
 
-function fakeLease(released: string[], paneId = "w1:p2"): HerdrPaneLease {
+function fakeLease(
+	released: string[],
+	paneId = "w1:p2",
+	releaseOptions: Array<{ retain?: boolean }> = [],
+): HerdrPaneLease {
 	return {
 		tabId: "w1:t1",
 		paneId,
@@ -94,8 +98,9 @@ function fakeLease(released: string[], paneId = "w1:p2"): HerdrPaneLease {
 		get retained() {
 			return released.includes("success") || released.includes("failed") || released.includes("aborted");
 		},
-		release: async (outcome) => {
+		release: async (outcome, options) => {
 			released.push(outcome);
+			releaseOptions.push({ retain: options?.retain });
 		},
 	};
 }
@@ -106,6 +111,7 @@ function fakeHerdrTab(
 ): ParentHerdrTab {
 	return {
 		ensureTab: async () => "w1:t1",
+		probe: async () => {},
 		acquire: async (run, options) => {
 			acquired.push({ run, options });
 			return lease;
@@ -163,9 +169,10 @@ describe("HerdrSubagentBackend", () => {
 
 	test("releases the pane as failed when the bridge launch throws", async () => {
 		const released: string[] = [];
+		const releaseOptions: Array<{ retain?: boolean }> = [];
 		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
 		const backend = new HerdrSubagentBackend({
-			tab: fakeHerdrTab(fakeLease(released), acquired),
+			tab: fakeHerdrTab(fakeLease(released, "w1:p2", releaseOptions), acquired),
 			launcher: { assertAvailable: () => {}, launch: async () => {} },
 			createChild: async () => {
 				throw new Error("bridge boom");
@@ -179,5 +186,38 @@ describe("HerdrSubagentBackend", () => {
 			),
 		).rejects.toThrow("bridge boom");
 		expect(released).toEqual(["failed"]);
+		// The bridge never launched, so the empty pane must not be retained.
+		expect(releaseOptions).toEqual([{ retain: false }]);
+	});
+
+	test("forwards a chain key so chain steps can share one pane", async () => {
+		const released: string[] = [];
+		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
+		const backend = new HerdrSubagentBackend({
+			tab: fakeHerdrTab(fakeLease(released), acquired),
+			launcher: { assertAvailable: () => {}, launch: async () => {} },
+			createChild: async (options) => {
+				await options.launch({ socketPath: "/tmp/s.sock", tokenFile: "/tmp/tok", token: "secret" });
+				return fakeRpcChild();
+			},
+		});
+
+		await backend.spawn(
+			{ command: "pi", args: [], cwd: "/work", events: events() },
+			{ runId: "sa-1", dispatchId: "dispatch-1", agent: "worker", chainKey: "dispatch-1" },
+		);
+		expect(acquired[0]?.options?.chainKey).toBe("dispatch-1");
+	});
+});
+
+describe("retainedHerdrLocation", () => {
+	test("keeps only a retained location and drops a recycled one", () => {
+		expect(retainedHerdrLocation({ tabId: "w1:t1", paneId: "w1:p2", retained: true })).toEqual({
+			tabId: "w1:t1",
+			paneId: "w1:p2",
+			retained: true,
+		});
+		expect(retainedHerdrLocation({ tabId: "w1:t1", paneId: "w1:p2", retained: false })).toBeUndefined();
+		expect(retainedHerdrLocation(undefined)).toBeUndefined();
 	});
 });

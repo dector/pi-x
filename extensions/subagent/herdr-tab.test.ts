@@ -554,6 +554,22 @@ describe("HerdrTabManager tab lifecycle", () => {
 		expect(tab.currentTabId).toBeDefined();
 	});
 
+	test("uses the explicit Pi session id instead of process.env.PI_SESSION_ID", async () => {
+		const previous = process.env.PI_SESSION_ID;
+		process.env.PI_SESSION_ID = "env-session-zzzz";
+		try {
+			const client = new FakeHerdrClient();
+			const tab = new HerdrTabManager({ client, piSessionId: "ctx-session-yyyy" });
+			await tab.ensureTab();
+			const label = client.tab(tab.currentTabId as string)?.label ?? "";
+			expect(label).toContain("ctx-sess");
+			expect(label).not.toContain("env-sess");
+		} finally {
+			if (previous === undefined) delete process.env.PI_SESSION_ID;
+			else process.env.PI_SESSION_ID = previous;
+		}
+	});
+
 	test("the first run uses the tab root pane", async () => {
 		const client = new FakeHerdrClient();
 		const tab = manager(client);
@@ -700,6 +716,72 @@ describe("HerdrTabManager retention and pooling", () => {
 		client.forceClosePane(lease.paneId);
 		await lease.release("success");
 		expect(tab.currentIdlePaneId).toBeUndefined();
+	});
+});
+
+describe("HerdrTabManager dispatch probe", () => {
+	test("creates the tab, recycles the root pane, and retains nothing", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		await tab.probe();
+		expect(client.callCount("tab.create")).toBe(1);
+		expect(client.callCount("pane.split")).toBe(0);
+		expect(tab.retainedPaneIds).toEqual([]);
+		expect(tab.currentIdlePaneId).toBe(tab.currentRootPaneId);
+		// The next real run reuses the probed pane without an extra split.
+		const lease = await tab.acquire(run("sa-1"));
+		expect(lease.paneId).toBe(tab.currentRootPaneId);
+		expect(client.callCount("pane.split")).toBe(0);
+		await lease.release("success");
+	});
+
+	test("leaves at most one idle pane alongside an active run", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const active = await tab.acquire(run("sa-active"));
+		await tab.probe();
+		expect(tab.retainedPaneIds).toEqual([]);
+		expect(tab.currentIdlePaneId).toBeDefined();
+		expect(tab.currentIdlePaneId).not.toBe(active.paneId);
+		expect(client.alivePaneCount(tab.currentTabId)).toBe(2);
+		await active.release("success");
+		expect(client.alivePaneCount(tab.currentTabId)).toBe(1);
+	});
+
+	test("never reuses or disturbs a retained pane", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const retained = await tab.acquire(run("sa-1"));
+		await retained.release("failed");
+		await tab.probe();
+		expect(tab.retainedPaneIds).toEqual([retained.paneId]);
+		expect(tab.currentIdlePaneId).toBeDefined();
+		expect(tab.currentIdlePaneId).not.toBe(retained.paneId);
+	});
+
+	test("is idempotent across repeated preflights", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		await tab.probe();
+		await tab.probe();
+		expect(client.callCount("tab.create")).toBe(1);
+		expect(client.callCount("pane.split")).toBe(0);
+		expect(client.alivePaneCount(tab.currentTabId)).toBe(1);
+	});
+
+	test("preserves idle chain affinity for an overlapping chain", async () => {
+		const client = new FakeHerdrClient();
+		const tab = manager(client);
+		const a1 = await tab.acquire(run("sa-a1"), { chainKey: "chain-a" });
+		await a1.release("success");
+		await tab.probe();
+		// A different chain must not steal the pane held for chain-a.
+		const b1 = await tab.acquire(run("sa-b1"), { chainKey: "chain-b" });
+		expect(b1.paneId).not.toBe(a1.paneId);
+		const a2 = await tab.acquire(run("sa-a2"), { chainKey: "chain-a" });
+		expect(a2.paneId).toBe(a1.paneId);
+		await b1.release("success");
+		await a2.release("success");
 	});
 });
 

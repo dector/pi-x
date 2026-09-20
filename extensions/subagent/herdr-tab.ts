@@ -79,12 +79,23 @@ export interface HerdrPaneLease {
 	readonly runId: string;
 	/** True once the lease settled with retention. */
 	readonly retained: boolean;
-	release(outcome: HerdrLeaseOutcome): Promise<void>;
+	/**
+	 * Release the lease. Retention is normally derived from the per-dispatch
+	 * policy and the outcome; `options.retain: false` forces recycling even for
+	 * a failure (used when the bridge never launched and the pane is empty).
+	 */
+	release(outcome: HerdrLeaseOutcome, options?: { retain?: boolean }): Promise<void>;
 }
 
 /** The parent-owned tab surface used by the backend and manager UI. */
 export interface ParentHerdrTab {
 	ensureTab(): Promise<string>;
+	/**
+	 * Dispatch preflight: allocate a pane and immediately recycle it, leaving no
+	 * retained pane and at most the normal idle pane. Proves pane creation is
+	 * possible without launching Pi. Manager reads must not call this.
+	 */
+	probe(): Promise<void>;
 	acquire(run: PreparedDispatchItem, options?: HerdrAcquireOptions): Promise<HerdrPaneLease>;
 	focus(runId: string): Promise<void>;
 	/**
@@ -519,6 +530,32 @@ export class HerdrTabManager implements ParentHerdrTab {
 		return this.runExclusive(() => this.ensureTabLocked());
 	}
 
+	probe(): Promise<void> {
+		return this.runExclusive(() => this.probeLocked());
+	}
+
+	/**
+	 * Allocate a pane through the normal path and return it to the idle pool with
+	 * a successful (non-retained) outcome. Deliberately skips labeling/metadata:
+	 * the next real acquire owns the pane, so the probe leaves no run artifacts.
+	 * The idle chain affinity is carried through so an overlapping chain dispatch
+	 * can still reuse its pane.
+	 */
+	private async probeLocked(): Promise<void> {
+		this.assertNotDisposed();
+		await this.ensureTabLocked();
+		const chainKey = this.idleChainKey;
+		const paneId = await this.allocatePaneLocked(chainKey);
+		this.trackedPaneIds.add(paneId);
+		this.panesInUse.add(paneId);
+		try {
+			await this.returnToIdleLocked(paneId, chainKey);
+		} finally {
+			this.panesInUse.delete(paneId);
+		}
+		await this.persistState();
+	}
+
 	acquire(run: PreparedDispatchItem, options: HerdrAcquireOptions = {}): Promise<HerdrPaneLease> {
 		return this.runExclusive(() => this.acquireLocked(run, options));
 	}
@@ -831,18 +868,22 @@ export class HerdrTabManager implements ParentHerdrTab {
 			get retained() {
 				return state.retained;
 			},
-			release: (outcome) => this.releaseLease(state, outcome),
+			release: (outcome, releaseOptions) => this.releaseLease(state, outcome, releaseOptions),
 		};
 		return lease;
 	}
 
-	private releaseLease(state: ActiveLease, outcome: HerdrLeaseOutcome): Promise<void> {
+	private releaseLease(
+		state: ActiveLease,
+		outcome: HerdrLeaseOutcome,
+		options: { retain?: boolean } = {},
+	): Promise<void> {
 		return this.runExclusive(async () => {
 			if (state.released) return;
 			state.released = true;
 			this.activeLeases.delete(state.runId);
 			this.panesInUse.delete(state.paneId);
-			const retain = state.retention === "always" || outcome !== "success";
+			const retain = options.retain ?? (state.retention === "always" || outcome !== "success");
 			state.retained = retain;
 
 			const location = this.locations.get(state.runId);

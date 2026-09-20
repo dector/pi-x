@@ -10,14 +10,16 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { connect, type Socket } from "node:net";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	HERDR_BRIDGE_PROTOCOL,
 	createHerdrBridgeChild,
 	encodeFrame,
+	probeHerdrBridgeListener,
+	signalPid,
 	type HerdrBridgeBootstrap,
 	type HerdrBridgeFrame,
 } from "./herdr-bridge.ts";
@@ -355,3 +357,69 @@ function isAlive(pid: number): boolean {
 		return false;
 	}
 }
+
+describe("probeHerdrBridgeListener", () => {
+	test("binds the private listener and removes its directory", async () => {
+		const parent = mkdtempSync(join(tmpdir(), "herdr-probe-test-"));
+		const directory = join(parent, "bridge");
+		try {
+			await probeHerdrBridgeListener({ directory });
+			expect(existsSync(directory)).toBe(false);
+		} finally {
+			rmSync(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("fails when the socket path is already in use", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "herdr-probe-test-"));
+		const socketPath = join(directory, "bridge.sock");
+		const server = createServer();
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(socketPath, () => resolve());
+		});
+		try {
+			await expect(probeHerdrBridgeListener({ directory })).rejects.toThrow();
+		} finally {
+			server.close();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("signalPid", () => {
+	test("never signals a non-positive or undefined pid", () => {
+		const original = process.kill;
+		const calls: number[] = [];
+		// `process.kill(0, ...)` would signal the whole process group, so the
+		// guard must run before the syscall. Record attempts instead of firing.
+		process.kill = ((pid: number) => {
+			calls.push(pid);
+			return true;
+		}) as typeof process.kill;
+		try {
+			expect(signalPid(0)).toBe(false);
+			expect(signalPid(-1)).toBe(false);
+			expect(signalPid(undefined)).toBe(false);
+			expect(signalPid(1.5)).toBe(false);
+			expect(calls).toEqual([]);
+		} finally {
+			process.kill = original;
+		}
+	});
+
+	test("signals a real positive pid", () => {
+		const original = process.kill;
+		const calls: Array<{ pid: number; signal: string | number | undefined }> = [];
+		process.kill = ((pid: number, signal?: string | number) => {
+			calls.push({ pid, signal });
+			return true;
+		}) as typeof process.kill;
+		try {
+			expect(signalPid(4242, "SIGTERM")).toBe(true);
+			expect(calls).toEqual([{ pid: 4242, signal: "SIGTERM" }]);
+		} finally {
+			process.kill = original;
+		}
+	});
+});

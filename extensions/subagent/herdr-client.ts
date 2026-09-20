@@ -351,20 +351,31 @@ export function createUnixSocketTransport(options: {
 						finish(() => reject(new HerdrProtocolError(`Malformed Herdr response for ${method}`)));
 						return;
 					}
-					const envelope = asRecord(parsed, `Herdr response for ${method}`);
-					if (envelope.error !== undefined) {
-						const error = asRecord(envelope.error, `Herdr error for ${method}`);
-						const code = optionalString(error.code) ?? "unknown_error";
-						const message = optionalString(error.message) ?? "Herdr request failed";
-						finish(() => reject(new HerdrApiError(message, { code, method })));
-						return;
+					// Structural validation throws `HerdrProtocolError`. It runs inside the
+					// socket event handler, so an uncaught throw would escape as an
+					// uncaughtException instead of rejecting this request.
+					try {
+						const envelope = asRecord(parsed, `Herdr response for ${method}`);
+						if (envelope.error !== undefined) {
+							const error = asRecord(envelope.error, `Herdr error for ${method}`);
+							const code = optionalString(error.code) ?? "unknown_error";
+							const message = optionalString(error.message) ?? "Herdr request failed";
+							finish(() => reject(new HerdrApiError(message, { code, method })));
+							return;
+						}
+						if (envelope.result === undefined) {
+							finish(() => reject(new HerdrProtocolError(`Herdr response for ${method} had no result`)));
+							return;
+						}
+						const result = envelope.result;
+						finish(() => resolve(result));
+					} catch (error) {
+						finish(() =>
+							reject(
+								error instanceof Error ? error : new HerdrProtocolError(`Malformed Herdr response for ${method}`),
+							),
+						);
 					}
-					if (envelope.result === undefined) {
-						finish(() => reject(new HerdrProtocolError(`Herdr response for ${method} had no result`)));
-						return;
-					}
-					const result = envelope.result;
-					finish(() => resolve(result));
 				});
 
 				socket.on("error", (error: Error) => {

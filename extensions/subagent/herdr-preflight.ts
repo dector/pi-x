@@ -3,8 +3,9 @@
  *
  * Stage 4 runs this before an async dispatch is accepted so every predictable
  * failure (Herdr missing, executable missing, bridge runtime unavailable,
- * server unreachable, parent pane gone, tab creation failed) surfaces at
- * preparation time instead of after an acknowledgement.
+ * listener bind failed, server unreachable, parent pane gone, tab creation or
+ * pane allocation failed) surfaces at preparation time instead of after an
+ * acknowledgement.
  *
  * The launcher is the only place that renders a command for a Herdr pane. It
  * passes just the safe bridge bootstrap (socket path and token file); task
@@ -15,7 +16,7 @@
 
 import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
-import type { HerdrBridgeLauncher } from "./herdr-bridge.ts";
+import { probeHerdrBridgeListener, type HerdrBridgeLauncher } from "./herdr-bridge.ts";
 import {
 	createHerdrClient,
 	createUnixSocketTransport,
@@ -44,10 +45,22 @@ export interface HerdrPreflightDependencies {
 	existing?: { environment: HerdrEnvironment; client: HerdrClient; tab: ParentHerdrTab };
 	/** Build a fresh parent tab manager (wired to the default file state store). */
 	createTab: (client: HerdrClient, environment: HerdrEnvironment) => ParentHerdrTab;
+	/**
+	 * Whether to create/reuse the owned parent tab. Defaults to `true`.
+	 * Read-only manager actions pass `false` so a Details/Jump probe can never
+	 * create a tab as a side effect.
+	 */
+	ensureTab?: boolean;
 	/** Injection seam for tests; defaults to a Unix-socket client. */
 	createClient?: (environment: HerdrEnvironment) => HerdrClient;
 	/** Throw when the pane bridge cannot be launched. */
 	assertBridgeAvailable?: () => void;
+	/**
+	 * Bind and close the private bridge listener. Only run for dispatch preflight
+	 * (`ensureTab !== false`), never for a read-only manager probe. Defaults to
+	 * the real Unix-socket probe.
+	 */
+	probeBridge?: () => Promise<void>;
 	resolveExecutable?: (env: NodeJS.ProcessEnv) => string | undefined;
 }
 
@@ -57,6 +70,34 @@ function fail(reason: HerdrPreflightReason, error: string): HerdrPreflightResult
 
 function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Coalesce concurrent calls into one in-flight promise. Used so two dispatches
+ * that race through Herdr preflight cannot build separate tab managers and
+ * create two parent tabs. `reset()` drops the in-flight handle on a session
+ * replacement; the stale promise still settles on its own.
+ */
+export interface SingleFlight<T> {
+	run(fn: () => Promise<T>): Promise<T>;
+	reset(): void;
+}
+
+export function createSingleFlight<T>(): SingleFlight<T> {
+	let inFlight: Promise<T> | undefined;
+	return {
+		run(fn) {
+			if (inFlight) return inFlight;
+			const promise = fn().finally(() => {
+				if (inFlight === promise) inFlight = undefined;
+			});
+			inFlight = promise;
+			return promise;
+		},
+		reset() {
+			inFlight = undefined;
+		},
+	};
 }
 
 /**
@@ -111,14 +152,54 @@ export async function preflightHerdr(deps: HerdrPreflightDependencies): Promise<
 		);
 	}
 
-	const tab = reuse && existing ? existing.tab : deps.createTab(client, environment);
-	try {
-		await tab.ensureTab();
-	} catch (error) {
-		return fail("pane_unavailable", `Herdr was requested, but the parent tab could not be prepared: ${messageOf(error)}`);
+	const created = reuse && existing ? { tab: existing.tab } : safeCreateTab(deps, client, environment);
+	if ("error" in created) {
+		return fail("pane_unavailable", `Herdr was requested, but the parent tab could not be prepared: ${created.error}`);
+	}
+	const tab = created.tab;
+	if (deps.ensureTab !== false) {
+		// Dispatch preflight also proves the parent can bind the bridge listener
+		// before it mutates Herdr state, so a socket failure cannot strand a new tab.
+		try {
+			await (deps.probeBridge ?? probeHerdrBridgeListener)();
+		} catch (error) {
+			return fail(
+				"bridge_unavailable",
+				`Herdr was requested, but the bridge listener could not be created: ${messageOf(error)}`,
+			);
+		}
+		try {
+			await tab.ensureTab();
+		} catch (error) {
+			return fail("pane_unavailable", `Herdr was requested, but the parent tab could not be prepared: ${messageOf(error)}`);
+		}
+		// Allocate a real pane and recycle it, so pane creation failures surface
+		// before acceptance while no retained pane is leaked.
+		try {
+			await tab.probe();
+		} catch (error) {
+			return fail(
+				"pane_unavailable",
+				`Herdr was requested, but a Herdr pane could not be allocated: ${messageOf(error)}`,
+			);
+		}
 	}
 
 	return { ok: true, environment, client, tab };
+}
+
+/** Run `deps.createTab` and convert a synchronous/constructor throw into a failure. */
+function safeCreateTab(
+	deps: HerdrPreflightDependencies,
+	client: HerdrClient,
+	environment: HerdrEnvironment,
+): { tab: ParentHerdrTab } | { error: string } {
+	try {
+		return { tab: deps.createTab(client, environment) };
+	} catch (error) {
+		// The manager constructor can throw (for example a missing Pi session ID).
+		return { error: messageOf(error) };
+	}
 }
 
 /** Absolute path to the pane-side bridge entry point shipped with this extension. */

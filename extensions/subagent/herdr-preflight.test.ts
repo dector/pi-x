@@ -11,6 +11,7 @@ import type { ParentHerdrTab } from "./herdr-tab.ts";
 import {
 	assertHerdrBridgeAvailable,
 	createHerdrBridgeLauncher,
+	createSingleFlight,
 	preflightHerdr,
 	resolveHerdrBridgeRuntime,
 	shellQuote,
@@ -26,6 +27,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
 function fakeTab(overrides: Partial<ParentHerdrTab> = {}): ParentHerdrTab {
 	return {
 		ensureTab: async () => "w1:t1",
+		probe: async () => {},
 		acquire: async () => {
 			throw new Error("not used");
 		},
@@ -138,11 +140,61 @@ describe("preflightHerdr", () => {
 				}),
 			createClient: () => fakeClient(),
 			assertBridgeAvailable: () => {},
+			probeBridge: async () => {},
 			resolveExecutable: () => "/usr/bin/herdr",
 		});
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.reason).toBe("pane_unavailable");
+	});
+
+	test("catches a throwing createTab instead of rejecting", async () => {
+		const result = await preflightHerdr({
+			env: BASE_ENV,
+			createTab: () => {
+				throw new Error("missing session id");
+			},
+			createClient: () => fakeClient(),
+			assertBridgeAvailable: () => {},
+			resolveExecutable: () => "/usr/bin/herdr",
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.reason).toBe("pane_unavailable");
+		expect(result.error).toContain("missing session id");
+	});
+
+	test("ensureTab: false returns the tab without creating one", async () => {
+		let ensured = 0;
+		let listeners = 0;
+		let probes = 0;
+		const tab = fakeTab({
+			ensureTab: async () => {
+				ensured += 1;
+				return "w1:t1";
+			},
+			probe: async () => {
+				probes += 1;
+			},
+		});
+		const result = await preflightHerdr({
+			env: BASE_ENV,
+			createTab: () => tab,
+			ensureTab: false,
+			createClient: () => fakeClient(),
+			assertBridgeAvailable: () => {},
+			probeBridge: async () => {
+				listeners += 1;
+			},
+			resolveExecutable: () => "/usr/bin/herdr",
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.tab).toBe(tab);
+		expect(ensured).toBe(0);
+		// Manager reads must never bind a listener or allocate a pane.
+		expect(listeners).toBe(0);
+		expect(probes).toBe(0);
 	});
 
 	test("returns the environment, client, and prepared tab on success", async () => {
@@ -152,12 +204,81 @@ describe("preflightHerdr", () => {
 			createTab: () => tab,
 			createClient: () => fakeClient(),
 			assertBridgeAvailable: () => {},
+			probeBridge: async () => {},
 			resolveExecutable: () => "/usr/bin/herdr",
 		});
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.environment.paneId).toBe("w1:p1");
 		expect(result.tab).toBe(tab);
+	});
+
+	test("dispatch preflight binds the listener and probes pane allocation", async () => {
+		let listeners = 0;
+		let probes = 0;
+		const tab = fakeTab({
+			probe: async () => {
+				probes += 1;
+			},
+		});
+		const result = await preflightHerdr({
+			env: BASE_ENV,
+			createTab: () => tab,
+			createClient: () => fakeClient(),
+			assertBridgeAvailable: () => {},
+			probeBridge: async () => {
+				listeners += 1;
+			},
+			resolveExecutable: () => "/usr/bin/herdr",
+		});
+		expect(result.ok).toBe(true);
+		expect(listeners).toBe(1);
+		expect(probes).toBe(1);
+	});
+
+	test("fails clearly when the bridge listener cannot bind", async () => {
+		let probes = 0;
+		const result = await preflightHerdr({
+			env: BASE_ENV,
+			createTab: () =>
+				fakeTab({
+					probe: async () => {
+						probes += 1;
+					},
+				}),
+			createClient: () => fakeClient(),
+			assertBridgeAvailable: () => {},
+			probeBridge: async () => {
+				throw new Error("EADDRINUSE");
+			},
+			resolveExecutable: () => "/usr/bin/herdr",
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.reason).toBe("bridge_unavailable");
+		expect(result.error).toContain("EADDRINUSE");
+		// The pane probe must not run once the listener is known to be unavailable.
+		expect(probes).toBe(0);
+	});
+
+	test("fails clearly when pane allocation fails", async () => {
+		const result = await preflightHerdr({
+			env: BASE_ENV,
+			createTab: () =>
+				fakeTab({
+					probe: async () => {
+						throw new Error("no room to split");
+					},
+				}),
+			createClient: () => fakeClient(),
+			assertBridgeAvailable: () => {},
+			probeBridge: async () => {},
+			resolveExecutable: () => "/usr/bin/herdr",
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.reason).toBe("pane_unavailable");
+		expect(result.error).toContain("no room to split");
 	});
 
 	test("reuses an existing session tab without creating another", async () => {
@@ -181,6 +302,7 @@ describe("preflightHerdr", () => {
 				return fakeClient();
 			},
 			assertBridgeAvailable: () => {},
+			probeBridge: async () => {},
 			resolveExecutable: () => "/usr/bin/herdr",
 		});
 		expect(result.ok).toBe(true);
@@ -188,6 +310,48 @@ describe("preflightHerdr", () => {
 		expect(result.tab).toBe(tab);
 		expect(result.client).toBe(client);
 		expect(created).toBe(0);
+	});
+});
+
+describe("createSingleFlight", () => {
+	test("coalesces concurrent calls into one in-flight run", async () => {
+		const flight = createSingleFlight<number>();
+		let runs = 0;
+		let release!: (value: number) => void;
+		const run = () => {
+			runs += 1;
+			return new Promise<number>((resolve) => {
+				release = resolve;
+			});
+		};
+		const first = flight.run(run);
+		const second = flight.run(run);
+		expect(runs).toBe(1);
+		release(7);
+		await expect(first).resolves.toBe(7);
+		await expect(second).resolves.toBe(7);
+		// Once settled, a later call runs again.
+		const third = flight.run(async () => 9);
+		await expect(third).resolves.toBe(9);
+		expect(runs).toBe(1);
+	});
+
+	test("reset drops the in-flight handle so the next call runs fresh", async () => {
+		const flight = createSingleFlight<string>();
+		let runs = 0;
+		let release!: (value: string) => void;
+		const pending = flight.run(() => {
+			runs += 1;
+			return new Promise<string>((resolve) => {
+				release = resolve;
+			});
+		});
+		flight.reset();
+		const fresh = flight.run(async () => "fresh");
+		expect(runs).toBe(1);
+		release("old");
+		await expect(pending).resolves.toBe("old");
+		await expect(fresh).resolves.toBe("fresh");
 	});
 });
 

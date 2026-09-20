@@ -434,6 +434,41 @@ describe("chain dispatch", () => {
 		expect(calls.map((call) => call.step)).toEqual([4, 7]);
 	});
 
+	test("shares one chain key across steps and omits it for single and parallel", async () => {
+		const chain = createRunner((request) => singleResult(request.agent, "ok"));
+		await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
+			chain.runner,
+			undefined,
+			undefined,
+		);
+		expect(chain.calls.map((call) => call.chainKey)).toEqual(["dispatch-test", "dispatch-test"]);
+
+		const single = createRunner((request) => singleResult(request.agent, "ok"));
+		await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "a", task: "1" }]),
+			single.runner,
+			undefined,
+			undefined,
+		);
+		expect(single.calls.map((call) => call.chainKey)).toEqual([undefined]);
+
+		const parallel = createRunner((request) => singleResult(request.agent, "ok"));
+		await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
+			parallel.runner,
+			undefined,
+			undefined,
+		);
+		expect(parallel.calls.map((call) => call.chainKey)).toEqual([undefined, undefined]);
+	});
+
 	test("stops at the first failed step and reports it", async () => {
 		const { runner, calls } = createRunner((request) => {
 			if (request.agent === "b")

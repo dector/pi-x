@@ -133,6 +133,11 @@ export interface SingleRunRequest {
 	step?: number;
 	/** Pre-allocated run ID from preparation. Required: the runner never mints IDs. */
 	runId: string;
+	/**
+	 * Stable key shared by every step of one chain so the Herdr backend can
+	 * reuse a single pane sequentially. Undefined for single/parallel runs.
+	 */
+	chainKey?: string;
 	signal?: AbortSignal;
 	onUpdate?: OnUpdateCallback;
 	makeDetails: MakeDetails;
@@ -263,6 +268,7 @@ export async function runPreparedDispatch(
 					cwd: item.cwd,
 					runId: item.runId,
 					step: item.step ?? i + 1,
+					chainKey: dispatch.dispatchId,
 					signal,
 					onUpdate: chainUpdate,
 					makeDetails: makeDetailsFor(dispatch, "chain"),

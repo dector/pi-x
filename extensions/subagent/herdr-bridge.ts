@@ -43,6 +43,53 @@ export const DEFAULT_HERDR_BRIDGE_MAX_FRAME_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_HERDR_BRIDGE_MAX_STDERR_CHARS = 16_384;
 export const DEFAULT_HERDR_BRIDGE_MAX_DIAGNOSTICS = 50;
 
+/**
+ * Create the private bridge directory with restrictive permissions. Best-effort
+ * on filesystems without POSIX modes, matching the listener's security posture.
+ */
+function prepareBridgeDirectory(directory: string): void {
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	try {
+		chmodSync(directory, 0o700);
+	} catch {
+		// Best effort; the directory may be on a filesystem without POSIX modes.
+	}
+}
+
+/**
+ * Bind and immediately close the private bridge Unix listener.
+ *
+ * Dispatch preflight calls this before accepting an async dispatch to prove the
+ * parent can create the `0700` directory and bind the socket a real bridge will
+ * need. It never launches a bridge or a Pi child, and it always removes the
+ * directory, whether the bind succeeds or fails.
+ */
+export async function probeHerdrBridgeListener(options: { directory?: string } = {}): Promise<void> {
+	const directory = options.directory ?? (await mkdtemp(join(tmpdir(), "px-herdr-bridge-")));
+	try {
+		prepareBridgeDirectory(directory);
+		const socketPath = join(directory, "bridge.sock");
+		await new Promise<void>((resolve, reject) => {
+			const server = createServer();
+			const onError = (error: Error): void => {
+				try {
+					server.close();
+				} catch {
+					// Already closed.
+				}
+				reject(error);
+			};
+			server.once("error", onError);
+			server.listen(socketPath, () => {
+				server.off("error", onError);
+				server.close((error) => (error ? reject(error) : resolve()));
+			});
+		});
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+}
+
 /** Malformed, oversize, or otherwise invalid bridge frame. */
 export class HerdrBridgeProtocolError extends Error {
 	constructor(message: string) {
@@ -165,12 +212,7 @@ export interface HerdrBridgeChildOptions {
  */
 export async function createHerdrBridgeChild(options: HerdrBridgeChildOptions): Promise<RpcChild> {
 	const directory = options.directory ?? (await mkdtemp(join(tmpdir(), "px-herdr-bridge-")));
-	mkdirSync(directory, { recursive: true, mode: 0o700 });
-	try {
-		chmodSync(directory, 0o700);
-	} catch {
-		// Best effort; the directory may be on a filesystem without POSIX modes.
-	}
+	prepareBridgeDirectory(directory);
 	const socketPath = join(directory, "bridge.sock");
 	const tokenFile = join(directory, "token");
 	const token = randomBytes(32).toString("hex");
@@ -382,12 +424,7 @@ export async function createHerdrBridgeChild(options: HerdrBridgeChildOptions): 
 				return;
 			}
 			for (const pid of [childPid, bridgePid]) {
-				if (pid === undefined) continue;
-				try {
-					process.kill(pid, "SIGKILL");
-				} catch {
-					// Already gone.
-				}
+				signalPid(pid);
 			}
 			await exit;
 			cleanup();
@@ -425,6 +462,22 @@ function tokensEqual(a: unknown, b: string): boolean {
 	const right = Buffer.from(b);
 	if (left.length !== right.length) return false;
 	return timingSafeEqual(left, right);
+}
+
+/**
+ * Send a signal to a known positive PID. Guards against `process.kill(0, ...)`,
+ * which would signal the caller's entire process group, and negative PIDs,
+ * which would signal unrelated processes. Returns whether the signal was sent.
+ */
+export function signalPid(pid: number | undefined, signal: NodeJS.Signals = "SIGKILL"): boolean {
+	if (pid === undefined || !Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, signal);
+		return true;
+	} catch {
+		// Already gone or not permitted.
+		return false;
+	}
 }
 
 function serializeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
