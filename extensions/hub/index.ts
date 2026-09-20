@@ -1,6 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+	HERDR_BLOCKED_EVENT,
 	HUB_CHANNELS,
+	HUB_USER_WAIT_CHANNELS,
 	type CapRequest,
 	type CapResult,
 	type HubAskPayload,
@@ -10,6 +12,7 @@ import {
 	type PermissionAction,
 } from "./contract";
 import { HerdrTabStatus, detectHerdrTabEnv, type HerdrTabStyle } from "./herdr-tab";
+import { UserWaitRegistry, parseUserWaitClear, parseUserWaitSet, type UserWaitTransition } from "./user-wait";
 
 /**
  * hub: central signal hub for pi-x extensions.
@@ -22,6 +25,12 @@ import { HerdrTabStatus, detectHerdrTabEnv, type HerdrTabStyle } from "./herdr-t
 
 const ACTION_RANK: Record<PermissionAction, number> = { allow: 0, confirm: 1, block: 2 };
 const PENDING_TTL_MS = 30 * 60_000;
+const WAIT_ID_DISPLAY_LENGTH = 8;
+
+/** Shorten a wait id for display only; the full id is never prompt content. */
+function shortWaitId(id: string): string {
+	return id.length > WAIT_ID_DISPLAY_LENGTH ? id.slice(0, WAIT_ID_DISPLAY_LENGTH) : id;
+}
 
 type PendingRequest = {
 	cap: CapRequest[];
@@ -125,6 +134,23 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	const providersByCap = new Map<string, Set<string>>();
 	const capsByProvider = new Map<string, Set<string>>();
 	const pending = new Map<string, PendingRequest>();
+	const userWaits = new UserWaitRegistry();
+
+	// Herdr keeps its own blocked counter, so only the aggregate zero/non-zero
+	// crossing may emit a Herdr boolean. A metadata update while N > 1, or a
+	// second concurrent wait, must not emit another `{ active: true }`.
+	const emitHerdrWaitTransition = (transition: UserWaitTransition): void => {
+		if (transition.activated) {
+			pi.events.emit(HERDR_BLOCKED_EVENT, { active: true, label: transition.snapshot.waits[0]?.label });
+		} else if (transition.deactivated) {
+			pi.events.emit(HERDR_BLOCKED_EVENT, { active: false });
+		}
+	};
+
+	const applyUserWaitTransition = (transition: UserWaitTransition): void => {
+		if (transition.changed) pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, transition.snapshot);
+		emitHerdrWaitTransition(transition);
+	};
 
 	// Herdr tab status: built once at load, started per session. Outside Herdr,
 	// with PI_HUB_HERDR_TAB=0, or outside a TUI session this stays inactive.
@@ -225,6 +251,29 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		});
 	});
 
+	// Explicit user waits: the UI owner declares set/clear. Hub only stores and
+	// aggregates; it never infers a wait from a pending `hub:ask`.
+	pi.events.on(HUB_USER_WAIT_CHANNELS.set, (payload) => {
+		const parsed = parseUserWaitSet(payload);
+		if (!parsed) return;
+		const transition = userWaits.set(parsed);
+		if (!transition) return;
+
+		// Ack before changed so a synchronous client can confirm support.
+		pi.events.emit(HUB_USER_WAIT_CHANNELS.ack, { id: parsed.id, owner: parsed.owner, operation: "set" });
+		applyUserWaitTransition(transition);
+	});
+
+	pi.events.on(HUB_USER_WAIT_CHANNELS.clear, (payload) => {
+		const parsed = parseUserWaitClear(payload);
+		if (!parsed) return;
+		const transition = userWaits.clear(parsed);
+		if (!transition) return;
+
+		pi.events.emit(HUB_USER_WAIT_CHANNELS.ack, { id: parsed.id, owner: parsed.owner, operation: "clear" });
+		applyUserWaitTransition(transition);
+	});
+
 	pi.events.on(HUB_CHANNELS.reply, (payload) => {
 		const reply = parseReply(payload);
 		if (!reply) return;
@@ -259,6 +308,14 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Drop every registered wait and release Herdr if one was still open, so a
+		// shut-down session cannot leave the pane stuck as blocked.
+		const reset = userWaits.reset();
+		if (reset.changed) {
+			pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, reset.snapshot);
+			emitHerdrWaitTransition(reset);
+		}
+
 		if (!herdrTab) return;
 		// `stop()` is internally bounded by its restore timeout; awaiting it keeps
 		// the shutdown handler from resolving before the label is restored.
@@ -278,11 +335,20 @@ export default function hubExtension(pi: ExtensionAPI): void {
 				([id, request]) => `- ${id}: ${request.cap.map((entry) => entry.what).join(", ")}`,
 			);
 
+			// User waits are display text only: id is shortened, label is whatever the
+			// UI owner chose to declare. Full prompt content never reaches hub.
+			const waitSnapshot = userWaits.snapshot();
+			const waitLines = waitSnapshot.waits.map(
+				(wait) => `- ${wait.owner}/${shortWaitId(wait.id)}: ${wait.label ?? "(no label)"}`,
+			);
+
 			const lines = [
 				`hub providers: ${capsByProvider.size}`,
 				...(providerLines.length > 0 ? providerLines : ["- (none)"]),
 				`pending asks: ${pending.size}`,
 				...pendingLines,
+				`active user waits: ${waitSnapshot.count}`,
+				...waitLines,
 				`herdr tab: ${herdrTab?.describe() ?? "off"}`,
 			];
 
