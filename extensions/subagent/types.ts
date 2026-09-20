@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentScope } from "./agents.ts";
 import type { SafeMode } from "./safe-mode.ts";
+import type { SubagentTiming } from "./timing.ts";
 
 export interface UsageStats {
 	input: number;
@@ -57,6 +58,7 @@ export interface SingleResult {
 	activeTool?: string;
 	toolRuns?: ToolRunRecord[];
 	pendingApproval?: { requestId: string; method: string; title?: string };
+	timing?: SubagentTiming;
 }
 
 export interface SubagentDetails {

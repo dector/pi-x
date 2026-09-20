@@ -174,13 +174,14 @@ recorded runs it notifies
 - Status icon (✓/✗/⏳) and agent name
 - Last 5-10 items (tool calls and text)
 - Per-tool outcomes: running, waiting approval, approved, completed, blocked, failed, or interrupted, with a short failure reason
+- Timing after every finished, failed, or cancelled child: `Finished in 42.3s — API 31.8s, tools 9.7s, overhead 0.8s`
 - Usage stats: `3 turns ↑input ↓output RcacheRead WcacheWrite $cost ctx:contextTokens model`
 
 **Expanded view** (Ctrl+O):
 - Full task text
 - All tool calls with formatted arguments
 - Final output rendered as Markdown
-- Per-task usage (for chain/parallel)
+- Per-task timing and usage (for chain/parallel)
 
 **Parallel mode streaming**:
 - Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
