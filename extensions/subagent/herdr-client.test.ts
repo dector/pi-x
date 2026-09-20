@@ -240,6 +240,40 @@ describe("HerdrClient structured operations", () => {
 		expect(calls[0].params).toEqual({ pane_id: "w1A:p1C", source: "recent_unwrapped", lines: 20 });
 	});
 
+	test("parses a pane.layout snapshot with rectangles", async () => {
+		const { transport, calls } = fakeTransport({
+			"pane.layout": {
+				type: "pane_layout",
+				layout: {
+					workspace_id: "w1A",
+					tab_id: "w1A:t18",
+					zoomed: false,
+					focused_pane_id: "w1A:p1C",
+					area: { x: 0, y: 0, width: 80, height: 24 },
+					panes: [
+						{ pane_id: "w1A:p1C", focused: true, rect: { x: 0, y: 0, width: 40, height: 24 } },
+						{ pane_id: "w1A:p1Q", focused: false, rect: { x: 40, y: 0, width: 40, height: 24 } },
+					],
+					splits: [
+						{
+							id: "split-1",
+							direction: "right",
+							ratio: 0.5,
+							rect: { x: 0, y: 0, width: 80, height: 24 },
+						},
+					],
+				},
+			},
+		});
+		const client = createHerdrClient({ environment: baseEnv, transport });
+		const layout = await client.getPaneLayout("w1A:p1C");
+		expect(calls[0]).toEqual({ method: "pane.layout", params: { pane_id: "w1A:p1C" } });
+		expect(layout.tabId).toBe("w1A:t18");
+		expect(layout.panes.map((p) => p.paneId)).toEqual(["w1A:p1C", "w1A:p1Q"]);
+		expect(layout.panes[1].rect.width).toBe(40);
+		expect(layout.splits[0].direction).toBe("right");
+	});
+
 	test("reports ownership tokens through structured metadata", async () => {
 		const { transport, calls } = fakeTransport({ "pane.report_metadata": { type: "ok" } });
 		const client = createHerdrClient({ environment: baseEnv, transport });

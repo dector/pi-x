@@ -53,6 +53,22 @@ export type SubagentMode = "single" | "parallel" | "chain";
  */
 export type SubagentBackendKind = "process" | "herdr";
 
+/**
+ * How long a Herdr pane is kept after a run settles. `failed` recycles a
+ * successful pane and keeps failed/aborted ones; `always` keeps every pane.
+ */
+export type HerdrRetention = "failed" | "always";
+
+/** A run's Herdr pane identity, recorded for jumping and retention.
+ * Persisted locations are informational and must be validated against live
+ * Herdr state before they are trusted.
+ */
+export interface HerdrRunLocation {
+	tabId: string;
+	paneId: string;
+	retained: boolean;
+}
+
 /** Model/thinking defaults snapshotted for a dispatch when it is prepared. */
 export interface DispatchDefaults {
 	model?: string;

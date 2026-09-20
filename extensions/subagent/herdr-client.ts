@@ -89,6 +89,41 @@ export interface HerdrPaneRead {
 	truncated: boolean;
 }
 
+export interface HerdrPaneRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+export interface HerdrPaneLayoutPane {
+	paneId: string;
+	focused: boolean;
+	rect: HerdrPaneRect;
+}
+
+export interface HerdrPaneLayoutSplit {
+	id: string;
+	direction: HerdrSplitDirection;
+	ratio: number;
+	rect: HerdrPaneRect;
+}
+
+/**
+ * `pane.layout` snapshot. The parent tab manager uses pane rectangles to pick
+ * the largest leaf to split, so concurrent panes stay balanced instead of
+ * forming narrow columns.
+ */
+export interface HerdrPaneLayoutSnapshot {
+	workspaceId: string;
+	tabId: string;
+	zoomed: boolean;
+	focusedPaneId: string;
+	area: HerdrPaneRect;
+	panes: HerdrPaneLayoutPane[];
+	splits: HerdrPaneLayoutSplit[];
+}
+
 export interface HerdrFocusDirectionResult {
 	changed: boolean;
 	sourcePaneId: string;
@@ -167,6 +202,8 @@ export interface HerdrClient {
 	sendKeys(paneId: string, keys: string[]): Promise<void>;
 	sendInput(paneId: string, input: { text?: string; keys?: string[] }): Promise<void>;
 	readPane(options: HerdrReadPaneOptions): Promise<HerdrPaneRead>;
+	/** `pane.layout` for the tab that contains `paneId`; returns live pane rectangles. */
+	getPaneLayout(paneId: string): Promise<HerdrPaneLayoutSnapshot>;
 	reportPaneMetadata(paneId: string, source: string, metadata: HerdrPaneMetadata): Promise<void>;
 	/** Clears display-only metadata (title/labels); token keys must be cleared explicitly. */
 	clearPaneDisplayMetadata(paneId: string, source: string): Promise<void>;
@@ -503,6 +540,10 @@ export function createHerdrClient(options: {
 				truncated: asBoolean(read.truncated, "read.truncated"),
 			};
 		},
+		async getPaneLayout(paneId) {
+			const result = expectType(await call("pane.layout", { pane_id: paneId }), "pane_layout", "pane.layout");
+			return parsePaneLayoutSnapshot(result.layout);
+		},
 		async reportPaneMetadata(paneId, source, metadata) {
 			const params: Record<string, unknown> = { pane_id: paneId, source };
 			if (metadata.title !== undefined) params.title = metadata.title;
@@ -570,6 +611,49 @@ function parsePaneInfo(value: unknown): HerdrPaneInfo {
 		...(optionalString(pane.display_agent) ? { displayAgent: optionalString(pane.display_agent) } : {}),
 		...(pane.tokens !== undefined ? { tokens: parseStringMap(pane.tokens, "pane.tokens") } : {}),
 		...(pane.state_labels !== undefined ? { stateLabels: parseStringMap(pane.state_labels, "pane.state_labels") } : {}),
+	};
+}
+
+function parsePaneLayoutSnapshot(value: unknown): HerdrPaneLayoutSnapshot {
+	const layout = asRecord(value, "pane.layout layout");
+	return {
+		workspaceId: asString(layout.workspace_id, "layout.workspace_id"),
+		tabId: asString(layout.tab_id, "layout.tab_id"),
+		zoomed: asBoolean(layout.zoomed, "layout.zoomed"),
+		focusedPaneId: asString(layout.focused_pane_id, "layout.focused_pane_id"),
+		area: parsePaneRect(layout.area, "layout.area"),
+		panes: asArray(layout.panes, "layout.panes").map((pane, index) => parsePaneLayoutPane(pane, `layout.panes[${index}]`)),
+		splits: asArray(layout.splits, "layout.splits").map((split, index) => parsePaneLayoutSplit(split, `layout.splits[${index}]`)),
+	};
+}
+
+function parsePaneLayoutPane(value: unknown, context: string): HerdrPaneLayoutPane {
+	const pane = asRecord(value, context);
+	return {
+		paneId: asString(pane.pane_id, `${context}.pane_id`),
+		focused: asBoolean(pane.focused, `${context}.focused`),
+		rect: parsePaneRect(pane.rect, `${context}.rect`),
+	};
+}
+
+function parsePaneLayoutSplit(value: unknown, context: string): HerdrPaneLayoutSplit {
+	const split = asRecord(value, context);
+	const direction = split.direction === "down" ? "down" : "right";
+	return {
+		id: asString(split.id, `${context}.id`),
+		direction,
+		ratio: asNumber(split.ratio, `${context}.ratio`),
+		rect: parsePaneRect(split.rect, `${context}.rect`),
+	};
+}
+
+function parsePaneRect(value: unknown, context: string): HerdrPaneRect {
+	const rect = asRecord(value, context);
+	return {
+		x: asNumber(rect.x, `${context}.x`),
+		y: asNumber(rect.y, `${context}.y`),
+		width: asNumber(rect.width, `${context}.width`),
+		height: asNumber(rect.height, `${context}.height`),
 	};
 }
 
