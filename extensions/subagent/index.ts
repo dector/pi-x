@@ -15,7 +15,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
@@ -37,6 +36,7 @@ import {
 } from "./agent-log.ts";
 import { type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
+import { AttachView } from "./attach-view.ts";
 import { registerChildControls } from "./control.ts";
 import {
 	executeSubagentControl,
@@ -68,15 +68,16 @@ import {
 	SubagentAbortError,
 } from "./dispatch.ts";
 import { AsyncDispatchManager } from "./lifecycle.ts";
+import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
-import { sendControl, sendSteer, SubagentRegistry } from "./registry.ts";
+import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } from "./registry.ts";
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
-import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
+import { SubagentTimingTracker } from "./timing.ts";
 import type {
 	PreparedSubagentDispatch,
 	SingleResult,
@@ -95,116 +96,6 @@ const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
-
-function formatTokens(count: number): string {
-	if (count < 1000) return count.toString();
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	return `${(count / 1000000).toFixed(1)}M`;
-}
-
-function formatResultTiming(result: SingleResult): string | undefined {
-	if (result.exitCode === -1 || !result.timing) return undefined;
-	const cancelled = result.stopReason === "aborted" || /abort/i.test(result.errorMessage ?? "");
-	const outcome = cancelled ? "cancelled" : isFailedResult(result) ? "failed" : "finished";
-	return formatSubagentTiming(result.timing, outcome);
-}
-
-function formatUsageStats(
-	usage: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-		cost: number;
-		contextTokens?: number;
-		turns?: number;
-	},
-	model?: string,
-	thinkingLevel?: ThinkingLevel,
-): string {
-	const parts: string[] = [];
-	if (usage.turns) parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
-	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
-	if (usage.output) parts.push(`↓${formatTokens(usage.output)}`);
-	if (usage.cacheRead) parts.push(`R${formatTokens(usage.cacheRead)}`);
-	if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`);
-	if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
-	if (usage.contextTokens && usage.contextTokens > 0) {
-		parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
-	}
-	if (model) parts.push(thinkingLevel ? `${model} (${thinkingLevel})` : model);
-	return parts.join(" ");
-}
-
-function formatToolCall(
-	toolName: string,
-	args: Record<string, unknown>,
-	themeFg: (color: any, text: string) => string,
-): string {
-	const shortenPath = (p: string) => {
-		const home = os.homedir();
-		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
-	};
-
-	switch (toolName) {
-		case "bash": {
-			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
-		}
-		case "read": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const offset = args.offset as number | undefined;
-			const limit = args.limit as number | undefined;
-			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
-				const startLine = offset ?? 1;
-				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				text += themeFg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
-			}
-			return themeFg("muted", "read ") + text;
-		}
-		case "write": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const content = (args.content || "") as string;
-			const lines = content.split("\n").length;
-			let text = themeFg("muted", "write ") + themeFg("accent", filePath);
-			if (lines > 1) text += themeFg("dim", ` (${lines} lines)`);
-			return text;
-		}
-		case "edit": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			return themeFg("muted", "edit ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "ls": {
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "ls ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "find": {
-			const pattern = (args.pattern || "*") as string;
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "find ") + themeFg("accent", pattern) + themeFg("dim", ` in ${shortenPath(rawPath)}`);
-		}
-		case "grep": {
-			const pattern = (args.pattern || "") as string;
-			const rawPath = (args.path || ".") as string;
-			return (
-				themeFg("muted", "grep ") +
-				themeFg("accent", `/${pattern}/`) +
-				themeFg("dim", ` in ${shortenPath(rawPath)}`)
-			);
-		}
-		default: {
-			const argsStr = JSON.stringify(args);
-			const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}...` : argsStr;
-			return themeFg("accent", toolName) + themeFg("dim", ` ${preview}`);
-		}
-	}
-}
-
 
 type DisplayItem =
 	| { type: "text"; text: string }
@@ -738,6 +629,49 @@ export default function (pi: ExtensionAPI) {
 		activeWidget.refresh(registry.list());
 	}
 
+	// Live attach overlay. Only one can be open at a time because a focused
+	// overlay owns keyboard input. `closeActiveAttach` is captured so session
+	// teardown can close it even though the command handler is suspended inside
+	// `ctx.ui.custom()`. The view reads the run's live `SingleResult`, so it keeps
+	// working while the registry completes or prunes unrelated runs.
+	let closeActiveAttach: (() => void) | undefined;
+
+	async function openAttach(run: SubagentRunRuntime, ctx: ExtensionContext): Promise<void> {
+		if (!ctx.hasUI) return;
+		try {
+			await ctx.ui.custom<null>(
+				(tui, theme, _keybindings, done) => {
+					const view = new AttachView({
+						getResult: () => run.result,
+						getRun: () => ({
+							runId: run.runId,
+							agentName: run.agentName,
+							startedAt: run.startedAt,
+							completedAt: run.completedAt,
+						}),
+						theme: {
+							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+							bold: (text) => theme.bold(text),
+						},
+						requestRender: () => tui.requestRender(),
+						done: (result) => done(result),
+						terminalRows: () => tui.terminal.rows,
+					});
+					closeActiveAttach = () => view.close();
+					return view;
+				},
+				{
+					overlay: true,
+					overlayOptions: { anchor: "center", width: "100%", minWidth: 40, maxHeight: "100%", margin: 1 },
+				},
+			);
+		} catch (error) {
+			ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+		} finally {
+			closeActiveAttach = undefined;
+		}
+	}
+
 	if (!childControl) {
 		pi.registerCommand("px:agents", {
 			description: "Manage active and recent subagent runs",
@@ -761,8 +695,9 @@ export default function (pi: ExtensionAPI) {
 					const run = runs[labels.indexOf(selected)];
 					if (!run) continue;
 					const actions = run.completedAt
-						? ["Details", "Back"]
+						? ["Attach", "Details", "Back"]
 						: [
+							"Attach",
 							"Details",
 							"Configure permissions",
 							...(run.result.state === "paused" || run.result.state === "pause-requested" || run.result.state === "resuming" ? ["Resume"] : ["Pause"]),
@@ -771,6 +706,10 @@ export default function (pi: ExtensionAPI) {
 						];
 					const action = await ctx.ui.select(`${run.agentName} [${run.runId}]`, actions);
 					if (!action || action === "Back") continue;
+					if (action === "Attach") {
+						await openAttach(run, ctx);
+						continue;
+					}
 					if (action === "Details") {
 						const details = [
 							`Agent: ${run.agentName} [${run.runId}]`,
@@ -874,6 +813,15 @@ export default function (pi: ExtensionAPI) {
 		// clear runtime state. Completion delivery is suppressed by the manager
 		// as soon as `shutdown()` sets its flag.
 		shuttingDown = true;
+		// Close the live attach overlay first: it clears the view's poll timer and
+		// resolves the suspended `ctx.ui.custom()` promise before the session
+		// context is dropped. A close failure must not block run cleanup.
+		try {
+			closeActiveAttach?.();
+		} catch {
+			/* ignore */
+		}
+		closeActiveAttach = undefined;
 		// Clear before dropping the context: `setWidget` needs `sessionContext`.
 		activeWidget.clear();
 		sessionContext = undefined;
@@ -1155,20 +1103,7 @@ export default function (pi: ExtensionAPI) {
 			const renderToolItem = (item: Extract<DisplayItem, { type: "toolCall" }>): string => {
 				const call = theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme));
 				const status = item.status ?? "running";
-				const outcome =
-					status === "completed"
-						? theme.fg("success", "✓ completed")
-						: status === "blocked"
-							? theme.fg("warning", "⊘ blocked")
-							: status === "failed"
-								? theme.fg("error", "✗ failed")
-								: status === "interrupted"
-									? theme.fg("error", "⚠ interrupted")
-									: status === "waiting-approval"
-										? theme.fg("warning", "⏸ waiting approval")
-										: status === "approved"
-											? theme.fg("success", "✓ approved, running")
-											: theme.fg("warning", "⏳ running");
+				const outcome = formatToolStatus(status, theme.fg.bind(theme));
 				const reason = item.summary && status !== "completed" ? ` — ${theme.fg("dim", item.summary)}` : "";
 				return `${call}  ${outcome}${reason}`;
 			};
