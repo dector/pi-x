@@ -222,6 +222,46 @@ describe("signal and update forwarding", () => {
 	});
 });
 
+describe("pre-allocated run IDs", () => {
+	test("forwards the prepared run ID to a single run", async () => {
+		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
+		await runDispatch({ agent: "worker", task: "t", runId: "sa-single" }, runner, undefined, undefined);
+		expect(calls[0]?.runId).toBe("sa-single");
+	});
+
+	test("forwards one prepared run ID per parallel task in input order", async () => {
+		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
+		await runDispatch(
+			{
+				tasks: [
+					{ agent: "a", task: "1", runId: "sa-a" },
+					{ agent: "b", task: "2", runId: "sa-b" },
+				],
+			},
+			runner,
+			undefined,
+			undefined,
+		);
+		expect(calls.map((call) => call.runId)).toEqual(["sa-a", "sa-b"]);
+	});
+
+	test("forwards one prepared run ID per chain step in order", async () => {
+		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
+		await runDispatch(
+			{
+				chain: [
+					{ agent: "a", task: "1", runId: "sa-1" },
+					{ agent: "b", task: "2", runId: "sa-2" },
+				],
+			},
+			runner,
+			undefined,
+			undefined,
+		);
+		expect(calls.map((call) => call.runId)).toEqual(["sa-1", "sa-2"]);
+	});
+});
+
 describe("chain dispatch", () => {
 	test("interpolates {previous} from the prior step and preserves step numbers", async () => {
 		const { runner, calls } = createRunner((request) => {

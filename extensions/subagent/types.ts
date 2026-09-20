@@ -1,7 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig, AgentScope } from "./agents.ts";
-import type { SafeMode } from "./safe-mode.ts";
+import type { SafeMode, SafeModeSnapshot } from "./safe-mode.ts";
 import type { SubagentTiming } from "./timing.ts";
 
 export interface UsageStats {
@@ -57,6 +57,11 @@ export interface PreparedDispatchItem {
 /**
  * A validated dispatch with all run IDs allocated, ready for either blocking
  * execution or detaching into the background (Stage 2+).
+ *
+ * `cwd`, `dispatchDefaults`, and `safeModeSnapshot` are the configuration
+ * values snapshotted at preparation time. Reusing them for every item keeps one
+ * dispatch internally consistent and stops later parent context changes (or a
+ * second safe-mode query) from leaking into an accepted dispatch.
  */
 export interface PreparedSubagentDispatch {
 	dispatchId: string;
@@ -66,6 +71,8 @@ export interface PreparedSubagentDispatch {
 	projectAgentsDir: string | null;
 	agents: AgentConfig[];
 	dispatchDefaults: DispatchDefaults;
+	cwd: string;
+	safeModeSnapshot?: SafeModeSnapshot;
 	items: PreparedDispatchItem[];
 }
 

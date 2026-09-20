@@ -46,11 +46,13 @@ import {
 	type RpcStreamState,
 } from "./events.ts";
 import {
+	type DispatchRequest,
 	type DispatchRunner,
 	type MakeDetails,
 	type OnUpdateCallback,
 	runDispatch,
 } from "./dispatch.ts";
+import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
 import { sendControl, SubagentRegistry } from "./registry.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
@@ -65,6 +67,7 @@ import {
 import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
 import type {
 	DispatchDefaults,
+	PreparedSubagentDispatch,
 	SingleResult,
 	SubagentDetails,
 	SubagentDispatchStatus,
@@ -78,7 +81,6 @@ const HUB_ID = "subagent";
 const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
-const PERM_AGENT = "perm:agent";
 
 // Generic status-bar row contract (see extensions/status-bar/contract.ts).
 const STATUS_BAR_EVENTS = {
@@ -91,6 +93,24 @@ const STATUS_BAR_WARNING_DELAY_MS = 500;
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Stage 2 bridge: project a prepared dispatch back onto the existing
+ * `DispatchRequest` shape so the current runner consumes the pre-allocated run
+ * IDs. Stage 3 replaces this by having `runDispatch` accept the prepared
+ * dispatch directly.
+ */
+function preparedDispatchToRequest(dispatch: PreparedSubagentDispatch): DispatchRequest {
+	const items = dispatch.items.map((item) => ({
+		agent: item.agent,
+		task: item.task,
+		cwd: item.cwd,
+		runId: item.runId,
+	}));
+	if (dispatch.mode === "chain") return { chain: items };
+	if (dispatch.mode === "parallel") return { tasks: items };
+	return { agent: items[0]?.agent, task: items[0]?.task, cwd: items[0]?.cwd, runId: items[0]?.runId };
 }
 
 function formatTokens(count: number): string {
@@ -634,6 +654,7 @@ export default function (pi: ExtensionAPI) {
 
 	const registry = new SubagentRegistry(30, () => publishSubagentRow());
 	const newRunId = createRunIdGenerator();
+	const newDispatchId = createRunIdGenerator("dispatch");
 
 	function runningSubagentCount(): number {
 		return registry.list().filter((run) => !run.completedAt).length;
@@ -845,82 +866,50 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
-			const dispatchDefaults: DispatchDefaults = {
-				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-				thinkingLevel: ctx.thinkingLevel,
-			};
-			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
+			const preparation = await prepareSubagentDispatch(params as SubagentRequest, {
+				discoverAgents,
+				requestPermission: (what, data) => askHubPermission(what, data, ctx),
+				snapshotSafeMode: getSafeModeSnapshot,
+				nextDispatchId: newDispatchId,
+				nextRunId: newRunId,
+				context: {
+					cwd: ctx.cwd,
+					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+					thinkingLevel: ctx.thinkingLevel,
+				},
+			});
+			if (!preparation.ok) return preparation.result;
 
-			const hasChain = (params.chain?.length ?? 0) > 0;
-			const hasTasks = (params.tasks?.length ?? 0) > 0;
-			const hasSingle = Boolean(params.agent && params.task);
-			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
-			const availableAgents = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
-
+			const dispatch = preparation.dispatch;
 			const makeDetails =
 				(mode: "single" | "parallel" | "chain") =>
 				(results: SingleResult[], dispatchStatus: SubagentDispatchStatus): SubagentDetails => ({
 					mode,
-					execution: "blocking",
+					execution: dispatch.execution,
+					dispatchId: dispatch.dispatchId,
 					dispatchStatus,
-					agentScope,
-					projectAgentsDir: discovery.projectAgentsDir,
+					agentScope: dispatch.agentScope,
+					projectAgentsDir: dispatch.projectAgentsDir,
 					results,
 				});
 
-			if (modeCount !== 1) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${availableAgents}`,
-						},
-					],
-					details: makeDetails("single")([], "failed"),
-				};
-			}
-
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents) {
-				const requestedAgentNames = new Set<string>();
-				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
-				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
-				if (params.agent) requestedAgentNames.add(params.agent);
-
-				const projectAgentsRequested = Array.from(requestedAgentNames)
-					.map((name) => agents.find((a) => a.name === name))
-					.filter((a): a is AgentConfig => a?.source === "project");
-
-				if (projectAgentsRequested.length > 0) {
-					const names = projectAgentsRequested.map((a) => a.name).join(", ");
-					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const decision = await askHubPermission(
-						PERM_AGENT,
-						{
-							agents: names,
-							source: dir,
-							cwd: ctx.cwd,
-						},
-						ctx,
-					);
-					if (decision !== "allow")
-						return {
-							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
-							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([], "aborted"),
-						};
-				}
-			}
-
 			const dispatchRunner: DispatchRunner = {
-				availableAgents,
+				availableAgents: dispatch.agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none",
 				makeDetails,
-				runSingle: ({ agent, task, cwd, step, signal: runSignal, onUpdate: runUpdate, makeDetails: runMakeDetails }) =>
+				runSingle: ({
+					agent,
+					task,
+					cwd,
+					step,
+					runId,
+					signal: runSignal,
+					onUpdate: runUpdate,
+					makeDetails: runMakeDetails,
+				}) =>
 					runSingleAgent(
-						ctx.cwd,
-						dispatchDefaults,
-						agents,
+						dispatch.cwd,
+						dispatch.dispatchDefaults,
+						dispatch.agents,
 						agent,
 						task,
 						cwd,
@@ -928,8 +917,8 @@ export default function (pi: ExtensionAPI) {
 						runSignal,
 						runUpdate,
 						runMakeDetails,
-						getSafeModeSnapshot,
-						newRunId(),
+						async () => dispatch.safeModeSnapshot,
+						runId ?? newRunId(),
 						activeChildren,
 						approvalQueue,
 						ctx,
@@ -937,7 +926,7 @@ export default function (pi: ExtensionAPI) {
 					),
 			};
 
-			return runDispatch(params, dispatchRunner, signal, onUpdate);
+			return runDispatch(preparedDispatchToRequest(dispatch), dispatchRunner, signal, onUpdate);
 		},
 
 		renderCall(args, theme, _context) {
