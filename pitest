@@ -36,11 +36,16 @@ while IFS= read -r -d '' index_file; do
 	ext_dir="$(dirname "$index_file")"
 	rel_index="${index_file#"$SCRIPT_DIR"/}"
 
-	if git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$rel_index" >/dev/null 2>&1; then
-		EXT_ARGS+=("-e" "$ext_dir")
-	elif [[ $INCLUDE_ALL -eq 1 ]]; then
-		# Loading an untracked entrypoint explicitly keeps it visible in Pi's
-		# verbose extension list. Add its conventional resources separately.
+	tracked=0
+	git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$rel_index" >/dev/null 2>&1 && tracked=1
+
+	if [[ $tracked -eq 1 || $INCLUDE_ALL -eq 1 ]]; then
+		# Always load the entrypoint file, never the extension directory.
+		# Passing a directory that contains a prompts/ (or skills/, themes/)
+		# subdir makes Pi treat it as a resource package and skip the
+		# entrypoint, so its tools would never register. Loading the file
+		# explicitly also keeps it visible in Pi's verbose extension list.
+		# Conventional resources must then be passed separately.
 		EXT_ARGS+=("-e" "$index_file")
 		[[ -d "$ext_dir/skills" ]] && EXT_ARGS+=("--skill" "$ext_dir/skills")
 		[[ -d "$ext_dir/prompts" ]] && EXT_ARGS+=("--prompt-template" "$ext_dir/prompts")
