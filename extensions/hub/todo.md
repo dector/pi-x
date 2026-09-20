@@ -66,9 +66,8 @@ each registering as a `perm:tool` provider.
 
 ## 6. Known issues
 
-- [ ] `http` GET still prompted in a manual test — verify hub/http are the loaded copies and the provider replies
 - [ ] `perm:tool` ask adds ~300 ms when hub is absent (short timeout); consider skipping when hub never registered
-- [ ] No runtime/end-to-end tests; only unit tests (`safe-mode`, `http`, `sqlite`) and bundles
-- [ ] Without an http provider, read-only HTTP now `confirm`s (stricter than before)
+- [ ] Integration tests use an in-process event bus; the documented TUI smoke test still requires manual execution
+- [ ] Without an http provider, HTTP execution fails closed because no authorization ticket is issued
 - [ ] Without a sqlite provider, read-only `sqlite` queries now `confirm` (stricter than before)
 - [ ] Repeated event-constant duplication across extensions (no shared contract imports)
