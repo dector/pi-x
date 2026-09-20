@@ -757,6 +757,11 @@ export default function (pi: ExtensionAPI) {
 						} else if (action === "Abort") {
 							if (!(await ctx.ui.confirm("Abort subagent", `Abort ${run.agentName} [${run.runId}]?`))) continue;
 							run.result.state = "aborting";
+							// Detached dispatches own an independent controller. Aborting it
+							// classifies the final completion as aborted and stops any remaining
+							// chain/parallel work. Blocking runs have no manager entry and fall
+							// back to the child abort below.
+							if (run.dispatchId) asyncDispatches.abort(run.dispatchId);
 							try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
 							await run.child?.terminate();
 						}
@@ -826,9 +831,14 @@ export default function (pi: ExtensionAPI) {
 		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
 		const dispatchesSettled = asyncDispatches.shutdown();
 		approvalQueue.clear();
-		await Promise.all([...activeChildren].map((child) => child.terminate()));
+		// Capture only this session's children. A replacement session can start
+		// (and spawn) while the await below drains, so never blanket-clear the set.
+		const childrenToTerminate = [...activeChildren];
+		// A single failing terminate must not skip dispatch settling or cleanup, so
+		// settle every termination attempt before awaiting the dispatches.
+		await Promise.allSettled(childrenToTerminate.map((child) => child.terminate()));
 		await dispatchesSettled;
-		activeChildren.clear();
+		for (const child of childrenToTerminate) activeChildren.delete(child);
 	});
 
 	const registeredAgents = formatAgentList(discoverAgents(process.cwd(), "user").agents, 50);
@@ -951,7 +961,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
-			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles. Use execution: "blocking" to stream progress and wait for the final result in this turn.',
+			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn. Detached children may modify the shared working tree, so re-read affected files before editing them.',
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,

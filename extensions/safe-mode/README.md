@@ -226,7 +226,9 @@ When approval is required:
 
 ## Subagent integration
 
-Safe-mode publishes its current in-memory mode and outer-access setting on the local `pi.events` channels `px:safe-mode:state:*`. Subagents use this contract to snapshot both values at spawn and to change one running child's effective state without changing parent defaults.
+Safe-mode publishes its current in-memory mode and outer-access setting on the local `pi.events` channels `px:safe-mode:state:*`. Subagents query this contract once while preparing a dispatch, before any child is spawned. Every child in that dispatch reuses the same snapshot, so a later parent change cannot leak into an accepted dispatch.
+
+The same contract lets a running child change its own effective state without changing parent defaults.
 
 RPC children relay approval dialogs to the parent UI. `[A]ll for this session` remains local to that child process. Project-persistent approvals still update the repository allowlist and can therefore affect later processes normally.
 
