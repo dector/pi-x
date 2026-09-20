@@ -80,6 +80,7 @@ Theme files live in [`themes/`](themes/). `./install` syncs them into `~/.pi/age
 | name | description |
 | --- | --- |
 | [`dark-purple`](themes/dark-purple.json) | Copy of the built-in `dark` theme with every thinking-level editor border fixed to one purple (`#a78bfa`), so the border no longer changes with thinking effort. |
+| [`night-dark`](themes/night-dark.json) | Near-black surfaces (`#0d0d0d` page, `#1a1a1a` cards, `#303030` markdown borders) with `dark-purple`'s chrome kept as-is: teal accent `#8abeb7`, blue `#5f87ff` / cyan `#00d7ff` borders, and the brand purple `#a78bfa` for the thinking border, list bullets/numbers and inline code. Semantic + syntax colors stay GitHub-dark (`#3fb950`, `#f85149`, `#d29922`). |
 
 also check the [skills repo](https://github.com/dector/skills).
 
