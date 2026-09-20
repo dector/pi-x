@@ -1,24 +1,28 @@
 /**
- * Stage 0 characterization tests for the blocking dispatch contract.
+ * Characterization tests for the prepared dispatch runner.
  *
- * These tests pin the current single/parallel/chain behavior of the
- * orchestration seam in `dispatch.ts`. They use an injected fake single-run
- * function so no real Pi child process is spawned. `index.ts` wires the same
- * seam to `runSingleAgent()`.
+ * These pin the single/parallel/chain blocking contract of
+ * `runPreparedDispatch()`. They use an injected fake single-run function so no
+ * real Pi child process is spawned. `index.ts` wires the same seam to
+ * `runSingleAgent()`.
  */
 
 import { describe, expect, test } from "bun:test";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	MAX_CONCURRENCY,
-	MAX_PARALLEL_TASKS,
 	PER_TASK_OUTPUT_CAP,
-	runDispatch,
-	type DispatchRunner,
+	runPreparedDispatch,
+	type DispatchRuntimeDependencies,
 	type SingleRunRequest,
 } from "./dispatch.ts";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { isAbortedResult, isFailedResult } from "./result-output.ts";
-import type { SingleResult, SubagentDetails, SubagentDispatchStatus } from "./types.ts";
+import type {
+	PreparedSubagentDispatch,
+	SingleResult,
+	SubagentDetails,
+	SubagentMode,
+} from "./types.ts";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
@@ -39,23 +43,50 @@ function singleResult(agent: string, output: string | undefined, overrides: Part
 	};
 }
 
-function makeDetails(mode: "single" | "parallel" | "chain") {
-	return (results: SingleResult[], dispatchStatus: SubagentDispatchStatus): SubagentDetails => ({
+interface PreparedItemInput {
+	agent: string;
+	task: string;
+	cwd?: string;
+	runId?: string;
+	step?: number;
+}
+
+/**
+ * Build a prepared dispatch the way `prepareSubagentDispatch()` does: run IDs
+ * allocated in input order and chain steps numbered. Tests can still pass their
+ * own IDs to assert forwarding.
+ */
+function preparedDispatch(
+	mode: SubagentMode,
+	items: PreparedItemInput[],
+	overrides: Partial<PreparedSubagentDispatch> = {},
+): PreparedSubagentDispatch {
+	return {
+		dispatchId: "dispatch-test",
+		execution: "blocking",
 		mode,
 		agentScope: "user",
 		projectAgentsDir: null,
-		dispatchStatus,
-		results,
-	});
+		agents: [],
+		dispatchDefaults: {},
+		cwd: "/tmp/parent",
+		items: items.map((item, index) => ({
+			runId: item.runId ?? `sa-${index + 1}`,
+			agent: item.agent,
+			task: item.task,
+			...(item.cwd !== undefined ? { cwd: item.cwd } : {}),
+			...(item.step !== undefined ? { step: item.step } : mode === "chain" ? { step: index + 1 } : {}),
+		})),
+		...overrides,
+	};
 }
 
 /** Runner that records every call and resolves through the supplied handler. */
 function createRunner(
 	handler: (request: SingleRunRequest, index: number) => SingleResult | Promise<SingleResult>,
-): { runner: DispatchRunner; calls: SingleRunRequest[] } {
+): { runner: DispatchRuntimeDependencies; calls: SingleRunRequest[] } {
 	const calls: SingleRunRequest[] = [];
-	const runner: DispatchRunner = {
-		makeDetails,
+	const runner: DispatchRuntimeDependencies = {
 		runSingle: async (request) => {
 			calls.push(request);
 			return handler(request, calls.length - 1);
@@ -66,14 +97,13 @@ function createRunner(
 
 /** Runner whose single runs stay pending until the test resolves them. */
 function deferredRunner(): {
-	runner: DispatchRunner;
+	runner: DispatchRuntimeDependencies;
 	calls: SingleRunRequest[];
 	pending: Array<{ request: SingleRunRequest; resolve: (result: SingleResult) => void }>;
 } {
 	const calls: SingleRunRequest[] = [];
 	const pending: Array<{ request: SingleRunRequest; resolve: (result: SingleResult) => void }> = [];
-	const runner: DispatchRunner = {
-		makeDetails,
+	const runner: DispatchRuntimeDependencies = {
 		runSingle: (request) =>
 			new Promise<SingleResult>((resolve) => {
 				calls.push(request);
@@ -91,7 +121,12 @@ function textOf(result: AgentToolResult<SubagentDetails>): string {
 describe("single dispatch", () => {
 	test("returns the final assistant output and success details", async () => {
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "worker output"));
-		const result = await runDispatch({ agent: "worker", task: "do it", cwd: "/tmp/work" }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "do it", cwd: "/tmp/work" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 
 		expect(textOf(result)).toBe("worker output");
 		expect(result.isError).toBeUndefined();
@@ -104,9 +139,35 @@ describe("single dispatch", () => {
 		expect(calls[0]?.step).toBeUndefined();
 	});
 
+	test("stamps prepared dispatch metadata on aggregate details", async () => {
+		const { runner } = createRunner((request) => singleResult(request.agent, "ok"));
+		const dispatch = preparedDispatch("single", [{ agent: "worker", task: "t" }], {
+			dispatchId: "dispatch-42",
+			execution: "blocking",
+			agentScope: "both",
+			projectAgentsDir: "/repo/.pi/agents",
+		});
+
+		const result = await runPreparedDispatch(dispatch, runner, undefined, undefined);
+
+		expect(result.details).toMatchObject({
+			dispatchId: "dispatch-42",
+			execution: "blocking",
+			agentScope: "both",
+			projectAgentsDir: "/repo/.pi/agents",
+			mode: "single",
+			dispatchStatus: "completed",
+		});
+	});
+
 	test("falls back to (no output) when the child produced no text", async () => {
 		const { runner } = createRunner(() => singleResult("worker", undefined));
-		const result = await runDispatch({ agent: "worker", task: "t" }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(result)).toBe("(no output)");
 		expect(result.isError).toBeUndefined();
 	});
@@ -115,14 +176,24 @@ describe("single dispatch", () => {
 		const withReason = createRunner(() =>
 			singleResult("worker", undefined, { exitCode: 1, stopReason: "error", errorMessage: "boom" }),
 		);
-		const reasonResult = await runDispatch({ agent: "worker", task: "t" }, withReason.runner, undefined, undefined);
+		const reasonResult = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			withReason.runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(reasonResult)).toBe("Agent error: boom");
 		expect(reasonResult.isError).toBe(true);
 		expect(reasonResult.details?.dispatchStatus).toBe("failed");
 		expect(isFailedResult(reasonResult.details?.results[0] ?? {})).toBe(true);
 
 		const noReason = createRunner(() => singleResult("worker", undefined, { exitCode: 1, stderr: "trace" }));
-		const noReasonResult = await runDispatch({ agent: "worker", task: "t" }, noReason.runner, undefined, undefined);
+		const noReasonResult = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			noReason.runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(noReasonResult)).toBe("Agent failed: trace");
 		expect(noReasonResult.isError).toBe(true);
 		expect(noReasonResult.details?.dispatchStatus).toBe("failed");
@@ -132,7 +203,12 @@ describe("single dispatch", () => {
 		const { runner } = createRunner(() =>
 			singleResult("worker", undefined, { exitCode: 0, stopReason: "aborted", errorMessage: "stopped" }),
 		);
-		const result = await runDispatch({ agent: "worker", task: "t" }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 		expect(result.isError).toBe(true);
 		expect(textOf(result)).toBe("Agent aborted: stopped");
 		expect(result.details?.dispatchStatus).toBe("aborted");
@@ -144,7 +220,12 @@ describe("signal and update forwarding", () => {
 		const controller = new AbortController();
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
 
-		await runDispatch({ agent: "worker", task: "t" }, runner, controller.signal, undefined);
+		await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			runner,
+			controller.signal,
+			undefined,
+		);
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.signal).toBe(controller.signal);
@@ -155,12 +236,17 @@ describe("signal and update forwarding", () => {
 		const updates: Array<AgentToolResult<SubagentDetails>> = [];
 		const onUpdate = (update: AgentToolResult<SubagentDetails>) => updates.push(update);
 
-		await runDispatch({ agent: "worker", task: "t" }, runner, undefined, onUpdate);
+		await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t" }]),
+			runner,
+			undefined,
+			onUpdate,
+		);
 
 		expect(calls[0]?.onUpdate).toBe(onUpdate);
 		const partial: AgentToolResult<SubagentDetails> = {
 			content: [{ type: "text", text: "partial" }],
-			details: makeDetails("single")([], "started"),
+			details: calls[0].makeDetails([], "started"),
 		};
 		calls[0]?.onUpdate?.(partial);
 		expect(updates).toEqual([partial]);
@@ -170,14 +256,12 @@ describe("signal and update forwarding", () => {
 		const controller = new AbortController();
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
 
-		await runDispatch(
-			{
-				tasks: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-					{ agent: "c", task: "3" },
-				],
-			},
+		await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+				{ agent: "c", task: "3" },
+			]),
 			runner,
 			controller.signal,
 			undefined,
@@ -191,13 +275,11 @@ describe("signal and update forwarding", () => {
 		const controller = new AbortController();
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
 
-		await runDispatch(
-			{
-				chain: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-				],
-			},
+		await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
 			runner,
 			controller.signal,
 			undefined,
@@ -206,38 +288,27 @@ describe("signal and update forwarding", () => {
 		expect(calls).toHaveLength(2);
 		expect(calls.map((call) => call.signal)).toEqual([controller.signal, controller.signal]);
 	});
-
-	test("returns the legacy invalid-parameters fallback instead of throwing", async () => {
-		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
-		runner.availableAgents = "scout (user), worker (project)";
-
-		const result = await runDispatch({}, runner, undefined, undefined);
-
-		expect(textOf(result)).toBe("Invalid parameters. Available agents: scout (user), worker (project)");
-		expect(result.details?.mode).toBe("single");
-		expect(result.details?.dispatchStatus).toBe("failed");
-		expect(result.details?.results).toEqual([]);
-		expect(result.isError).toBeUndefined();
-		expect(calls).toHaveLength(0);
-	});
 });
 
 describe("pre-allocated run IDs", () => {
 	test("forwards the prepared run ID to a single run", async () => {
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
-		await runDispatch({ agent: "worker", task: "t", runId: "sa-single" }, runner, undefined, undefined);
+		await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "worker", task: "t", runId: "sa-single" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 		expect(calls[0]?.runId).toBe("sa-single");
 	});
 
 	test("forwards one prepared run ID per parallel task in input order", async () => {
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
-		await runDispatch(
-			{
-				tasks: [
-					{ agent: "a", task: "1", runId: "sa-a" },
-					{ agent: "b", task: "2", runId: "sa-b" },
-				],
-			},
+		await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1", runId: "sa-a" },
+				{ agent: "b", task: "2", runId: "sa-b" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -247,18 +318,32 @@ describe("pre-allocated run IDs", () => {
 
 	test("forwards one prepared run ID per chain step in order", async () => {
 		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
-		await runDispatch(
-			{
-				chain: [
-					{ agent: "a", task: "1", runId: "sa-1" },
-					{ agent: "b", task: "2", runId: "sa-2" },
-				],
-			},
+		await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1", runId: "sa-1" },
+				{ agent: "b", task: "2", runId: "sa-2" },
+			]),
 			runner,
 			undefined,
 			undefined,
 		);
 		expect(calls.map((call) => call.runId)).toEqual(["sa-1", "sa-2"]);
+	});
+});
+
+describe("malformed prepared dispatch", () => {
+	test("throws a descriptive invariant error for empty items instead of crashing", async () => {
+		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
+
+		await expect(
+			runPreparedDispatch(
+				preparedDispatch("single", [], { dispatchId: "dispatch-empty" }),
+				runner,
+				undefined,
+				undefined,
+			),
+		).rejects.toThrow(/Malformed prepared dispatch dispatch-empty \(mode "single"\): expected at least one item/);
+		expect(calls).toHaveLength(0);
 	});
 });
 
@@ -268,13 +353,11 @@ describe("chain dispatch", () => {
 			if (request.agent === "a") return singleResult("a", "A-out");
 			return singleResult("b", `seen:${request.task}`);
 		});
-		const result = await runDispatch(
-			{
-				chain: [
-					{ agent: "a", task: "first" },
-					{ agent: "b", task: "use {previous} twice {previous}" },
-				],
-			},
+		const result = await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "first" },
+				{ agent: "b", task: "use {previous} twice {previous}" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -289,20 +372,32 @@ describe("chain dispatch", () => {
 		expect(result.isError).toBeUndefined();
 	});
 
+	test("forwards an explicit non-default chain step instead of the input position", async () => {
+		const { runner, calls } = createRunner((request) => singleResult(request.agent, "ok"));
+		await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1", step: 4 },
+				{ agent: "b", task: "2", step: 7 },
+			]),
+			runner,
+			undefined,
+			undefined,
+		);
+		expect(calls.map((call) => call.step)).toEqual([4, 7]);
+	});
+
 	test("stops at the first failed step and reports it", async () => {
 		const { runner, calls } = createRunner((request) => {
 			if (request.agent === "b")
 				return singleResult("b", undefined, { exitCode: 1, stopReason: "error", errorMessage: "boom" });
 			return singleResult(request.agent, `${request.agent}-out`);
 		});
-		const result = await runDispatch(
-			{
-				chain: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-					{ agent: "c", task: "3" },
-				],
-			},
+		const result = await runPreparedDispatch(
+			preparedDispatch("chain", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+				{ agent: "c", task: "3" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -318,13 +413,19 @@ describe("chain dispatch", () => {
 	test("streaming updates prepend completed prior results to the current partial", async () => {
 		const { runner, pending } = deferredRunner();
 		const updates: Array<AgentToolResult<SubagentDetails>> = [];
-		const dispatch = runDispatch(
-			{
-				chain: [
+		const dispatch = runPreparedDispatch(
+			preparedDispatch(
+				"chain",
+				[
 					{ agent: "a", task: "1" },
 					{ agent: "b", task: "2" },
 				],
-			},
+				{
+					dispatchId: "dispatch-chain-stream",
+					agentScope: "both",
+					projectAgentsDir: "/repo/.pi/agents",
+				},
+			),
 			runner,
 			undefined,
 			(update) => updates.push(update),
@@ -337,12 +438,19 @@ describe("chain dispatch", () => {
 		const partial = singleResult("b", undefined, { exitCode: -1 });
 		pending[1]?.request.onUpdate?.({
 			content: [{ type: "text", text: "partial-b" }],
-			details: makeDetails("chain")([partial], "started"),
+			details: pending[1].request.makeDetails([partial], "started"),
 		});
 
 		const streamed = updates.at(-1);
+		expect(streamed?.details).toMatchObject({
+			dispatchId: "dispatch-chain-stream",
+			execution: "blocking",
+			agentScope: "both",
+			projectAgentsDir: "/repo/.pi/agents",
+			mode: "chain",
+			dispatchStatus: "started",
+		});
 		expect(streamed?.details?.results.map((r) => r.agent)).toEqual(["a", "b"]);
-		expect(streamed?.details?.dispatchStatus).toBe("started");
 		expect(textOf(streamed as AgentToolResult<SubagentDetails>)).toBe("partial-b");
 
 		pending[1]?.resolve(singleResult("b", "b-out"));
@@ -359,8 +467,7 @@ describe("parallel dispatch", () => {
 		const completionOrder: string[] = [];
 		const resolvers = new Map<string, (result: SingleResult) => void>();
 		const tasks = ["a", "b", "c", "d", "e"].map((agent) => ({ agent, task: `task-${agent}` }));
-		const runner: DispatchRunner = {
-			makeDetails,
+		const runner: DispatchRuntimeDependencies = {
 			runSingle: (request) => {
 				active += 1;
 				peak = Math.max(peak, active);
@@ -375,7 +482,7 @@ describe("parallel dispatch", () => {
 			},
 		};
 
-		const dispatch = runDispatch({ tasks }, runner, undefined, undefined);
+		const dispatch = runPreparedDispatch(preparedDispatch("parallel", tasks), runner, undefined, undefined);
 
 		// Only the first MAX_CONCURRENCY tasks start; the fifth waits for a slot.
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -407,14 +514,12 @@ describe("parallel dispatch", () => {
 				return singleResult("b", undefined, { exitCode: 1, stopReason: "error", errorMessage: "boom" });
 			return singleResult(request.agent, `${request.agent}-out`);
 		});
-		const result = await runDispatch(
-			{
-				tasks: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-					{ agent: "c", task: "3" },
-				],
-			},
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+				{ agent: "c", task: "3" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -453,13 +558,11 @@ describe("parallel dispatch", () => {
 		const { runner } = createRunner((request) =>
 			singleResult(request.agent, undefined, { exitCode: 1, stopReason: "error", errorMessage: "boom" }),
 		);
-		const result = await runDispatch(
-			{
-				tasks: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-				],
-			},
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -473,13 +576,11 @@ describe("parallel dispatch", () => {
 				return singleResult("b", undefined, { exitCode: 0, stopReason: "aborted", errorMessage: "stopped" });
 			return singleResult(request.agent, `${request.agent}-out`);
 		});
-		const result = await runDispatch(
-			{
-				tasks: [
-					{ agent: "a", task: "1" },
-					{ agent: "b", task: "2" },
-				],
-			},
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [
+				{ agent: "a", task: "1" },
+				{ agent: "b", task: "2" },
+			]),
 			runner,
 			undefined,
 			undefined,
@@ -487,30 +588,22 @@ describe("parallel dispatch", () => {
 		expect(result.details?.dispatchStatus).toBe("aborted");
 	});
 
-	test("rejects more than the maximum parallel tasks before running any child", async () => {
-		const { runner, calls } = createRunner((request) => singleResult(request.agent, "x"));
-		const tasks = Array.from({ length: MAX_PARALLEL_TASKS + 1 }, (_, index) => ({
-			agent: `a${index}`,
-			task: "t",
-		}));
-		const result = await runDispatch({ tasks }, runner, undefined, undefined);
-
-		expect(textOf(result)).toBe(`Too many parallel tasks (${MAX_PARALLEL_TASKS + 1}). Max is ${MAX_PARALLEL_TASKS}.`);
-		expect(result.details?.dispatchStatus).toBe("failed");
-		expect(result.details?.results).toEqual([]);
-		expect(calls).toHaveLength(0);
-	});
-
 	test("streams running placeholders and running/done counts", async () => {
 		const { runner, pending } = deferredRunner();
 		const updates: Array<AgentToolResult<SubagentDetails>> = [];
-		const dispatch = runDispatch(
-			{
-				tasks: [
+		const dispatch = runPreparedDispatch(
+			preparedDispatch(
+				"parallel",
+				[
 					{ agent: "a", task: "1" },
 					{ agent: "b", task: "2" },
 				],
-			},
+				{
+					dispatchId: "dispatch-parallel-stream",
+					agentScope: "both",
+					projectAgentsDir: "/repo/.pi/agents",
+				},
+			),
 			runner,
 			undefined,
 			(update) => updates.push(update),
@@ -518,11 +611,18 @@ describe("parallel dispatch", () => {
 
 		pending[0]?.request.onUpdate?.({
 			content: [{ type: "text", text: "partial-a" }],
-			details: makeDetails("parallel")([singleResult("a", "partial-a", { exitCode: -1 })], "started"),
+			details: pending[0].request.makeDetails([singleResult("a", "partial-a", { exitCode: -1 })], "started"),
 		});
 		const running = updates.at(-1);
 		expect(textOf(running as AgentToolResult<SubagentDetails>)).toBe("Parallel: 0/2 done, 2 running...");
-		expect(running?.details?.dispatchStatus).toBe("started");
+		expect(running?.details).toMatchObject({
+			dispatchId: "dispatch-parallel-stream",
+			execution: "blocking",
+			agentScope: "both",
+			projectAgentsDir: "/repo/.pi/agents",
+			mode: "parallel",
+			dispatchStatus: "started",
+		});
 		expect(running?.details?.results.map((r) => r.exitCode)).toEqual([-1, -1]);
 
 		pending[0]?.resolve(singleResult("a", "a-out"));
@@ -540,7 +640,12 @@ describe("50 KB parallel output cap", () => {
 	test("truncates oversized parallel task output and preserves full details", async () => {
 		const huge = "a".repeat(PER_TASK_OUTPUT_CAP + 8800);
 		const { runner } = createRunner(() => singleResult("a", huge));
-		const result = await runDispatch({ tasks: [{ agent: "a", task: "t" }] }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [{ agent: "a", task: "t" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 
 		const text = textOf(result);
 		expect(text).toContain(
@@ -558,7 +663,12 @@ describe("50 KB parallel output cap", () => {
 	test("does not truncate output exactly at the cap", async () => {
 		const atCap = "a".repeat(PER_TASK_OUTPUT_CAP);
 		const { runner } = createRunner(() => singleResult("a", atCap));
-		const result = await runDispatch({ tasks: [{ agent: "a", task: "t" }] }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [{ agent: "a", task: "t" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(result)).toContain(atCap);
 		expect(textOf(result)).not.toContain("[Output truncated:");
 	});
@@ -566,7 +676,12 @@ describe("50 KB parallel output cap", () => {
 	test("counts bytes, not characters, for multibyte output", async () => {
 		const multibyte = "é".repeat(PER_TASK_OUTPUT_CAP);
 		const { runner } = createRunner(() => singleResult("a", multibyte));
-		const result = await runDispatch({ tasks: [{ agent: "a", task: "t" }] }, runner, undefined, undefined);
+		const result = await runPreparedDispatch(
+			preparedDispatch("parallel", [{ agent: "a", task: "t" }]),
+			runner,
+			undefined,
+			undefined,
+		);
 
 		const text = textOf(result);
 		expect(text).toContain("[Output truncated: 51200 bytes omitted. Full output preserved in tool details.]");
@@ -579,12 +694,22 @@ describe("50 KB parallel output cap", () => {
 	test("does not truncate single or chain output", async () => {
 		const huge = "a".repeat(PER_TASK_OUTPUT_CAP + 100);
 		const single = createRunner(() => singleResult("a", huge));
-		const singleResultOut = await runDispatch({ agent: "a", task: "t" }, single.runner, undefined, undefined);
+		const singleResultOut = await runPreparedDispatch(
+			preparedDispatch("single", [{ agent: "a", task: "t" }]),
+			single.runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(singleResultOut)).toBe(huge);
 		expect(textOf(singleResultOut)).not.toContain("[Output truncated:");
 
 		const chain = createRunner(() => singleResult("a", huge));
-		const chainResult = await runDispatch({ chain: [{ agent: "a", task: "t" }] }, chain.runner, undefined, undefined);
+		const chainResult = await runPreparedDispatch(
+			preparedDispatch("chain", [{ agent: "a", task: "t" }]),
+			chain.runner,
+			undefined,
+			undefined,
+		);
 		expect(textOf(chainResult)).toBe(huge);
 		expect(textOf(chainResult)).not.toContain("[Output truncated:");
 	});

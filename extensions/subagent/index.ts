@@ -35,7 +35,7 @@ import {
 	persistedAgentLogEntries,
 	registryAgentLogEntries,
 } from "./agent-log.ts";
-import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
+import { type AgentScope, discoverAgents, formatAgentList } from "./agents.ts";
 import { ApprovalQueue } from "./approval-queue.ts";
 import { registerChildControls } from "./control.ts";
 import {
@@ -46,11 +46,9 @@ import {
 	type RpcStreamState,
 } from "./events.ts";
 import {
-	type DispatchRequest,
-	type DispatchRunner,
-	type MakeDetails,
-	type OnUpdateCallback,
-	runDispatch,
+	type DispatchRuntimeDependencies,
+	type SingleRunRequest,
+	runPreparedDispatch,
 } from "./dispatch.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
 import { spawnRpcChild, type RpcChild } from "./rpc-client.ts";
@@ -66,11 +64,9 @@ import {
 } from "./status-row.ts";
 import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
 import type {
-	DispatchDefaults,
 	PreparedSubagentDispatch,
 	SingleResult,
 	SubagentDetails,
-	SubagentDispatchStatus,
 	ToolRunStatus,
 } from "./types.ts";
 
@@ -93,24 +89,6 @@ const STATUS_BAR_WARNING_DELAY_MS = 500;
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-/**
- * Stage 2 bridge: project a prepared dispatch back onto the existing
- * `DispatchRequest` shape so the current runner consumes the pre-allocated run
- * IDs. Stage 3 replaces this by having `runDispatch` accept the prepared
- * dispatch directly.
- */
-function preparedDispatchToRequest(dispatch: PreparedSubagentDispatch): DispatchRequest {
-	const items = dispatch.items.map((item) => ({
-		agent: item.agent,
-		task: item.task,
-		cwd: item.cwd,
-		runId: item.runId,
-	}));
-	if (dispatch.mode === "chain") return { chain: items };
-	if (dispatch.mode === "parallel") return { tasks: items };
-	return { agent: items[0]?.agent, task: items[0]?.task, cwd: items[0]?.cwd, runId: items[0]?.runId };
 }
 
 function formatTokens(count: number): string {
@@ -269,24 +247,24 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+interface SingleAgentRuntimeDependencies {
+	activeChildren: Set<RpcChild>;
+	approvalQueue: ApprovalQueue;
+	parentContext: ExtensionContext;
+	registry: SubagentRegistry;
+}
+
 async function runSingleAgent(
-	defaultCwd: string,
-	dispatchDefaults: DispatchDefaults,
-	agents: AgentConfig[],
-	agentName: string,
-	task: string,
-	cwd: string | undefined,
-	step: number | undefined,
-	signal: AbortSignal | undefined,
-	onUpdate: OnUpdateCallback | undefined,
-	makeDetails: MakeDetails,
-	getSafeModeSnapshot: () => Promise<SafeModeSnapshot | undefined>,
-	runId: string,
-	activeChildren: Set<RpcChild>,
-	approvalQueue: ApprovalQueue,
-	parentContext: ExtensionContext,
-	registry: SubagentRegistry,
+	request: SingleRunRequest,
+	dispatch: PreparedSubagentDispatch,
+	runtime: SingleAgentRuntimeDependencies,
 ): Promise<SingleResult> {
+	const { agent: agentName, task, cwd, step, signal, onUpdate, makeDetails, runId } = request;
+	const defaultCwd = dispatch.cwd;
+	const dispatchDefaults = dispatch.dispatchDefaults;
+	const agents = dispatch.agents;
+	const getSafeModeSnapshot = async () => dispatch.safeModeSnapshot;
+	const { activeChildren, approvalQueue, parentContext, registry } = runtime;
 	const timing = new SubagentTimingTracker();
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -881,52 +859,17 @@ export default function (pi: ExtensionAPI) {
 			if (!preparation.ok) return preparation.result;
 
 			const dispatch = preparation.dispatch;
-			const makeDetails =
-				(mode: "single" | "parallel" | "chain") =>
-				(results: SingleResult[], dispatchStatus: SubagentDispatchStatus): SubagentDetails => ({
-					mode,
-					execution: dispatch.execution,
-					dispatchId: dispatch.dispatchId,
-					dispatchStatus,
-					agentScope: dispatch.agentScope,
-					projectAgentsDir: dispatch.projectAgentsDir,
-					results,
-				});
-
-			const dispatchRunner: DispatchRunner = {
-				availableAgents: dispatch.agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none",
-				makeDetails,
-				runSingle: ({
-					agent,
-					task,
-					cwd,
-					step,
-					runId,
-					signal: runSignal,
-					onUpdate: runUpdate,
-					makeDetails: runMakeDetails,
-				}) =>
-					runSingleAgent(
-						dispatch.cwd,
-						dispatch.dispatchDefaults,
-						dispatch.agents,
-						agent,
-						task,
-						cwd,
-						step,
-						runSignal,
-						runUpdate,
-						runMakeDetails,
-						async () => dispatch.safeModeSnapshot,
-						runId ?? newRunId(),
-						activeChildren,
-						approvalQueue,
-						ctx,
-						registry,
-					),
+			const runtime: SingleAgentRuntimeDependencies = {
+				activeChildren,
+				approvalQueue,
+				parentContext: ctx,
+				registry,
+			};
+			const runner: DispatchRuntimeDependencies = {
+				runSingle: (request) => runSingleAgent(request, dispatch, runtime),
 			};
 
-			return runDispatch(preparedDispatchToRequest(dispatch), dispatchRunner, signal, onUpdate);
+			return runPreparedDispatch(dispatch, runner, signal, onUpdate);
 		},
 
 		renderCall(args, theme, _context) {
