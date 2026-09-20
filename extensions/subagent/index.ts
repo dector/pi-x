@@ -352,10 +352,11 @@ async function runSingleAgent(
 							return;
 						}
 						currentResult.state = "waiting-approval";
+						const approvalTitle = typeof request.title === "string" ? request.title.slice(0, 300) : undefined;
 						currentResult.pendingApproval = {
 							requestId: request.id,
 							method: request.method,
-							title: typeof request.title === "string" ? request.title.slice(0, 300) : undefined,
+							title: approvalTitle,
 						};
 						emitUpdate();
 						const heading = `Subagent: ${agent.name} [${runId}]\nWorking directory: ${cwd ?? defaultCwd}\n\n${typeof request.title === "string" ? request.title.slice(0, 500) : "Approval requested"}`;
@@ -393,6 +394,17 @@ async function runSingleAgent(
 							("cancelled" in finalResponse && finalResponse.cancelled) ||
 							("confirmed" in finalResponse && !finalResponse.confirmed) ||
 							("value" in finalResponse && finalResponse.value === "[N]o");
+						// Keep the answer in the run so the attach transcript can show a
+						// resolved approval after the dialog closes. Bounded like the UI cap.
+						const resolvedApprovals = (currentResult.resolvedApprovals ??= []);
+						if (resolvedApprovals.length < 20) {
+							resolvedApprovals.push({
+								requestId: request.id,
+								method: request.method,
+								title: approvalTitle,
+								state: denied ? "denied" : "approved",
+							});
+						}
 						setLatestToolApprovalState(currentResult, denied ? "denied" : "approved");
 						emitUpdate();
 						try {
@@ -635,7 +647,43 @@ export default function (pi: ExtensionAPI) {
 	// teardown can close it even though the command handler is suspended inside
 	// `ctx.ui.custom()`. The view reads the run's live `SingleResult`, so it keeps
 	// working while the registry completes or prunes unrelated runs.
+	//
+	// Approval dialogs still run through `parentContext.ui.*`, which are temporary
+	// non-overlay custom UIs. A focused visible overlay reclaims input after such
+	// a dialog closes (docs/tui.md "Overlay Focus"), so the view never touches the
+	// overlay handle or answers a child approval itself. Safe mode and the shared
+	// approval queue stay authoritative.
 	let closeActiveAttach: (() => void) | undefined;
+
+	// Lifecycle controls for the attach overlay. Pause/resume use the child's
+	// native control RPC; stop uses the run's lifecycle controller (cooperative
+	// native abort, then bounded forced termination). None of them sends a shell
+	// signal. Stop waits for the registry to mark the run complete so the caller
+	// reports the settled outcome instead of a stale "running" state.
+	const ATTACH_STOP_SETTLE_TIMEOUT_MS = DEFAULT_STOP_ESCALATION_MS + 2000;
+
+	function pauseAttachedRun(run: SubagentRunRuntime): Promise<void> {
+		if (run.completedAt) return Promise.reject(new Error(`Run ${run.runId} has already finished.`));
+		run.result.state = "pause-requested";
+		return sendControl(run, "pause");
+	}
+
+	function resumeAttachedRun(run: SubagentRunRuntime): Promise<void> {
+		if (run.completedAt) return Promise.reject(new Error(`Run ${run.runId} has already finished.`));
+		run.result.state = "resuming";
+		return sendControl(run, "resume");
+	}
+
+	async function stopAttachedRun(run: SubagentRunRuntime): Promise<void> {
+		if (run.completedAt) throw new Error(`Run ${run.runId} has already finished.`);
+		if (!run.abort) throw new Error(`Run ${run.runId} has no stop handle.`);
+		run.abort();
+		const deadline = Date.now() + ATTACH_STOP_SETTLE_TIMEOUT_MS;
+		while (!run.completedAt && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		if (!run.completedAt) throw new Error(`Run ${run.runId} did not settle after stop; it may still be terminating.`);
+	}
 
 	async function openAttach(run: SubagentRunRuntime, ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) return;
@@ -663,7 +711,15 @@ export default function (pi: ExtensionAPI) {
 						done: (result) => done(result),
 						terminalRows: () => tui.terminal.rows,
 						editor,
-						steer: (runId, message) => sendSteer(registry.get(runId) ?? run, message),
+						// Address every control through the captured run object, not the
+						// registry, so the overlay keeps working after the registry prunes
+						// the entry once the run completes.
+						steer: (_runId, message) => sendSteer(run, message),
+						pause: () => pauseAttachedRun(run),
+						resume: () => resumeAttachedRun(run),
+						stop: () => stopAttachedRun(run),
+						confirmStop: (target) =>
+							ctx.ui.confirm("Stop subagent", `Stop ${target.agentName} [${target.runId}]?`),
 					});
 					closeActiveAttach = () => view.close();
 					return view;

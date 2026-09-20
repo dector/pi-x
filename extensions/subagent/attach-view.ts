@@ -95,6 +95,17 @@ export interface AttachViewOptions {
 	 * keeps the transport honest about which child was steered.
 	 */
 	steer?: (runId: string, message: string) => Promise<void>;
+	/** Native pause through the child control RPC (never a shell signal). */
+	pause?: (runId: string) => Promise<void>;
+	/** Native resume through the child control RPC (never a shell signal). */
+	resume?: (runId: string) => Promise<void>;
+	/**
+	 * Stop the run through its lifecycle controller: a cooperative native abort
+	 * that escalates to bounded forced termination. Never a shell signal.
+	 */
+	stop?: (runId: string) => Promise<void>;
+	/** Ask before stopping. Omitted means stop without confirmation. */
+	confirmStop?: (run: AttachViewRun) => Promise<boolean>;
 	/** Terminal row count; defaults to 24 when unavailable. */
 	terminalRows?: () => number;
 	/** Injectable clock for deterministic tests. */
@@ -111,7 +122,9 @@ export class AttachView implements Component, Focusable {
 	private closed = false;
 	private mode: AttachMode = "scroll";
 	private submitting = false;
+	private controlBusy = false;
 	private steerStatus: AttachSteerStatus | undefined;
+	private controlStatus: AttachSteerStatus | undefined;
 	private _focused = false;
 
 	constructor(private readonly options: AttachViewOptions) {
@@ -161,6 +174,21 @@ export class AttachView implements Component, Focusable {
 	/** Last inline steering status, if any. */
 	get lastSteerStatus(): AttachSteerStatus | undefined {
 		return this.steerStatus;
+	}
+
+	/** Last inline pause/resume/stop status, if any. */
+	get lastControlStatus(): AttachSteerStatus | undefined {
+		return this.controlStatus;
+	}
+
+	/** Whether a pause/resume/stop operation is in flight. */
+	get isControlBusy(): boolean {
+		return this.controlBusy;
+	}
+
+	/** Whether pause/resume/stop controls are wired for this view. */
+	get hasControls(): boolean {
+		return !!(this.options.pause || this.options.resume || this.options.stop);
 	}
 
 	render(width: number): string[] {
@@ -237,7 +265,16 @@ export class AttachView implements Component, Focusable {
 		else if (matchesKey(data, Key.home)) this.viewport.scrollToTop();
 		else if (matchesKey(data, Key.end)) this.viewport.scrollToBottom();
 		else if (matchesKey(data, Key.ctrl("o"))) this.expanded = !this.expanded;
-		else if (matchesKey(data, Key.enter) && !readOnly && this.options.editor) {
+		else if (!readOnly && this.hasControls && matchesKey(data, "p")) {
+			void this.pause();
+			return;
+		} else if (!readOnly && this.hasControls && matchesKey(data, "r")) {
+			void this.resume();
+			return;
+		} else if (!readOnly && this.hasControls && matchesKey(data, "a")) {
+			void this.stop();
+			return;
+		} else if (matchesKey(data, Key.enter) && !readOnly && this.options.editor) {
 			this.setMode("compose");
 			return;
 		} else return;
@@ -279,6 +316,97 @@ export class AttachView implements Component, Focusable {
 			if (this.options.editor) this.options.editor.disableSubmit = this.isReadOnly;
 			this.options.requestRender();
 		}
+	}
+
+	/** Pause the run through the native child control RPC. */
+	async pause(): Promise<void> {
+		await this.runControl("pause", this.options.pause);
+	}
+
+	/** Resume a paused run through the native child control RPC. */
+	async resume(): Promise<void> {
+		await this.runControl("resume", this.options.resume);
+	}
+
+	/**
+	 * Stop the run through its lifecycle controller after confirmation. The
+	 * injected stop awaits registry cleanup, so a run that settles while the
+	 * dialog is open reports a settled notice instead of a false error.
+	 */
+	async stop(): Promise<void> {
+		if (this.isReadOnly) {
+			this.controlStatus = { kind: "error", text: "This run has settled and cannot be stopped." };
+			this.options.requestRender();
+			return;
+		}
+		if (this.controlBusy) return;
+		const stop = this.options.stop;
+		if (!stop) {
+			this.controlStatus = { kind: "error", text: "Stop is unavailable for this run." };
+			this.options.requestRender();
+			return;
+		}
+
+		const run = this.options.getRun();
+		this.controlBusy = true;
+		try {
+			if (this.options.confirmStop) {
+				this.controlStatus = { kind: "info", text: `Confirm stop for ${run.runId}…` };
+				this.options.requestRender();
+				if (!(await this.options.confirmStop(run))) {
+					this.controlStatus = { kind: "info", text: `Stop cancelled for ${run.runId}.` };
+					return;
+				}
+			}
+			this.controlStatus = { kind: "info", text: `Stopping ${run.runId}…` };
+			this.options.requestRender();
+			await stop(run.runId);
+			this.controlStatus = { kind: "success", text: `Stopped ${run.runId}.` };
+		} catch (error) {
+			this.controlStatus = this.controlOutcome(error, run.runId, "stopped");
+		} finally {
+			this.controlBusy = false;
+			this.options.requestRender();
+		}
+	}
+
+	private async runControl(action: "pause" | "resume", op: ((runId: string) => Promise<void>) | undefined): Promise<void> {
+		if (this.isReadOnly) {
+			this.controlStatus = { kind: "error", text: `This run has settled; it cannot be ${action === "pause" ? "paused" : "resumed"}.` };
+			this.options.requestRender();
+			return;
+		}
+		if (this.controlBusy) return;
+		if (!op) {
+			this.controlStatus = { kind: "error", text: `${action === "pause" ? "Pause" : "Resume"} is unavailable for this run.` };
+			this.options.requestRender();
+			return;
+		}
+		const runId = this.options.getRun().runId;
+		this.controlBusy = true;
+		this.controlStatus = { kind: "info", text: `${action === "pause" ? "Pausing" : "Resuming"} ${runId}…` };
+		this.options.requestRender();
+		try {
+			await op(runId);
+			this.controlStatus = this.isReadOnly
+				? { kind: "info", text: `Run ${runId} settled before ${action} completed.` }
+				: { kind: "success", text: `${action === "pause" ? "Paused" : "Resumed"} ${runId}.` };
+		} catch (error) {
+			this.controlStatus = this.controlOutcome(error, runId, action === "pause" ? "paused" : "resumed");
+		} finally {
+			this.controlBusy = false;
+			this.options.requestRender();
+		}
+	}
+
+	/**
+	 * Turn a control failure into a user-facing line. When the run settled while
+	 * the control was in flight, the failure is informational rather than an
+	 * error because the outcome the user wanted (the run is gone) already holds.
+	 */
+	private controlOutcome(error: unknown, runId: string, verb: string): AttachSteerStatus {
+		if (this.isReadOnly) return { kind: "info", text: `Run ${runId} already settled; it was not ${verb}.` };
+		return { kind: "error", text: error instanceof Error ? error.message : String(error) };
 	}
 
 	invalidate(): void {
@@ -353,20 +481,25 @@ export class AttachView implements Component, Focusable {
 		}
 		const follow = this.viewport.isFollowing ? "following" : "scrolled";
 		const expand = this.expanded ? "collapse" : "expand";
-		const help = `Esc detach · Enter steer · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`;
+		const controls = this.hasControls ? " · p pause · r resume · a stop" : "";
+		const help = `Esc detach · Enter steer${controls} · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`;
 		return truncateToWidth(theme.fg("dim", help), width, "…");
 	}
 
 	private renderStatusLines(width: number, readOnly: boolean): string[] {
+		const lines: string[] = [];
+		if (this.controlStatus) lines.push(this.renderStatus(this.controlStatus, width));
+		if (this.steerStatus) lines.push(this.renderStatus(this.steerStatus, width));
+		if (lines.length === 0 && readOnly) lines.push(truncateToWidth(this.options.theme.fg("dim", "run settled · read-only"), width, "…"));
+		return lines;
+	}
+
+	private renderStatus(status: AttachSteerStatus, width: number): string {
 		const theme = this.options.theme;
-		if (this.steerStatus) {
-			const { kind, text } = this.steerStatus;
-			const color = kind === "error" ? "error" : kind === "success" ? "success" : "muted";
-			const glyph = kind === "error" ? "✗ " : kind === "success" ? "✓ " : "… ";
-			return [truncateToWidth(theme.fg(color, `${glyph}${text}`), width, "…")];
-		}
-		if (readOnly) return [truncateToWidth(theme.fg("dim", "run settled · read-only"), width, "…")];
-		return [];
+		const { kind, text } = status;
+		const color = kind === "error" ? "error" : kind === "success" ? "success" : "muted";
+		const glyph = kind === "error" ? "✗ " : kind === "success" ? "✓ " : "… ";
+		return truncateToWidth(theme.fg(color, `${glyph}${text}`), width, "…");
 	}
 
 	private renderEditor(width: number, readOnly: boolean): string[] {
@@ -419,8 +552,13 @@ export class AttachView implements Component, Focusable {
 				if (!preview) return [];
 				return this.wrap(theme.fg(block.isError ? "error" : "dim", `  ↳ ${preview}`), width);
 			}
-			case "approval":
-				return this.wrap(theme.fg("warning", `⏸ approval (${block.state}): ${block.title}`), width);
+			case "approval": {
+				const pending = block.state === "pending";
+				const denied = block.state === "denied";
+				const color = pending ? "warning" : denied ? "error" : "success";
+				const glyph = pending ? "⏸" : denied ? "⊘" : "✓";
+				return this.wrap(theme.fg(color, `${glyph} approval (${block.state}): ${block.title}`), width);
+			}
 			case "diagnostic":
 				return this.wrap(theme.fg("warning", `⚠ ${block.text}`), width);
 			case "status":

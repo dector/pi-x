@@ -12,6 +12,9 @@ const END = "\x1b[F";
 const ENTER = "\r";
 const CTRL_O = "\x0f";
 const CTRL_ENTER = "\x1b[13;5u";
+const PAUSE_KEY = "p";
+const RESUME_KEY = "r";
+const STOP_KEY = "a";
 const IME_TEXT = "日本語のテキスト";
 
 const passthroughTheme = {
@@ -115,6 +118,10 @@ function makeView(options: {
 	onRender?: () => void;
 	editor?: AttachEditor;
 	steer?: (runId: string, message: string) => Promise<void>;
+	pause?: (runId: string) => Promise<void>;
+	resume?: (runId: string) => Promise<void>;
+	stop?: (runId: string) => Promise<void>;
+	confirmStop?: (run: { runId: string; agentName: string }) => Promise<boolean>;
 } = {}) {
 	const result = options.result ?? makeResult();
 	const startedAt = Date.now() - 42_000;
@@ -129,6 +136,10 @@ function makeView(options: {
 		timers: options.timers,
 		editor: options.editor,
 		steer: options.steer,
+		pause: options.pause,
+		resume: options.resume,
+		stop: options.stop,
+		confirmStop: options.confirmStop,
 	});
 	return { view, result };
 }
@@ -267,6 +278,21 @@ describe("AttachView", () => {
 		expect(fake.inputs).toEqual([IME_TEXT]);
 	});
 
+	test("restores editor focus when the TUI reclaims the overlay after an approval dialog", () => {
+		// A focused visible overlay reclaims input after a temporary non-overlay
+		// dialog closes (docs/tui.md "Overlay Focus"); the view only has to mirror
+		// that focus change onto the embedded editor for IME positioning.
+		const fake = makeFakeEditor();
+		const { view } = makeView({ editor: fake.editor });
+		view.focused = true;
+		view.handleInput(ENTER);
+		expect(fake.editor.focused).toBe(true);
+		view.focused = false; // approval dialog takes focus
+		expect(fake.editor.focused).toBe(false);
+		view.focused = true; // overlay reclaims focus when the dialog closes
+		expect(fake.editor.focused).toBe(true);
+	});
+
 	test("steer sends the correct run ID and message and shows success inline", async () => {
 		const fake = makeFakeEditor();
 		const calls: Array<{ runId: string; message: string }> = [];
@@ -343,5 +369,141 @@ describe("AttachView", () => {
 		expect(steered).toBe(0);
 		expect(view.lastSteerStatus?.kind).toBe("error");
 		expect(fake.editor.disableSubmit).toBe(true);
+	});
+
+	test("p and r run the native pause/resume controls for the captured run", async () => {
+		const calls: string[] = [];
+		const { view } = makeView({
+			pause: (runId) => {
+				calls.push(`pause:${runId}`);
+				return Promise.resolve();
+			},
+			resume: (runId) => {
+				calls.push(`resume:${runId}`);
+				return Promise.resolve();
+			},
+		});
+		view.handleInput(PAUSE_KEY);
+		await flush();
+		expect(calls).toEqual(["pause:sa-abc123"]);
+		expect(view.lastControlStatus?.kind).toBe("success");
+		expect(view.lastControlStatus?.text).toContain("Paused");
+
+		view.handleInput(RESUME_KEY);
+		await flush();
+		expect(calls).toEqual(["pause:sa-abc123", "resume:sa-abc123"]);
+		expect(view.lastControlStatus?.text).toContain("Resumed");
+	});
+
+	test("a confirms then stops, and cancellation never calls stop", async () => {
+		const stops: string[] = [];
+		let confirmed = false;
+		const { view } = makeView({
+			stop: (runId) => {
+				stops.push(runId);
+				return Promise.resolve();
+			},
+			confirmStop: () => Promise.resolve(confirmed),
+		});
+		view.handleInput(STOP_KEY);
+		await flush();
+		expect(stops).toEqual([]);
+		expect(view.lastControlStatus?.kind).toBe("info");
+		expect(view.lastControlStatus?.text).toContain("cancelled");
+
+		confirmed = true;
+		view.handleInput(STOP_KEY);
+		await flush();
+		expect(stops).toEqual(["sa-abc123"]);
+		expect(view.lastControlStatus?.kind).toBe("success");
+		expect(view.lastControlStatus?.text).toContain("Stopped");
+	});
+
+	test("control failures are shown inline and re-enable the controls", async () => {
+		const { view } = makeView({
+			pause: () => Promise.reject(new Error("child is gone")),
+		});
+		view.handleInput(PAUSE_KEY);
+		await flush();
+		expect(view.lastControlStatus?.kind).toBe("error");
+		expect(view.lastControlStatus?.text).toContain("child is gone");
+		expect(view.isControlBusy).toBe(false);
+	});
+
+	test("a control in flight is not re-entered", async () => {
+		let resolvePause: (() => void) | undefined;
+		let pauses = 0;
+		const { view } = makeView({
+			pause: () => {
+				pauses += 1;
+				return new Promise<void>((resolve) => {
+					resolvePause = resolve;
+				});
+			},
+		});
+		view.handleInput(PAUSE_KEY);
+		expect(view.isControlBusy).toBe(true);
+		view.handleInput(PAUSE_KEY);
+		expect(pauses).toBe(1);
+		resolvePause?.();
+		await flush();
+		expect(view.isControlBusy).toBe(false);
+	});
+
+	test("a run that settles mid-control reports a settled notice, not an error", async () => {
+		let completedAt: number | undefined;
+		const result = makeResult();
+		const view = new AttachView({
+			getResult: () => result,
+			getRun: () => ({ runId: "sa-abc123", agentName: "worker", startedAt: Date.now() - 1000, completedAt }),
+			theme: passthroughTheme,
+			requestRender: () => {},
+			done: () => {},
+			pause: () => {
+				completedAt = Date.now();
+				result.state = "settled";
+				result.exitCode = 0;
+				return Promise.reject(new Error("Run is no longer active"));
+			},
+		});
+		view.handleInput(PAUSE_KEY);
+		await flush();
+		expect(view.lastControlStatus?.kind).toBe("info");
+		expect(view.lastControlStatus?.text).toContain("already settled");
+		expect(view.isReadOnly).toBe(true);
+	});
+
+	test("settled runs ignore pause/resume/stop keys", async () => {
+		const calls: string[] = [];
+		const { view } = makeView({
+			result: makeResult({ exitCode: 0, state: "settled" }),
+			completedAt: Date.now() - 1000,
+			pause: (runId) => {
+				calls.push(`pause:${runId}`);
+				return Promise.resolve();
+			},
+			resume: (runId) => {
+				calls.push(`resume:${runId}`);
+				return Promise.resolve();
+			},
+			stop: (runId) => {
+				calls.push(`stop:${runId}`);
+				return Promise.resolve();
+			},
+		});
+		view.handleInput(PAUSE_KEY);
+		view.handleInput(RESUME_KEY);
+		view.handleInput(STOP_KEY);
+		await flush();
+		expect(calls).toEqual([]);
+	});
+
+	test("renders pending and resolved approval blocks", () => {
+		const { result, view } = makeView();
+		result.resolvedApprovals = [{ requestId: "r1", method: "confirm", title: "Write file?", state: "approved" }];
+		result.pendingApproval = { requestId: "r2", method: "confirm", title: "Run command?" };
+		const text = view.render(80).join("\n");
+		expect(text).toContain("approval (approved): Write file?");
+		expect(text).toContain("approval (pending): Run command?");
 	});
 });

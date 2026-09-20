@@ -61,6 +61,24 @@ test("registry notifies on start and on each completion", () => {
 	expect(changes).toEqual([1, 2, 1, 0]);
 });
 
+test("pruning drops the registry entry but a retained run object stays readable", async () => {
+	const registry = new SubagentRegistry(1);
+	const retained = runWithChild("sa-retained", stubChild(() => ({ type: "response", command: "steer", success: true })));
+	registry.start(retained);
+	registry.complete("sa-retained");
+	const newer = run("sa-new");
+	registry.start(newer);
+	registry.complete("sa-new");
+
+	expect(registry.get("sa-retained")).toBeUndefined();
+	expect(registry.get("sa-new")).toBeDefined();
+	// The object an attached view captured still carries its result and timing.
+	expect(retained.result.task).toBe("sa-retained");
+	expect(retained.completedAt).toBeGreaterThan(0);
+	// Controls on a settled retained run fail precisely instead of panicking.
+	await expect(sendControl(retained, "pause")).rejects.toThrow("no longer active");
+});
+
 test("sendSteer sends the native steer command and surfaces child rejection", async () => {
 	const seen: RpcCommand[] = [];
 	const run = runWithChild(

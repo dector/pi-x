@@ -99,6 +99,39 @@ describe("buildTranscript", () => {
 		expect(types(buildTranscript(result))).toEqual(["task", "approval", "diagnostic", "status"]);
 	});
 
+	test("emits resolved approvals in order before a pending approval", () => {
+		const result = makeResult({
+			resolvedApprovals: [
+				{ requestId: "r1", method: "confirm", title: "Write file?", state: "approved" },
+				{ requestId: "r2", method: "select", title: "Run command?", state: "denied" },
+			],
+			pendingApproval: { requestId: "r3", method: "input", title: "Commit message?" },
+		});
+		const blocks = buildTranscript(result);
+		expect(types(blocks)).toEqual(["task", "approval", "approval", "approval"]);
+		expect(blocks.slice(1)).toMatchObject([
+			{ type: "approval", title: "Write file?", state: "approved", method: "confirm" },
+			{ type: "approval", title: "Run command?", state: "denied", method: "select" },
+			{ type: "approval", title: "Commit message?", state: "pending", method: "input" },
+		]);
+	});
+
+	test("falls back to the method for missing resolved approval titles and skips malformed entries", () => {
+		const result = makeResult({
+			resolvedApprovals: [
+				null,
+				"nope",
+				{ requestId: "r1", method: "confirm", state: "approved" },
+				{ requestId: "r2", method: "", title: "", state: "nonsense" },
+			] as never,
+		});
+		const approvals = buildTranscript(result).filter((block) => block.type === "approval");
+		expect(approvals).toMatchObject([
+			{ title: "confirm", state: "approved", method: "confirm" },
+			{ title: "approval", state: "approved", method: "approval" },
+		]);
+	});
+
 	test("tolerates malformed messages and content", () => {
 		const result = makeResult({
 			messages: [null, {}, { role: "assistant" }, { role: "assistant", content: "nope" }, { role: "toolResult" }] as never,

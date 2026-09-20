@@ -54,9 +54,10 @@ function toolRunFor(result: SingleResult, toolCallId: string): { status: ToolRun
  *
  * Assistant text/thinking/tool-call parts are emitted in message order. Tool
  * results are emitted as their own blocks immediately after the message that
- * produced them, paired with the tool call id when available. A pending
- * approval, diagnostics, a terminal error, and finally the in-progress
- * `liveText` are appended so the transcript stays useful mid-stream.
+ * produced them, paired with the tool call id when available. Answered
+ * approvals, a pending approval, diagnostics, a terminal error, and finally the
+ * in-progress `liveText` are appended so the transcript stays useful
+ * mid-stream.
  */
 export function buildTranscript(result: SingleResult, options: BuildTranscriptOptions = {}): TranscriptBlock[] {
 	const blocks: TranscriptBlock[] = [];
@@ -104,6 +105,18 @@ export function buildTranscript(result: SingleResult, options: BuildTranscriptOp
 				});
 			}
 		}
+	}
+
+	for (const approval of result.resolvedApprovals ?? []) {
+		if (!isRecord(approval)) continue;
+		const method = typeof approval.method === "string" && approval.method.length > 0 ? approval.method : "approval";
+		const title = typeof approval.title === "string" && approval.title.length > 0 ? approval.title : method;
+		blocks.push({
+			type: "approval",
+			title,
+			state: approval.state === "denied" ? "denied" : "approved",
+			method,
+		});
 	}
 
 	if (result.pendingApproval) {

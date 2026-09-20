@@ -4,6 +4,14 @@ import type { AgentConfig, AgentScope } from "./agents.ts";
 import type { SafeMode, SafeModeSnapshot } from "./safe-mode.ts";
 import type { SubagentTiming } from "./timing.ts";
 
+/** A child approval request and how the user answered it. */
+export interface ResolvedApproval {
+	requestId: string;
+	method: string;
+	title?: string;
+	state: "approved" | "denied";
+}
+
 export interface UsageStats {
 	input: number;
 	output: number;
@@ -101,6 +109,12 @@ export interface SingleResult {
 	activeTool?: string;
 	toolRuns?: ToolRunRecord[];
 	pendingApproval?: { requestId: string; method: string; title?: string };
+	/**
+	 * Approvals already answered during this run, oldest first. Kept separate
+	 * from `pendingApproval` so the attach transcript can show that an approval
+	 * happened after the dialog closes. Bounded by the UI request cap.
+	 */
+	resolvedApprovals?: ResolvedApproval[];
 	timing?: SubagentTiming;
 }
 
