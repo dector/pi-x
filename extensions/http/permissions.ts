@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-const READ_ONLY_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const HTTP_PERMISSION_TOOLS = new Set(["http", "http_md", "web_search"]);
 
 export type HttpPermissionAction = "allow" | "confirm" | "block";
@@ -23,11 +22,25 @@ export function isHttpPermissionTool(toolName: string): boolean {
 }
 
 /**
- * Classify an `http`/`http_md`/`web_search` tool call for safe-mode.
- * Moved out of safe-mode so the http extension owns its own risk rules.
- * `paranoid` is handled globally by safe-mode before this runs.
+ * A MemoryFS-only read never touches the network. The caller must skip the
+ * `perm:net` request entirely for these calls.
  */
-export function classifyHttpToolCall(args: HttpPermissionInput): HttpPermissionDecision | undefined {
+export function isMemoryFsReadToolCall(toolName: string, input: Record<string, unknown>): boolean {
+	if (!HTTP_PERMISSION_TOOLS.has(toolName)) return false;
+	if (!input.memfs || typeof input.memfs !== "object") return false;
+	return Object.entries(input).every(([key, value]) => key === "memfs" || value === undefined);
+}
+
+/**
+ * Classify the non-network (filesystem/output-file) concerns of an
+ * `http`/`http_md`/`web_search` tool call.
+ *
+ * Returns `undefined` when the call has no filesystem opinion, meaning the
+ * caller must rely on the `perm:net` decision alone. Network disposition
+ * (read-only method trust, policy) is owned by permissions-core and is
+ * deliberately not duplicated here.
+ */
+export function classifyHttpFilesystemCall(args: HttpPermissionInput): HttpPermissionDecision | undefined {
 	const { toolName, input, mode, projectRoot } = args;
 	if (!HTTP_PERMISSION_TOOLS.has(toolName)) return undefined;
 
@@ -51,58 +64,7 @@ export function classifyHttpToolCall(args: HttpPermissionInput): HttpPermissionD
 		}
 	}
 
-	if (mode === "yolo") return { action: "allow" };
-
-	if ((toolName === "http" || toolName === "http_md") && !isReadOnlyHttpMethod(input)) {
-		return { action: "confirm", reason: "HTTP auto-approval is limited to GET, HEAD, and OPTIONS." };
-	}
-
-	if (isReadOnlyHttpToolCall(toolName, input)) return { action: "allow" };
-	if (isReadOnlyWebSearchToolCall(toolName, input)) return { action: "allow" };
-
-	return { action: "confirm", reason: "HTTP operation requires approval." };
-}
-
-function isReadOnlyHttpToolCall(toolName: string, input: Record<string, unknown>): boolean {
-	return (toolName === "http" || toolName === "http_md") && isReadOnlyHttpMethod(input);
-}
-
-function isReadOnlyWebSearchToolCall(toolName: string, input: Record<string, unknown>): boolean {
-	if (toolName !== "web_search") return false;
-	if (input.query !== undefined && typeof input.query !== "string") return false;
-	return true;
-}
-
-function isMemoryFsReadToolCall(toolName: string, input: Record<string, unknown>): boolean {
-	if (toolName !== "http" && toolName !== "http_md" && toolName !== "web_search") return false;
-	if (!input.memfs || typeof input.memfs !== "object") return false;
-	return Object.entries(input).every(([key, value]) => key === "memfs" || value === undefined);
-}
-
-function isReadOnlyHttpMethod(input: Record<string, unknown>): boolean {
-	return READ_ONLY_HTTP_METHODS.has(getHttpMethod(input));
-}
-
-function getHttpMethod(input: Record<string, unknown>): string {
-	const structuredMethod = typeof input.method === "string" ? input.method.trim() : "";
-	const curlMethod = getCurlRequestMethod(input);
-	return (curlMethod || structuredMethod || "GET").toUpperCase();
-}
-
-function getCurlRequestMethod(input: Record<string, unknown>): string | undefined {
-	const curlArgs = getCurlArgs(input);
-	if (!curlArgs) return undefined;
-
-	let hasDataBody = false;
-	for (let i = 0; i < curlArgs.length; i += 1) {
-		const arg = curlArgs[i]!;
-		if (arg === "-X" || arg === "--request") return curlArgs[i + 1]?.trim();
-		if (arg.startsWith("-X") && arg.length > 2) return arg.slice(2).trim();
-		if (arg.startsWith("--request=")) return arg.slice("--request=".length).trim();
-		if (arg === "-d" || arg === "--data" || arg === "--data-raw" || arg === "--data-binary") hasDataBody = true;
-	}
-
-	return hasDataBody ? "POST" : undefined;
+	return undefined;
 }
 
 function getHttpOutputFile(input: Record<string, unknown>): string | undefined {

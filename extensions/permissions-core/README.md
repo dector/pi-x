@@ -7,7 +7,9 @@ and the local event bus.
 
 Stage 2 status: loadable, provides `perm:net` through the hub, persists the
 configured policy per session, observes safe-mode, and exposes a validated
-state contract. HTTP enforcement and UI arrive in later stages.
+state contract. Stage 3 connects the `http`, `http_md`, and `web_search` tools
+to this provider; the `/px:net` UI and status-bar rendering arrive in later
+stages.
 
 ## Model
 
@@ -78,11 +80,12 @@ Guarantees:
 
 `safe-mode` no longer advertises `perm:net`; only permissions-core answers it.
 
-Stage 2 returns `confirm` but nothing consumes it yet. Stage 3 (HTTP
-enforcement) must turn an effective `confirm` into `block` with a clear reason
-when no UI is available, before/while routing `http`, `http_md`, and
-`web_search` through `perm:net`. HTTP enforcement is intentionally not part of
-Stage 2.
+Stage 3 routes `http`, `http_md`, and `web_search` through this provider. An
+effective `confirm` becomes a `block` when no UI is available, and the HTTP
+extension additionally requires a one-time execution authorization from
+safe-mode (see [`../http/README.md`](../http/README.md)). Without safe-mode's
+final allow/user-approval handoff, no network request executes. The `/px:net`
+UI and status-bar rendering arrive in later stages.
 
 ## State contract and persistence
 

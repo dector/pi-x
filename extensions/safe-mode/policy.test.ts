@@ -66,6 +66,34 @@ test("decideToolCall: provider summary is used when present", () => {
 	expect(withoutSummary.summary).toBe("sqlite");
 });
 
+test("decideToolCall: provider block survives paranoid", () => {
+	const blocked = decideToolCall({
+		mode: "paranoid",
+		toolName: "http",
+		input: { url: "https://example.com" },
+		projectRoot: PROJECT_ROOT,
+		outerAccess: false,
+		providerDecision: { action: "block", reason: "Invalid or unsupported HTTP request." },
+	});
+	expect(blocked.action).toBe("block");
+	expect(blocked.reason).toBe("Invalid or unsupported HTTP request.");
+});
+
+test("decideToolCall: paranoid still asks for provider allow/confirm", () => {
+	for (const action of ["allow", "confirm"] as const) {
+		const decision = decideToolCall({
+			mode: "paranoid",
+			toolName: "http",
+			input: { url: "https://example.com" },
+			projectRoot: PROJECT_ROOT,
+			outerAccess: false,
+			providerDecision: { action, reason: "provider said so", summary: "GET https://example.com" },
+		});
+		expect(decision.action).toBe("confirm");
+		expect(decision.summary).toBe("GET https://example.com");
+	}
+});
+
 test("git classifier: normalize + classify", () => {
 	expect(normalizeGitToolArgs({})).toEqual([]);
 	expect(normalizeGitToolArgs({ args: [" status "] })).toEqual(["status"]);

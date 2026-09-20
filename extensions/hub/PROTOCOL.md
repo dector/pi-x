@@ -60,11 +60,33 @@ disposes it under the effective network policy. Malformed data blocks; invalid
 input is never turned into an approval prompt. Provider ownership of `perm:net`
 moved from `safe-mode` to `permissions-core` in Stage 2.
 
-Stage 2 answers `confirm` but does not consume it: there is no network UI yet.
-Stage 3 (HTTP enforcement) must convert an effective `confirm` into `block` with
-a clear reason whenever no UI is available, and only then route HTTP,
-`http_md`, and `web_search` through `perm:net`. Do not implement HTTP
-enforcement in Stage 2.
+Stage 3 routes `http`, `http_md`, and `web_search` through `perm:net`. The HTTP
+extension asks `perm:net` from inside its `perm:tool` provider and returns the
+merged (most restrictive) result to safe-mode, which owns the approval dialog
+and turns `confirm` into a block when no UI is available. Provider absence,
+timeouts, and malformed answers fail closed.
+
+Because the nested classification flow only runs when safe-mode and the hub are
+both present, enforcement happens again at execution time through a one-time
+authorization handoff:
+
+- `perm:tool` data includes `toolCallId` (`ToolCallEvent.toolCallId`).
+- The capability consumer revokes any stale ticket for the id, classifies, and
+  stores a pending ticket only after the complete classification when the
+  merged result is `allow`/`confirm`, immediately before its provider reply. A
+  merged `block` stores nothing.
+- After safe-mode's *final* decision is `allow` (provider allow or a successful
+  user approval) it emits `px:safe-mode:tool-authorized`
+  `{ toolCallId, toolName, source: "safe-mode" }`. A provider `allow` alone
+  never authorizes; hub arbitration, PARANOID, outer-access confirmation,
+  denial, or a non-interactive block all still prevent execution.
+- Each actual network execute consumes and validates the matching ticket once
+  before fetching. Missing hub, missing safe-mode, timeout, denied/non-UI
+  confirmation, replay, or changed params fail closed.
+- Because the ticket is stored only immediately before the reply, a safe-mode
+  timeout fallback emitted while classification is still in flight is missed;
+  the late ticket stays unauthorized. A fallback allow also no longer emits the
+  handoff at all.
 
 `perm:agent`
 
@@ -72,11 +94,19 @@ enforcement in Stage 2.
 { agents: string; source: string; cwd?: string }
 ```
 
+When safe-mode builds the approval prompt it sanitizes the interpolated
+`agents` and `source` text (control characters removed, URL userinfo redacted)
+so repo-controlled data cannot inject terminal escapes or leak credentials.
+
 `perm:tool`
 
 ```ts
-{ toolName: string; input: Record<string, unknown>; mode: string; projectRoot: string; outerAccess: boolean; trustedReadRoots?: string[] }
+{ toolCallId: string; toolName: string; input: Record<string, unknown>; mode: string; projectRoot: string; outerAccess: boolean; trustedReadRoots?: string[] }
 ```
+
+`toolCallId` is the runtime tool call id. Capability consumers may use it to
+correlate a one-time execution authorization with the preflight decision (see
+`px:safe-mode:tool-authorized` below).
 
 `perm:tool` providers **classify only** and must answer quickly. Prompting is
 left to the requester (`safe-mode`), which treats a `confirm` result as its
@@ -91,6 +121,29 @@ when no `perm:tool` provider is registered.
 requester ──hub:ask──> hub ──hub:request──> provider
 requester <──hub:answer── hub <──hub:reply── provider
 ```
+
+## One-time execution authorization
+
+Classification is advisory until a consumer enforces it. Extensions that
+perform a sensitive side effect (for example outbound network requests) must
+not trust a `perm:tool` `allow` by itself, because arbitration and safe-mode
+policy run after the provider answers.
+
+Safe-mode emits a separate, narrowly validated event once it reaches a final
+allow or a user approval:
+
+| channel | direction | payload |
+| --- | --- | --- |
+| `px:safe-mode:tool-authorized` | safe-mode → consumers | `{ toolCallId, toolName, source: "safe-mode" }` |
+
+The consumer revokes any stale ticket for the id, stores a pending ticket only
+after the full classification and only for an `allow`/`confirm` result
+(immediately before the provider reply), marks it authorized on this event, and
+consumes it exactly once at execution after re-validating the arguments. No
+event (blocked, denied, non-interactive, timed out) means execution fails
+closed. Consumers must require `source: "safe-mode"` so another extension
+cannot forge a handoff. Authorizing refreshes the ticket TTL. Tickets must be
+bounded and reset per session.
 
 ## Arbitration
 

@@ -94,6 +94,27 @@ So in `reader`/`smart`, read-only sqlite queries can auto-allow (subject to oute
 - `http` file output (`outputFile`, `curlArgs` `-o`, or `curlArgs` `--output`) requires approval in `reader`/`smart`.
 - In `yolo`, `http` file output is allowed only inside the project root; outside-project output still requires approval, including in `YOLO!`.
 
+### Execution authorization handoff
+
+`safe-mode` uses the hub `perm:tool` provider only to classify. To make sure a
+provider `allow` cannot outlive safe-mode's own policy, safe-mode emits a
+one-time `px:safe-mode:tool-authorized` event
+(`{ toolCallId, toolName, source: "safe-mode" }`) only after its final
+decision is an allow or the user approves. The `http` capability requires the
+`safe-mode` source, consumes the event at execution time, and blocks without it.
+This also covers hub absence, timeouts, denied/non-UI prompts, and changed
+arguments.
+
+A built-in allow that only happened because the hub timed out does **not** emit
+the handoff. Combined with the consumer storing its ticket only immediately
+before the provider reply, a timeout-fallback authorization can never authorize
+a late ticket.
+
+Under `paranoid`, a provider `block` stays a `block` (invalid or denied
+requests are never converted into an approval prompt); provider `allow` and
+`confirm` are still overridden to ask. See
+[`../hub/PROTOCOL.md`](../hub/PROTOCOL.md).
+
 ## Auto-approval matrix
 
 Legend: ✅ auto-allow, ❓ asks for approval.

@@ -17,8 +17,10 @@ import {
 } from "./policy";
 import {
 	SAFE_MODE_STATE_EVENTS,
+	TOOL_AUTHORIZED_EVENT,
 	parseSafeModeStateRequest,
 	parseSafeModeStateSet,
+	parseToolAuthorized,
 	type SafeModeStateChanged,
 } from "./contract.ts";
 
@@ -376,10 +378,21 @@ function getPersistedStateFromBranch(ctx: ExtensionContext): Partial<SafeModeSta
 	return { mode, outerAccess };
 }
 
+// C0/C1 controls except newline/tab, plus URL userinfo. Approval prompts must
+// not render terminal control sequences or echo embedded credentials.
+const APPROVAL_CONTROL_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+const APPROVAL_URL_USERINFO_PATTERN = /(\/\/)[^/@\s]*@/g;
+
+function sanitizeApprovalText(value: string): string {
+	return value
+		.replace(APPROVAL_CONTROL_PATTERN, " ")
+		.replace(APPROVAL_URL_USERINFO_PATTERN, "$1[redacted]@");
+}
+
 function getToolRequestText(toolName: string, input: Record<string, unknown>, summaryOverride?: string): string {
 	if (toolName === "bash") {
 		const command = typeof input.command === "string" ? input.command.trim() : "";
-		return command.length > 0 ? command : "(empty command)";
+		return sanitizeApprovalText(command.length > 0 ? command : "(empty command)");
 	}
 
 	if (toolName === "commit") {
@@ -391,20 +404,20 @@ function getToolRequestText(toolName: string, input: Record<string, unknown>, su
 			: [];
 		const message = typeof input.message === "string" ? input.message.trim() : "";
 		const fileLines = files.length > 0 ? files.map((file) => `- ${file}`).join("\n") : "- (none)";
-		return `message: ${message || "(empty)"}\nfiles:\n${fileLines}`;
+		return sanitizeApprovalText(`message: ${message || "(empty)"}\nfiles:\n${fileLines}`);
 	}
 
 	const summary = summaryOverride ?? describeToolCall(toolName, input);
 	const prefix = `${toolName}: `;
 	if (summary.startsWith(prefix)) {
-		return summary.slice(prefix.length);
+		return sanitizeApprovalText(summary.slice(prefix.length));
 	}
 
 	if (summary !== toolName) {
-		return summary;
+		return sanitizeApprovalText(summary);
 	}
 
-	return Object.keys(input).length > 0 ? JSON.stringify(input, null, 2) : "(no arguments)";
+	return Object.keys(input).length > 0 ? sanitizeApprovalText(JSON.stringify(input, null, 2)) : "(no arguments)";
 }
 
 function getExactBashCommand(input: Record<string, unknown>): string | undefined {
@@ -817,6 +830,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		toolName: string,
 		input: Record<string, unknown>,
 		projectRoot: string,
+		toolCallId: string,
 	): Promise<{ action: HubAction; reason?: string; summary?: string } | undefined> => {
 		const id = `safe-mode-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -863,24 +877,26 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				from: HUB_ID,
 				cap: [{
 					what: PERM_TOOL,
-					data: { toolName, input, mode, projectRoot, outerAccess, trustedReadRoots: getTrustedReadRoots() },
+					data: { toolName, input, mode, projectRoot, outerAccess, toolCallId, trustedReadRoots: getTrustedReadRoots() },
 				}],
 			});
 		});
 	};
 
 	// Built-in policy is the fallback; a hub `perm:tool` provider is authoritative
-	// for its tools.
+	// for its tools. `hasProviderDecision` is false when the provider was absent
+	// or the ask timed out and the built-in policy decided instead.
 	const decideToolCallWithHub = async (
 		toolName: string,
 		input: Record<string, unknown>,
 		ctx: ExtensionContext,
+		toolCallId: string,
 	) => {
-		const hub = await askHubForToolDecision(toolName, input, ctx.cwd);
+		const hub = await askHubForToolDecision(toolName, input, ctx.cwd, toolCallId);
 		const hasProviderDecision =
 			hub !== undefined && hub.reason !== "no hub provider" && hub.reason !== "no provider answered";
 
-		return decideToolCall({
+		const decision = decideToolCall({
 			mode,
 			toolName,
 			input,
@@ -889,6 +905,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			trustedReadRoots: getTrustedReadRoots(),
 			providerDecision: hasProviderDecision ? hub : undefined,
 		});
+		return { decision, hasProviderDecision };
 	};
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -1362,8 +1379,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 			const rawData = (item as { data?: unknown }).data;
 			const data = typeof rawData === "object" && rawData !== null ? (rawData as Record<string, unknown>) : {};
-			const agents = typeof data.agents === "string" ? data.agents : "project agents";
-			const source = typeof data.source === "string" ? data.source : "(unknown)";
+			const agents = sanitizeApprovalText(typeof data.agents === "string" ? data.agents : "project agents");
+			const source = sanitizeApprovalText(typeof data.source === "string" ? data.source : "(unknown)");
 
 			const decision = await withHerdrBlocked("safe-mode approval: perm:agent", () =>
 				confirmApproval(
@@ -1388,11 +1405,22 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		refreshTrustedSkillReadRootsFromSkills(skills);
 	});
 
+	// Emit the one-time execution handoff only when the final decision is allow
+	// (provider allow or a successful user approval). Capability consumers use
+	// this to authorize the exact preflighted request; blocked, denied, non-UI,
+	// timed-out, or changed calls never reach here.
+	function authorizeToolCall(toolCallId: unknown, toolName: unknown): void {
+		const payload = parseToolAuthorized({ toolCallId, toolName, source: "safe-mode" });
+		if (!payload) return;
+		pi.events.emit(TOOL_AUTHORIZED_EVENT, payload);
+	}
+
 	pi.on("tool_call", async (event, ctx) => {
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		const exactBashCommand = event.toolName === "bash" ? getExactBashCommand(input) : undefined;
 
 		if (exactBashCommand && autoApprovedBashCommandsForSession.has(exactBashCommand)) {
+			authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 
@@ -1405,12 +1433,23 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				autoApprovedAnyBashCommandsForProject,
 			)
 		) {
+			authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 
-		const decision = await decideToolCallWithHub(event.toolName, input, ctx);
+		const { decision, hasProviderDecision } = await decideToolCallWithHub(
+			event.toolName,
+			input,
+			ctx,
+			event.toolCallId,
+		);
 
-		if (decision.action === "allow") return;
+		if (decision.action === "allow") {
+			// A built-in fallback after a hub timeout must never authorize a
+			// capability consumer; only a real provider decision does.
+			if (hasProviderDecision) authorizeToolCall(event.toolCallId, event.toolName);
+			return;
+		}
 		if (decision.action === "block") {
 			return { block: true, reason: decision.reason ?? "Blocked by approval policy" };
 		}
@@ -1433,6 +1472,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);
 				ctx.ui.notify("safe-mode: remembered exact bash command for this session", "info");
 			}
+			if (hasProviderDecision) authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 
@@ -1446,10 +1486,12 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`safe-mode: failed to persist project allowlist (${String(error)})`, "warning");
 				}
 			}
+			if (hasProviderDecision) authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 
 		if (approval === "approve-once") {
+			if (hasProviderDecision) authorizeToolCall(event.toolCallId, event.toolName);
 			return;
 		}
 

@@ -25,7 +25,7 @@ Permissions are the first domain. See [`PROTOCOL.md`](PROTOCOL.md).
 Move per-tool risk rules from `safe-mode/policy.ts` to the owning extension,
 each registering as a `perm:tool` provider.
 
-- [x] `http` — `classifyHttpToolCall`
+- [x] `http` — non-network safeguards via `perm:tool`, network via `perm:net`
 - [ ] `git` — `classifyGitToolCall`
 - [x] `sqlite` — `classifySqliteToolCall`
 - [ ] `proc` — `classifyProcToolCall`

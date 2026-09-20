@@ -489,6 +489,10 @@ export function decideToolCall(args: {
 	const gitClassification = toolName === "git" ? classifyGitToolCall(input) : undefined;
 	const summary = gitClassification?.summary ?? providerDecision?.summary ?? describeToolCall(toolName, input);
 
+	if (providerDecision?.action === "block") {
+		return { action: "block", reason: providerDecision.reason, summary };
+	}
+
 	if (mode === "paranoid") {
 		return {
 			action: "confirm",
@@ -498,9 +502,6 @@ export function decideToolCall(args: {
 	}
 
 	if (providerDecision) {
-		if (providerDecision.action === "block") {
-			return { action: "block", reason: providerDecision.reason, summary };
-		}
 		if (!outerAccess && targetsOutsideProject(toolName, input, projectRoot)) {
 			if (!isTrustedOutsideReadAllowed({ mode, toolName, input, projectRoot, trustedReadRoots })) {
 				return {

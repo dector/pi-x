@@ -13,7 +13,18 @@ import {
 import { Type } from "@mariozechner/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { load as loadHtml } from "cheerio";
-import { classifyHttpToolCall, isHttpPermissionTool } from "./permissions";
+import {
+	classifyHttpFilesystemCall,
+	isHttpPermissionTool,
+	isMemoryFsReadToolCall,
+	type HttpPermissionDecision,
+} from "./permissions";
+import {
+	TOOL_AUTHORIZED_EVENT,
+	createAuthorizationStore,
+	fingerprintValue,
+	parseToolAuthorized,
+} from "./authorization";
 
 // hub permission protocol (see extensions/hub/PROTOCOL.md)
 const HUB_ID = "http";
@@ -21,7 +32,14 @@ const HUB_REGISTER_EVENT = "hub:register";
 const HUB_UNREGISTER_EVENT = "hub:unregister";
 const HUB_REQUEST_EVENT = "hub:request";
 const HUB_REPLY_EVENT = "hub:reply";
+const HUB_ASK_EVENT = "hub:ask";
+const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_CAPS = { provide: ["perm:tool"] };
+const PERM_NET = "perm:net";
+// Must stay below safe-mode's `HUB_TOOL_TIMEOUT_MS` (300ms) so a stalled
+// `perm:net` provider fails closed through safe-mode instead of falling back to
+// its built-in per-tool rules.
+const HUB_NET_TIMEOUT_MS = 250;
 
 const DEFAULT_WEB_TO_MD_MAX_BYTES = 12000;
 const WEB_TO_MD_BASE_DIR = "/tmp/pi-http";
@@ -495,6 +513,32 @@ function parseDuckDuckGoResults(html: string, page: number): { results: WebSearc
 	return { results, warnings };
 }
 
+// C0/C1 control characters plus DEL. Summaries are rendered into approval
+// prompts and tool rows, so they must never carry terminal control sequences.
+const CONTROL_CHARACTER_GLOBAL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/g;
+const URL_USERINFO_PATTERN = /(\/\/)[^/@\s]*@/g;
+
+/** Strip control characters, collapse whitespace, and bound summary text. */
+function sanitizeSummaryText(value: string, max = 200): string {
+	const collapsed = value.replace(CONTROL_CHARACTER_GLOBAL_PATTERN, " ").replace(/\s+/g, " ").trim();
+	if (collapsed.length <= max) return collapsed;
+	return `${collapsed.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** Strip URL userinfo so a summary can never echo embedded credentials. */
+function sanitizeSummaryUrl(url: string): string {
+	try {
+		const parsed = new URL(url);
+		if (!parsed.username && !parsed.password) return url;
+		parsed.username = "";
+		parsed.password = "";
+		return parsed.toString();
+	} catch {
+		// Invalid URLs cannot be parsed; redact anything that looks like userinfo.
+		return url.replace(URL_USERINFO_PATTERN, "$1[redacted]@");
+	}
+}
+
 function shortenForDisplay(value: string, max = 80): string {
 	if (value.length <= max) return value;
 	return `${value.slice(0, Math.max(0, max - 1))}…`;
@@ -518,19 +562,20 @@ function extractUrlFromCurlArgs(curlArgs?: string[]): string | undefined {
 
 function buildCallSummary(input: HttpBaseParamsInput): string {
 	if (input.memfs) {
-		return `memoryfs ${input.memfs.id} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
+		return `memoryfs ${sanitizeSummaryText(input.memfs.id)} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
 	}
-	const method = (input.method?.trim() || "GET").toUpperCase();
-	const url = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
-	if (!url) return method;
-	return `${method} ${shortenForDisplay(url)}`;
+	const method = sanitizeSummaryText(input.method?.trim() || "GET").toUpperCase();
+	const rawUrl = input.url?.trim() || extractUrlFromCurlArgs(input.curlArgs);
+	if (!rawUrl) return method;
+	const url = sanitizeSummaryText(sanitizeSummaryUrl(rawUrl));
+	return url ? `${method} ${shortenForDisplay(url)}` : method;
 }
 
 function buildWebSearchCallSummary(input: WebSearchToolParamsInput): string {
 	if (input.memfs) {
-		return `memoryfs ${input.memfs.id} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
+		return `memoryfs ${sanitizeSummaryText(input.memfs.id)} (offset ${input.memfs.offset ?? MEMORYFS_DEFAULT_READ_OFFSET}, limit ${input.memfs.limit ?? MEMORYFS_DEFAULT_READ_LIMIT})`;
 	}
-	const query = shortenForDisplay((input.query ?? "").trim() || "(empty query)");
+	const query = shortenForDisplay(sanitizeSummaryText((input.query ?? "").trim()) || "(empty query)");
 	const startPage = Number.isFinite(input.page) && (input.page ?? 0) > 0 ? Math.floor(input.page ?? 1) : DEFAULT_WEB_SEARCH_PAGE;
 	const pages = Number.isFinite(input.pages) && (input.pages ?? 0) > 0 ? Math.floor(input.pages ?? 1) : DEFAULT_WEB_SEARCH_PAGES;
 	if (pages <= 1) return `"${query}" (page ${startPage})`;
@@ -541,6 +586,18 @@ function summarizeHttpPermissionCall(toolName: string, input: Record<string, unk
 	const typed = input as HttpBaseParamsInput & WebSearchToolParamsInput;
 	if (toolName === "web_search") return buildWebSearchCallSummary(typed);
 	return buildCallSummary(typed);
+}
+
+/** Prompt summary built from the normalized request (effective method + URL). */
+function buildNetworkRequestSummary(
+	toolName: string,
+	input: Record<string, unknown>,
+	request: NetworkPermissionRequestData,
+): string {
+	if (toolName === "web_search") return buildWebSearchCallSummary(input as WebSearchToolParamsInput);
+	const method = sanitizeSummaryText(request.method ?? "GET").toUpperCase();
+	const url = request.url ? shortenForDisplay(sanitizeSummaryText(sanitizeSummaryUrl(request.url))) : "";
+	return url ? `${method} ${url}` : method;
 }
 
 const COLLAPSED_PREVIEW_LINES = 12;
@@ -1045,6 +1102,100 @@ function normalizeRequest(
 		: buildStructuredRequest(input, cwd, options);
 }
 
+type NetworkPermissionRequestData = {
+	toolName: "http" | "http_md" | "web_search";
+	operation: "request" | "search";
+	url?: string;
+	method?: string;
+	query?: string;
+};
+
+type NetworkPreflight = {
+	request: NetworkPermissionRequestData;
+	fingerprint: string;
+};
+
+/**
+ * Validate a tool call and build both the normalized `perm:net` request and a
+ * change-detection fingerprint over the full normalized operation. Reuses the
+ * exact normalization used for execution, so the method/URL the policy sees is
+ * the one that will be sent. Throws on invalid input; callers block and do not
+ * store a ticket.
+ */
+function buildNetworkPreflight(
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): NetworkPreflight | undefined {
+	if (toolName === "web_search") {
+		// Full validation here (including a non-empty query) so a malformed search
+		// never becomes a `perm:net` request or an approval prompt.
+		const normalized = normalizeWebSearchParams(input as WebSearchToolParamsInput);
+		return {
+			request: { toolName: "web_search", operation: "search", query: normalized.query },
+			fingerprint: fingerprintValue({
+				toolName,
+				query: normalized.query,
+				page: normalized.page,
+				pages: normalized.pages,
+				resultsPerPage: normalized.resultsPerPage,
+				timeoutSec: normalized.timeoutSec ?? null,
+				spillMode: normalized.spillMode,
+				followRedirects: normalized.followRedirects,
+			}),
+		};
+	}
+
+	if (toolName === "http" || toolName === "http_md") {
+		const request = normalizeRequest(input as HttpBaseParamsInput, cwd, {
+			allowOutputFile: toolName === "http",
+		});
+		// Normalize output-affecting options so invalid values block at preflight
+		// (never prompting) and so a changed option invalidates the fingerprint.
+		const spillMode = normalizeSpillMode(input.spillMode as string | undefined);
+		const webToMdMaxBytes =
+			toolName === "http_md" ? normalizeWebToMdMaxBytes(input.webToMdMaxBytes as number | undefined) : null;
+		return {
+			request: { toolName, operation: "request", url: request.url, method: request.method },
+			fingerprint: fingerprintValue({
+				toolName,
+				mode: request.mode,
+				url: request.url,
+				method: request.method,
+				headers: [...request.headers.entries()]
+					.map(([key, value]) => [key.toLowerCase(), value])
+					.sort((a, b) => (a[0]! < b[0]! ? -1 : a[0]! > b[0]! ? 1 : 0)),
+				body: request.body ?? null,
+				followRedirects: request.followRedirects,
+				includeResponseHeaders: request.includeResponseHeaders,
+				failOnHttpError: request.failOnHttpError,
+				timeoutSec: request.timeoutSec ?? null,
+				outputFile: request.outputFile ?? null,
+				spillMode,
+				webToMdMaxBytes,
+				cwd: resolve(cwd),
+			}),
+		};
+	}
+
+	return undefined;
+}
+
+const HTTP_ACTION_RANK: Record<HttpPermissionDecision["action"], number> = {
+	allow: 0,
+	confirm: 1,
+	block: 2,
+};
+
+/** Most-restrictive-wins merge of the filesystem and network decisions. */
+function mergeHttpDecisions(
+	filesystem: HttpPermissionDecision | undefined,
+	network: HttpPermissionDecision,
+): HttpPermissionDecision {
+	if (!filesystem) return network;
+	return HTTP_ACTION_RANK[network.action] > HTTP_ACTION_RANK[filesystem.action] ? network : filesystem;
+}
+
 async function executeHttpTool(input: HttpToolParamsInput, cwd: string, signal?: AbortSignal) {
 	if (input.memfs) {
 		assertMemfsExclusive(input as Record<string, unknown>);
@@ -1325,7 +1476,48 @@ async function executeMemoryFsRead(input: MemoryFsReadParamsInput) {
 }
 
 export default function httpExtension(pi: ExtensionAPI): void {
+	// One-time authorization tickets created during `perm:tool` preflight and
+	// consumed by the actual network execute. Bounded and session-scoped.
+	const preflightTickets = createAuthorizationStore();
+
+	// Execution-time gate. MemoryFS-only reads bypass the network entirely;
+	// everything else must present a preflighted, safe-mode-authorized ticket
+	// whose params did not change. Any failure throws (fail closed).
+	const assertNetworkAuthorized = (
+		toolCallId: string,
+		toolName: string,
+		input: Record<string, unknown>,
+		cwd: string,
+	): void => {
+		if (isMemoryFsReadToolCall(toolName, input)) return;
+
+		let fingerprint: string;
+		try {
+			const preflight = buildNetworkPreflight(toolName, input, cwd);
+			if (!preflight) throw new Error("unsupported tool");
+			fingerprint = preflight.fingerprint;
+		} catch {
+			throw new Error(`Blocked ${toolName} request: invalid or unsupported arguments.`);
+		}
+
+		const result = preflightTickets.consume(toolCallId, toolName, fingerprint);
+		if (!result.ok) {
+			throw new Error(`Blocked ${toolName} request: ${result.reason}.`);
+		}
+	};
+
+	// safe-mode emits this only after its final decision is allow or the user
+	// approves; HTTP's own provider decision never authorizes a ticket. Only the
+	// safe-mode source is trusted, so another extension cannot forge a handoff.
+	pi.events.on(TOOL_AUTHORIZED_EVENT, (payload) => {
+		const parsed = parseToolAuthorized(payload);
+		if (!parsed || parsed.source !== "safe-mode") return;
+		if (!isHttpPermissionTool(parsed.toolName)) return;
+		preflightTickets.authorize(parsed.toolCallId, parsed.toolName);
+	});
+
 	pi.on("session_before_switch", async (event) => {
+		preflightTickets.reset();
 		if (event.reason === "new") {
 			clearMemoryFs();
 		}
@@ -1354,7 +1546,8 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		renderResult(result, state, theme) {
 			return renderToolResultPreview(result, state, theme);
 		},
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+			assertNetworkAuthorized(toolCallId, "http", params as Record<string, unknown>, ctx.cwd);
 			return await executeHttpTool(params as HttpToolParamsInput, ctx.cwd, signal);
 		},
 	});
@@ -1382,7 +1575,8 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		renderResult(result, state, theme) {
 			return renderToolResultPreview(result, state, theme);
 		},
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+			assertNetworkAuthorized(toolCallId, "http_md", params as Record<string, unknown>, ctx.cwd);
 			return await executeHttpMarkdownTool(params as HttpMarkdownToolParamsInput, ctx.cwd, signal);
 		},
 	});
@@ -1410,24 +1604,132 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		renderResult(result, state, theme) {
 			return renderToolResultPreview(result, state, theme);
 		},
-		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+			assertNetworkAuthorized(toolCallId, "web_search", params as Record<string, unknown>, ctx.cwd);
 			return await executeWebSearchTool(params as WebSearchToolParamsInput, signal);
 		},
 	});
 
 	// Register as a hub `perm:tool` provider so safe-mode defers HTTP risk rules
-	// to this extension instead of hardcoding them.
+	// to this extension instead of hardcoding them. The provider combines
+	// separate filesystem/output-file safeguards with a `perm:net` decision from
+	// permissions-core; network trust and policy are not duplicated here.
 	const registerWithHub = (): void => {
 		pi.events.emit(HUB_REGISTER_EVENT, { id: HUB_ID, caps: HUB_CAPS });
 	};
 
-	pi.on("session_start", registerWithHub);
-	pi.on("session_tree", registerWithHub);
+	pi.on("session_start", () => {
+		preflightTickets.reset();
+		registerWithHub();
+	});
+	pi.on("session_tree", () => {
+		preflightTickets.reset();
+		registerWithHub();
+	});
 	pi.on("session_shutdown", () => {
+		preflightTickets.reset();
 		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
 	});
 
-	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
+	type NetDecision = { action: "allow" | "confirm" | "block"; reason?: string; summary?: string };
+
+	// Ask permissions-core for a `perm:net` decision. Resolves `undefined` when
+	// the provider is absent, the request times out, or the answer is malformed;
+	// callers must treat that as a fail-closed block. This nested ask is safe:
+	// the hub routes requests without holding locks and permissions-core never
+	// asks the hub itself, so it cannot recurse or deadlock.
+	const askHubForNetDecision = (data: NetworkPermissionRequestData): Promise<NetDecision | undefined> => {
+		const id = `http-net-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+		return new Promise((resolve) => {
+			let settled = false;
+			const finish = (result: NetDecision | undefined): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				off();
+				resolve(result);
+			};
+
+			const off = pi.events.on(HUB_ANSWER_EVENT, (payload) => {
+				if (typeof payload !== "object" || payload === null) return;
+				const answer = payload as { id?: unknown; results?: unknown };
+				if (answer.id !== id || !Array.isArray(answer.results)) return;
+
+				const match = answer.results.find(
+					(result) =>
+						typeof result === "object" && result !== null && (result as { what?: unknown }).what === PERM_NET,
+				) as { action?: unknown; reason?: unknown; summary?: unknown } | undefined;
+				if (!match || (match.action !== "allow" && match.action !== "confirm" && match.action !== "block")) {
+					finish(undefined);
+					return;
+				}
+
+				finish({
+					action: match.action,
+					reason: typeof match.reason === "string" ? match.reason : undefined,
+					summary: typeof match.summary === "string" ? match.summary : undefined,
+				});
+			});
+
+			const timer = setTimeout(() => finish(undefined), HUB_NET_TIMEOUT_MS);
+
+			pi.events.emit(HUB_ASK_EVENT, { id, from: HUB_ID, cap: [{ what: PERM_NET, data }] });
+		});
+	};
+
+	// A pending ticket is only built after the full network+filesystem merge, and
+	// only for an allow/confirm result. It is stored by the request handler
+	// immediately before the provider reply, never for a block.
+	type PreflightTicket = { toolCallId: string; toolName: string; fingerprint: string };
+
+	// Combine the separate filesystem/output-file safeguards with the network
+	// decision. Invalid request data never reaches the network layer and never
+	// becomes an approval prompt. Returns the prompt summary built from the
+	// normalized request so body-implied/curl methods are reported correctly.
+	const classifyHttpCall = async (
+		toolName: string,
+		input: Record<string, unknown>,
+		mode: string,
+		projectRoot: string,
+		toolCallId: string | undefined,
+	): Promise<{ decision: HttpPermissionDecision; summary: string; ticket?: PreflightTicket }> => {
+		const fallbackSummary = summarizeHttpPermissionCall(toolName, input);
+
+		// Drop any stale ticket for this call id before classifying. A previous
+		// attempt (or a replayed id) must never be authorized by a late handoff.
+		if (toolCallId) preflightTickets.revoke(toolCallId);
+
+		if (isMemoryFsReadToolCall(toolName, input)) {
+			return { decision: { action: "allow" }, summary: fallbackSummary };
+		}
+
+		let preflight: NetworkPreflight | undefined;
+		try {
+			preflight = buildNetworkPreflight(toolName, input, projectRoot);
+		} catch {
+			return { decision: { action: "block", reason: "Invalid or unsupported HTTP request." }, summary: fallbackSummary };
+		}
+		if (!preflight) {
+			return { decision: { action: "block", reason: "Invalid or unsupported HTTP request." }, summary: fallbackSummary };
+		}
+
+		const network = (await askHubForNetDecision(preflight.request)) ?? {
+			action: "block" as const,
+			reason: "Network permission provider is unavailable, timed out, or returned an invalid decision.",
+		};
+		const filesystem = classifyHttpFilesystemCall({ toolName, input, mode, projectRoot });
+		const decision = mergeHttpDecisions(filesystem, network);
+		const ticket =
+			toolCallId && decision.action !== "block" ? { toolCallId, toolName, fingerprint: preflight.fingerprint } : undefined;
+		return {
+			decision,
+			summary: buildNetworkRequestSummary(toolName, input, preflight.request),
+			ticket,
+		};
+	};
+
+	pi.events.on(HUB_REQUEST_EVENT, async (payload) => {
 		if (typeof payload !== "object" || payload === null) return;
 		const request = payload as { id?: unknown; cap?: unknown; targets?: unknown };
 		if (typeof request.id !== "string") return;
@@ -1435,6 +1737,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		if (!Array.isArray(request.cap)) return;
 
 		const results: Array<{ what: string; action: "allow" | "confirm" | "block"; reason?: string; summary?: string }> = [];
+		const tickets: PreflightTicket[] = [];
 		for (const item of request.cap) {
 			if (typeof item !== "object" || item === null) continue;
 			const entry = item as { what?: unknown; data?: unknown };
@@ -1445,13 +1748,30 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			if (!toolName || !isHttpPermissionTool(toolName)) continue;
 
 			const input = typeof data.input === "object" && data.input !== null ? (data.input as Record<string, unknown>) : {};
-			const decision = classifyHttpToolCall({
-				toolName,
-				input,
-				mode: typeof data.mode === "string" ? data.mode : "smart",
-				projectRoot: typeof data.projectRoot === "string" ? data.projectRoot : process.cwd(),
-			});
-			if (decision) results.push({ what: "perm:tool", ...decision, summary: summarizeHttpPermissionCall(toolName, input) });
+			const mode = typeof data.mode === "string" ? data.mode : "smart";
+			const projectRoot = typeof data.projectRoot === "string" ? data.projectRoot : process.cwd();
+			const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
+
+			let outcome: { decision: HttpPermissionDecision; summary: string; ticket?: PreflightTicket };
+			try {
+				outcome = await classifyHttpCall(toolName, input, mode, projectRoot, toolCallId);
+			} catch {
+				outcome = {
+					decision: { action: "block", reason: "Failed to classify HTTP request." },
+					summary: summarizeHttpPermissionCall(toolName, input),
+				};
+			}
+
+			if (outcome.ticket) tickets.push(outcome.ticket);
+			results.push({ what: "perm:tool", ...outcome.decision, summary: outcome.summary });
+		}
+
+		// Store tickets only after every capability in this request is fully
+		// classified, and immediately before the reply. A safe-mode timeout
+		// fallback that fires while classification is in flight is emitted before
+		// this point, so it cannot authorize a ticket stored afterwards.
+		for (const ticket of tickets) {
+			preflightTickets.preflight(ticket.toolCallId, ticket.toolName, ticket.fingerprint);
 		}
 
 		pi.events.emit(HUB_REPLY_EVENT, { id: request.id, from: HUB_ID, results });

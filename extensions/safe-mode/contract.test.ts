@@ -4,6 +4,7 @@ import {
 	parseSafeModeStateRequest,
 	parseSafeModeStateResponse,
 	parseSafeModeStateSet,
+	parseToolAuthorized,
 } from "./contract.ts";
 
 describe("safe-mode state contract", () => {
@@ -41,5 +42,27 @@ describe("safe-mode state contract", () => {
 		expect(
 			parseSafeModeStateSet({ state: { mode: "smart", outerAccess: false }, source: 123 }),
 		).toBeUndefined();
+	});
+
+	test("parses only narrowly valid tool authorization handoffs", () => {
+		expect(parseToolAuthorized({ toolCallId: "call-1", toolName: "http" })).toEqual({
+			toolCallId: "call-1",
+			toolName: "http",
+		});
+		expect(
+			parseToolAuthorized({ toolCallId: "call-1", toolName: "http", source: "safe-mode" }),
+		).toEqual({ toolCallId: "call-1", toolName: "http", source: "safe-mode" });
+
+		for (const value of [
+			null,
+			{},
+			{ toolCallId: "", toolName: "http" },
+			{ toolCallId: "call-1" },
+			{ toolCallId: "call-1", toolName: "" },
+			{ toolCallId: "call-1", toolName: "http", source: 42 },
+			{ toolCallId: 42, toolName: "http" },
+		]) {
+			expect(parseToolAuthorized(value)).toBeUndefined();
+		}
 	});
 });

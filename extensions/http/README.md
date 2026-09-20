@@ -145,10 +145,61 @@ Unsupported curl flags fail with explicit errors.
 
 ## Permissions
 
-`http` registers as a hub `perm:tool` provider and owns the risk rules for
-`http`, `http_md`, and `web_search` (read-only methods, output files, memfs
-reads). `safe-mode` asks hub instead of hardcoding them. See
-[`../hub/PROTOCOL.md`](../hub/PROTOCOL.md).
+`http` registers as a hub `perm:tool` provider and owns the non-network risk
+rules for `http`, `http_md`, and `web_search` (output files, memfs reads). The
+actual network decision is requested from `permissions-core` through the hub
+`perm:net` capability, so method trust and policy live in one place.
+
+Classification is not enforcement. Because the nested `perm:tool -> perm:net`
+flow only runs when safe-mode *and* the hub are present, each real network
+operation also requires a one-time execution authorization ticket:
+
+1. `safe-mode` asks the hub for `perm:tool`, including the
+tool call id in the data.
+2. `http` revokes any stale ticket for that id, then validates and normalizes
+the request. MemoryFS-only reads skip the network request entirely; invalid
+requests store nothing.
+3. `http` sends the normalized `{ toolName, operation, url, method, query? }`
+request to `perm:net` and merges the answer with the filesystem decision
+(most restrictive wins). A missing, timed-out, or malformed provider blocks.
+4. Only after that complete merge, and only for an `allow`/`confirm` result,
+`http` stores a pending (unauthorized) ticket immediately before sending its
+provider reply. A merged `block` stores nothing. Storing the ticket after
+classification means a safe-mode timeout fallback emitted while the request is
+still in flight is missed and the late ticket stays unauthorized.
+5. If and only if safe-mode's final decision is `allow` (provider allow or a
+successful user approval), safe-mode emits
+`px:safe-mode:tool-authorized` with the same id *and* `source: "safe-mode"`.
+A provider `allow` alone never authorizes anything: hub arbitration, PARANOID,
+outer-access confirmation, a denied prompt, or a non-interactive block still
+prevent it, and a handoff without the safe-mode source is ignored.
+6. The actual `execute()` consumes the ticket exactly once after re-normalizing
+the arguments and confirming they did not change. The fingerprint covers all
+output-affecting options, including `spillMode` and (for `http_md`)
+`webToMdMaxBytes`, so changing an option invalidates the approval. MemoryFS-only
+reads bypass this gate.
+
+Consequences (all fail closed):
+
+- hub absent, safe-mode absent, or a direct tool call with no `tool_call` flow;
+- `perm:net` timeout or malformed answer;
+- denied confirmation or a confirmation with no UI;
+- changed parameters between preflight and execution, including `spillMode` or
+  `webToMdMaxBytes`;
+- a replayed or mismatched call id;
+- a timeout fallback handoff that arrives before the late ticket is stored, or
+  a handoff that is not sourced from safe-mode.
+
+Tickets are bounded (TTL + count) and cleared on session start/tree/shutdown and
+on `/new`. Authorizing a ticket refreshes its TTL so an approved request does not
+expire while a delayed tool call is still waiting.
+
+Approval summaries are built from the normalized request and are sanitized:
+URL userinfo is stripped and control characters are removed, so a prompt never
+echoes credentials or terminal escapes.
+
+See [`../hub/PROTOCOL.md`](../hub/PROTOCOL.md) and
+[`../permissions-core/README.md`](../permissions-core/README.md).
 
 ## Install
 
