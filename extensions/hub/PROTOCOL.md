@@ -35,6 +35,9 @@ type CapResult  = { what: string; action: "allow" | "confirm" | "block"; reason?
 | `perm:agent` | run project-local subagents | safe-mode |
 | `perm:tool` | classify a tool call (`allow`/`confirm`/`block`) | tool extensions |
 
+Not a capability: the Herdr tab status feature ([README](README.md#herdr-tab-status))
+uses Herdr's socket API directly and never flows through this registry.
+
 ## Payloads
 
 `perm:shell`

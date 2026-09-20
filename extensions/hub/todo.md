@@ -55,6 +55,7 @@ each registering as a `perm:tool` provider.
 - [ ] **Presence** — generic availability query instead of per-extension handshakes
 - [ ] **Observers** — `status-bar`, `herdr` subscribe to hub traffic for badges/telemetry
   - A generic Herdr observer over hub traffic is telemetry only. It must not infer user-wait/blocked state from pending requests; that requires an explicit protocol signal (for example a correlated `hub:wait` with `kind: "user"`).
+  - [x] **Herdr tab status** — adjacent, not hub traffic: hub mirrors Herdr's `pane.agent_status_changed` onto its own tab label ([`herdr-tab.ts`](herdr-tab.ts); see [README](README.md#herdr-tab-status)). It does not use the capability registry.
 
 ## 5. Protocol / open items
 

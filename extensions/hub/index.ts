@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	HUB_CHANNELS,
 	type CapRequest,
@@ -9,6 +9,7 @@ import {
 	type HubUnregisterPayload,
 	type PermissionAction,
 } from "./contract";
+import { HerdrTabStatus, detectHerdrTabEnv, type HerdrTabStyle } from "./herdr-tab";
 
 /**
  * hub: central signal hub for pi-x extensions.
@@ -73,6 +74,30 @@ function parseAsk(payload: unknown): HubAskPayload | undefined {
 	};
 }
 
+/**
+ * `ctx.mode` exists at runtime but is missing from the pinned 0.75.4
+ * `ExtensionContext` type. Read it defensively so the TUI-only gate still
+ * typechecks and non-TUI sessions (RPC/print/JSON) never touch the socket.
+ */
+function isTuiContext(ctx: ExtensionContext): boolean {
+	return (ctx as ExtensionContext & { mode?: string }).mode === "tui";
+}
+
+function parseHerdrTabStyle(value: string | undefined): HerdrTabStyle {
+	return value === "dots" ? "dots" : "symbols";
+}
+
+/**
+ * Build the Herdr tab helper once at load, or `undefined` when disabled or not
+ * inside a Herdr-managed pane. Construction does no I/O; `start()` does.
+ */
+function createHerdrTabStatus(): HerdrTabStatus | undefined {
+	if (process.env.PI_HUB_HERDR_TAB === "0") return undefined;
+	const env = detectHerdrTabEnv();
+	if (!env) return undefined;
+	return new HerdrTabStatus({ env, style: parseHerdrTabStyle(process.env.PI_HUB_HERDR_TAB_STYLE) });
+}
+
 function parseReply(payload: unknown): HubReplyPayload | undefined {
 	if (!isRecord(payload) || typeof payload.id !== "string" || !Array.isArray(payload.results)) return undefined;
 
@@ -100,6 +125,11 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	const providersByCap = new Map<string, Set<string>>();
 	const capsByProvider = new Map<string, Set<string>>();
 	const pending = new Map<string, PendingRequest>();
+
+	// Herdr tab status: built once at load, started per session. Outside Herdr,
+	// with PI_HUB_HERDR_TAB=0, or outside a TUI session this stays inactive.
+	// Startup is non-blocking; shutdown awaits the bounded label restore.
+	const herdrTab = createHerdrTabStatus();
 
 	const removeProvider = (id: string): void => {
 		const caps = capsByProvider.get(id);
@@ -223,6 +253,18 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		if (request.pendingTargets.size === 0) finalize(reply.id);
 	});
 
+	pi.on("session_start", async (_event, ctx) => {
+		if (!herdrTab || !isTuiContext(ctx)) return;
+		void herdrTab.start().catch(() => undefined);
+	});
+
+	pi.on("session_shutdown", async () => {
+		if (!herdrTab) return;
+		// `stop()` is internally bounded by its restore timeout; awaiting it keeps
+		// the shutdown handler from resolving before the label is restored.
+		await herdrTab.stop().catch(() => undefined);
+	});
+
 	pi.registerCommand("px:hub", {
 		description: "Show hub providers and pending permission requests",
 		handler: async (_args, ctx) => {
@@ -241,6 +283,7 @@ export default function hubExtension(pi: ExtensionAPI): void {
 				...(providerLines.length > 0 ? providerLines : ["- (none)"]),
 				`pending asks: ${pending.size}`,
 				...pendingLines,
+				`herdr tab: ${herdrTab?.describe() ?? "off"}`,
 			];
 
 			ctx.ui.notify(lines.join("\n"), "info");
