@@ -24,6 +24,15 @@ export function hasVisibleText(value?: string): value is string {
 	return value.trim().length > 0;
 }
 
+/**
+ * Drop the decorative spaces from a border label so it fits narrow frames.
+ * Only ASCII spaces are touched; ANSI color codes never contain one, so the
+ * colored segments survive: `+1 -2 M4 · +150 -200` -> `+1-2M4·+150-200`.
+ */
+export function compactFrameLabel(label: string): string {
+	return label.replace(/ /g, "");
+}
+
 /** `SMART` is recolored to the frame border; other safe-mode labels keep the producer color. */
 export function styleSafeModeLabel(label: string, borderColor: (text: string) => string): string {
 	const plain = stripAnsi(sanitizeStatusText(label));

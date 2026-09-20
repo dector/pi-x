@@ -43,6 +43,7 @@ import {
 	type StatusBarSetPayload,
 } from "./contract";
 import {
+	compactFrameLabel,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
 	composeSectionItems,
@@ -67,6 +68,7 @@ const REPO_STATS_ID = "repo-stats";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dashes kept when a corner label is rendered on a frame border.
 const MIN_CORNER_LABEL_GAP = 6;
+type TopLeftChoiceKind = "none" | "compact" | "full";
 // Visible width of the `-< ` + ` >-` tack wrappers around a border label.
 const FRAME_LABEL_TACK_WIDTH = 6;
 // While streaming, the top-left model label is animated. Two styles are available:
@@ -411,14 +413,31 @@ class FrameStatusEditor extends CustomEditor {
 	/**
 	 * Top-right corner label: git dirty totals inside `-< ... >-` tacks. The
 	 * producer's group separator dot is recolored to match the frame border.
+	 * `compact` removes the decorative spaces between values so a narrow frame
+	 * can still show the model label alongside the totals.
 	 */
-	private topRightSegment(): string {
+	private topRightSegment(compact = false): string {
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return "";
-		const body = sanitizeStatusText(label)
+		const colored = sanitizeStatusText(label)
 			.split("·")
 			.join(this.borderColor("·"));
+		const body = compact ? compactFrameLabel(colored) : colored;
 		return `${this.borderColor("-< ")}${body}${this.borderColor(" >-")}`;
+	}
+
+	/**
+	 * Pick the richest top-left model label that still leaves room for
+	 * `rightSegment`: full text first, then the arrows-only effort variant.
+	 */
+	private chooseTopLeftLabel(width: number, rightSegment: string): { kind: TopLeftChoiceKind; segment: string } {
+		const leftBudget = Math.max(0, width - visibleWidth(rightSegment) - MIN_CORNER_LABEL_GAP);
+		const fits = (label: string) => visibleWidth(label) + FRAME_LABEL_TACK_WIDTH <= leftBudget;
+		const fullLabel = this.topLeftLabel(false);
+		const compactLabel = this.topLeftLabel(true);
+		if (fullLabel && fits(fullLabel)) return { kind: "full", segment: this.topLeftSegment(fullLabel) };
+		if (compactLabel && fits(compactLabel)) return { kind: "compact", segment: this.topLeftSegment(compactLabel) };
+		return { kind: "none", segment: "" };
 	}
 
 	/**
@@ -500,19 +519,21 @@ class FrameStatusEditor extends CustomEditor {
 	renderTopBorder(width: number, hiddenLineCount: number): string {
 		if (!this.isBorderMode() || width <= 0) return super.renderTopBorder(width, hiddenLineCount);
 
-		const rightSegment = this.topRightSegment();
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Prefer the full label; fall back to arrows-only effort on narrow screens.
-		// Leave room for the top-right label and the inter-label gap.
-		const leftBudget = Math.max(0, width - visibleWidth(rightSegment) - MIN_CORNER_LABEL_GAP);
-		const fits = (label: string) => visibleWidth(label) + FRAME_LABEL_TACK_WIDTH + MIN_CORNER_LABEL_GAP <= leftBudget;
-		const fullLabel = this.topLeftLabel(false);
-		const compactLabel = this.topLeftLabel(true);
-		const chosenLabel =
-			fullLabel && fits(fullLabel) ? fullLabel : compactLabel && fits(compactLabel) ? compactLabel : undefined;
-		const leftSegment = chosenLabel ? this.topLeftSegment(chosenLabel) : "";
+		// Prefer spaced git totals while any model-label variant fits. If they would
+		// push the model label off the frame, remove their decorative spaces and
+		// retry the model label against the reclaimed width.
+		const fullRightSegment = this.topRightSegment(false);
+		const compactRightSegment = this.topRightSegment(true);
+		const fullRightChoice = this.chooseTopLeftLabel(width, fullRightSegment);
+		const useCompactRight = compactRightSegment !== fullRightSegment && fullRightChoice.kind === "none";
+		const rightSegment = useCompactRight ? compactRightSegment : fullRightSegment;
+		const leftChoice = useCompactRight
+			? this.chooseTopLeftLabel(width, compactRightSegment)
+			: fullRightChoice;
+		const leftSegment = leftChoice.segment;
 
 		const candidates: Array<[string, string]> = [
 			[leftSegment, `${scrollSegment}${rightSegment}`],
