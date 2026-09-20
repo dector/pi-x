@@ -75,12 +75,7 @@ import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
-import {
-	formatSubagentStatusRow,
-	StatusBarPresence,
-	SUBAGENT_STATUS_ROW_ID,
-	SUBAGENT_STATUS_ROW_ORDER,
-} from "./status-row.ts";
+import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
 import { formatSubagentTiming, SubagentTimingTracker } from "./timing.ts";
 import type {
 	PreparedSubagentDispatch,
@@ -96,15 +91,6 @@ const HUB_ID = "subagent";
 const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
-
-// Generic status-bar row contract (see extensions/status-bar/contract.ts).
-const STATUS_BAR_EVENTS = {
-	rowSet: "px:status-bar:row:set",
-	rowClear: "px:status-bar:row:clear",
-	ping: "px:status-bar:ping",
-	pong: "px:status-bar:pong",
-} as const;
-const STATUS_BAR_WARNING_DELAY_MS = 500;
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -271,6 +257,8 @@ interface SingleAgentRuntimeDependencies {
 	approvalQueue: ApprovalQueue;
 	parentContext: ExtensionContext;
 	registry: SubagentRegistry;
+	/** Refresh the active-subagents widget after a visible progress change. */
+	onProgress?: () => void;
 }
 
 async function runSingleAgent(
@@ -364,9 +352,13 @@ async function runSingleAgent(
 				details: makeDetails([currentResult], "started"),
 			});
 		}
+		runtime.onProgress?.();
 	};
 	const emitUpdateThrottled = () => {
-		if (!onUpdate || updateTimer) return;
+		// Throttle only. `emitUpdate` already handles a missing `onUpdate` (async
+		// dispatches pass none) but must still run so the widget refreshes from
+		// `message_update` deltas independently of the parent tool update stream.
+		if (updateTimer) return;
 		updateTimer = setTimeout(emitUpdate, 50);
 	};
 
@@ -700,24 +692,25 @@ export default function (pi: ExtensionAPI) {
 	let sessionContext: ExtensionContext | undefined;
 	let shuttingDown = false;
 
-	const statusBarPresence = new StatusBarPresence({
-		delayMs: STATUS_BAR_WARNING_DELAY_MS,
-		timers: {
-			set: (fn, delayMs) => setTimeout(fn, delayMs),
-			clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-		},
-		onPing: () => pi.events.emit(STATUS_BAR_EVENTS.ping, { id: SUBAGENT_STATUS_ROW_ID }),
-		onWarn: () => {
-			if (sessionContext?.hasUI) {
-				sessionContext.ui.notify(
-					"subagent: status-bar extension not detected; the running-count row will not show",
-					"warning",
-				);
+	const registry = new SubagentRegistry(30, () => publishActiveSubagentWidget());
+
+	// Active-subagents widget docked above the input editor. The widget is
+	// non-interactive; `/px:agents` owns inspection and control. Content is
+	// cleared on shutdown before the session context is dropped.
+	const activeWidget = new ActiveSubagentWidget({
+		setWidget: (content) => {
+			if (!sessionContext?.hasUI) return;
+			try {
+				sessionContext.ui.setWidget(ACTIVE_SUBAGENT_WIDGET_ID, content, { placement: "aboveEditor" });
+			} catch {
+				// Ignore a stale or closing UI; run cleanup must still complete.
 			}
 		},
+		// Ticks re-read the registry so elapsed time (and any state change that
+		// did not emit a progress update) keeps moving during silent periods.
+		listRuns: () => registry.list(),
 	});
 
-	const registry = new SubagentRegistry(30, () => publishSubagentRow());
 	const newRunId = createRunIdGenerator();
 	const newDispatchId = createRunIdGenerator("dispatch");
 
@@ -734,26 +727,15 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	function runningSubagentCount(): number {
-		return registry.list().filter((run) => !run.completedAt).length;
-	}
-
-	// Publish one generic status-bar row (order 50, above proc's 100) only while
-	// at least one child is running. When the last child finishes, clear it and
-	// cancel any pending "status-bar missing" warning.
-	function publishSubagentRow(): void {
-		const content = shuttingDown ? undefined : formatSubagentStatusRow(runningSubagentCount());
-		if (!content) {
-			statusBarPresence.cancel();
-			pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
+	// Publish the active-subagents widget from the registry. Registry completions
+	// during shutdown cannot re-show the widget because the teardown flag forces
+	// a clear. Content changes are de-duplicated by `ActiveSubagentWidget`.
+	function publishActiveSubagentWidget(): void {
+		if (shuttingDown) {
+			activeWidget.clear();
 			return;
 		}
-		statusBarPresence.watch();
-		pi.events.emit(STATUS_BAR_EVENTS.rowSet, {
-			id: SUBAGENT_STATUS_ROW_ID,
-			content,
-			order: SUBAGENT_STATUS_ROW_ORDER,
-		});
+		activeWidget.refresh(registry.list());
 	}
 
 	if (!childControl) {
@@ -868,24 +850,22 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
-	pi.events.on(STATUS_BAR_EVENTS.pong, (payload) => {
-		const id = (payload as { id?: unknown } | undefined)?.id;
-		if (id !== SUBAGENT_STATUS_ROW_ID) return;
-		statusBarPresence.markAvailable();
-	});
-
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
 		asyncDispatches.reset();
-		statusBarPresence.reset();
-		statusBarPresence.ping();
-		publishSubagentRow();
+		// Forget the previous widget content so the first refresh always
+		// republishes (and clears a stale widget from an earlier session).
+		activeWidget.reset();
+		publishActiveSubagentWidget();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		sessionContext = ctx;
-		publishSubagentRow();
+		// The tree can re-render with the same active set, so reset the dedup
+		// state and force a republish instead of skipping an identical snapshot.
+		activeWidget.reset();
+		publishActiveSubagentWidget();
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -894,9 +874,9 @@ export default function (pi: ExtensionAPI) {
 		// clear runtime state. Completion delivery is suppressed by the manager
 		// as soon as `shutdown()` sets its flag.
 		shuttingDown = true;
-		statusBarPresence.reset();
+		// Clear before dropping the context: `setWidget` needs `sessionContext`.
+		activeWidget.clear();
 		sessionContext = undefined;
-		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: SUBAGENT_STATUS_ROW_ID });
 		const dispatchesSettled = asyncDispatches.shutdown();
 		approvalQueue.clear();
 		// Capture only this session's children. A replacement session can start
@@ -1081,6 +1061,7 @@ export default function (pi: ExtensionAPI) {
 				approvalQueue,
 				parentContext: ctx,
 				registry,
+				onProgress: publishActiveSubagentWidget,
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
 				runSingle: (request) => runSingleAgent(request, target, runtime),
@@ -1103,7 +1084,7 @@ export default function (pi: ExtensionAPI) {
 
 			// Async: detach with an independent controller. Never pass the parent
 			// tool signal or the completed invocation's onUpdate callback; live UI
-			// comes from the registry and status row instead.
+			// comes from the registry and active-subagents widget instead.
 			const handle = asyncDispatches.start(dispatch, (dispatchSignal) =>
 				runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
 			);

@@ -69,7 +69,6 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - Rows are display-mode agnostic (rendered in both `new` and `legacy`).
 - Current producers:
   - [`proc`](../proc/README.md) (id `proc`, order `100`).
-  - [`subagent`](../subagent/README.md) (id `subagent`, order `50`, shown only while a child is running).
 
 ### Editor frame
 
@@ -250,7 +249,6 @@ First-line producers (example):
 Extra-row producers:
 
 - `proc` (id `proc`, order `100`)
-- `subagent` (id `subagent`, order `50`, running count only)
 
 ## Commands
 

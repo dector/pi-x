@@ -17,7 +17,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Inherited permissions**: Each dispatch snapshots the parent's safe mode and outer-access setting when it is prepared, before an async dispatch is accepted
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
-- **Status-bar row**: While children run, publishes one row with the running count, sorted above the `proc` row
+- **Active widget**: While children run, a non-interactive list above the input editor shows each active subagent's state, elapsed time, active tool, and task preview
 - **Run log**: `/px:agent:log` shows each run's original task prompt and final output, including detached runs after resume
 
 ## Structure
@@ -40,7 +40,7 @@ subagent/
 ├── result-output.ts     # Canonical per-result output extraction (shared with tool results)
 ├── run-id.ts            # Restart-safe unique run IDs
 ├── agent-log.ts         # Pure merge/format helpers for `/px:agent:log`
-├── status-row.ts        # Pure formatter and presence probe for the running-count status row
+├── status-row.ts        # Pure formatter and publisher for the active-subagents editor widget
 ├── safe-mode.ts         # Safe-mode snapshot query and child argv
 ├── timing.ts            # Per-run timing breakdown
 ├── events.ts            # RPC stream-event application to `SingleResult`
@@ -88,7 +88,6 @@ Then run `/reload`.
 
 Dependencies:
 
-- [`status-bar`](../status-bar/README.md) for the running-count row (optional but recommended)
 - `safe-mode` for child permission inheritance (optional)
 
 ## Security Model
@@ -206,24 +205,52 @@ The first `stop` asks the child to abort cooperatively; if it does not settle wi
 
 Pi 0.85.1 only marks a tool result as an error when `execute` throws, so a control call that names no live target, or whose steers all fail, throws with a model-visible diagnostic. Unknown, finished, and pruned targets therefore surface as errors instead of silently starting work.
 
-## Status bar
+## Active subagents widget
 
-While at least one child is running, `subagent` publishes one generic
-[`status-bar`](../status-bar/README.md) row with the running count, using
-`order: 50` so it sorts above the `proc` row (`order: 100`). The row is cleared
-when the last child finishes and on `session_shutdown`. Detached async children
-keep the row published until their dispatch settles.
+While at least one child is running, `subagent` publishes a non-interactive
+widget immediately above the input editor via `ctx.ui.setWidget(id, lines, {
+placement: "aboveEditor" })`. The stable widget id is `px-subagents-active`.
+Detached async children keep the widget visible until their dispatch settles.
+The widget is cleared when the last child finishes and on `session_shutdown`.
 
 ```text
-◆ 2 subagents running
-● vite 48231  ·  ● npm 48255
+Subagents (2 active)
+● worker sa-abc123 running · 34s  Implement validation
+◐ researcher sa-def456 waiting approval · 12s  Check API behavior
 ```
 
-The row is optional: `subagent` works without `status-bar`, it only loses the
-row. When the first run starts, the extension pings `status-bar`; if no pong
-arrives within a short delay it shows one warning, then stops probing for the
-session. The warning is cancelled if the run finishes (or the running count
-returns to zero) before the delay elapses, so a short run never warns.
+Each line shows a state icon, agent name, short run id, current state, elapsed
+time, the active tool when one is running, and a short task preview. The run id
+is shortened from the left so its distinctive tail (time/sequence/random
+suffix) survives; agent name, state, tool, and task are each capped, and the
+whole line is bounded to keep it compact. Truncation works on Unicode code
+points so it does not split a surrogate pair. Pi limits each widget to 10
+lines, so the formatter caps the list and appends a final `… N more` line when
+more agents are active than fit.
+
+The display refreshes on registry changes (start/complete) and on progress
+updates (state, waiting approval, active tool). While at least one run is
+active the widget also owns one bounded one-second timer that re-renders
+elapsed time during silent periods; the timer stops when the last run settles
+and on `clear()`/`reset()`, so it cannot leak. `session_tree` resets the dedup
+state and forces a republish so a restored tree is never hidden by an
+unchanged snapshot.
+
+### TUI mode behavior
+
+- **Regular mode (default)**: the widget sits at the live bottom, just above
+the editor. New messages push history up, and scrolling into terminal history
+naturally hides the widget.
+- **Fullscreen mode**: the editor dock is sticky, so the widget stays visible
+while the transcript scrolls.
+
+Pi does not expose transcript scroll position to extensions, so hiding the
+widget while scrolling in fullscreen mode is not reliably implementable. The
+widget is intentionally non-interactive; use `/px:agents` to inspect and control
+runs.
+
+`subagent` no longer publishes a `status-bar` row, so `status-bar` is not
+required for this feature.
 
 ## Run log (`/px:agent:log`)
 
@@ -250,7 +277,7 @@ recorded runs it notifies
 
 ## Output Display
 
-**Async acknowledgement**: The `subagent` tool result for a detached dispatch is a short `started in the background` note listing the dispatch id, run ids, tasks, and working directory. It is not a result. Live progress stays in the status row and `/px:agents`.
+**Async acknowledgement**: The `subagent` tool result for a detached dispatch is a short `started in the background` note listing the dispatch id, run ids, tasks, and working directory. It is not a result. Live progress stays in the active-subagents widget and `/px:agents`.
 
 **Completion message**: When a detached dispatch settles, one `subagent-completion` message is injected. Collapsed, it shows the aggregate status and counts. Expanded (Ctrl+O), it shows every task, run id, working directory, output, and error. The model sees the same aggregate content.
 
