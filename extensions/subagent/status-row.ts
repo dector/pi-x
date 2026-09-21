@@ -126,7 +126,7 @@ function formatActiveSubagentWidgetLines(
 	const effort = run.result.thinkingLevel;
 	const turns = formatTurns(run.result.usage?.turns);
 	const usage = truncate(formatWidgetUsage(run.result.usage, run.result.model, contextWindowForModel), 30);
-	const activity = `${state} ${elapsed}${turns ? ` ${turns}` : ""}`;
+	const activity = `${state} ${elapsed}${turns ? `, ${turns}` : ""}`;
 	const base = `${icon} ${agent} (${activity})`;
 	const usageSuffix = usage ? ` · ${usage}` : "";
 	const effortSuffix = effort ? ` (${effort})` : "";

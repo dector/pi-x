@@ -163,7 +163,7 @@ test("model, effort, context, cost, and turns are included when present", () => 
 		NOW,
 		{ contextWindowForModel: () => 100_000 },
 	);
-	expect(lines?.[1]).toContain("(running 34s 31 turns)");
+	expect(lines?.[1]).toContain("(running 34s, 31 turns)");
 	expect(lines?.[1]).toContain("opencode-go/deepseek-v4.1-flash (minimal)");
 	expect(lines?.[1]).toContain("· ctx:10% $0.0266");
 });
