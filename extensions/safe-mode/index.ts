@@ -426,7 +426,13 @@ function getExactBashCommand(input: Record<string, unknown>): string | undefined
 	return input.command;
 }
 
-function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, summaryOverride?: string): {
+function formatApprovalPrompt(
+	ctx: ExtensionContext,
+	toolName: string,
+	input: Record<string, unknown>,
+	summaryOverride?: string,
+	reasonOverride?: string,
+): {
 	title: string;
 	message: string;
 } {
@@ -437,10 +443,18 @@ function formatApprovalPrompt(ctx: ExtensionContext, toolName: string, input: Re
 		.split("\n")
 		.map((line) => theme.bg("toolPendingBg", theme.fg("warning", theme.bold(line))))
 		.join("\n");
+	// The request summary can hide why approval is required (for example an
+	// `http` output file outside the project root, which the network policy does
+	// not govern). Surface the decision reason so the prompt cannot be mistaken
+	// for a different policy.
+	const reason =
+		typeof reasonOverride === "string" && reasonOverride.trim().length > 0
+			? `\n${theme.fg("muted", sanitizeApprovalText(reasonOverride))}`
+			: "";
 
 	return {
 		title,
-		message: `\n${toolLine}\n${request}`,
+		message: `\n${toolLine}\n${request}${reason}`,
 	};
 }
 
@@ -1451,7 +1465,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			};
 		}
 
-		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary);
+		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary, decision.reason);
 		// Keep the steering prompt nested inside the approval wait so the
 		// aggregate user-wait state never drops to zero across the picker ->
 		// steering transition. Hub emits a single Herdr block for the interval.

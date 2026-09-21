@@ -556,6 +556,45 @@ describe("user-wait payloads carry no request content", () => {
 	});
 });
 
+describe("approval prompt surfaces the decision reason", () => {
+	test("a provider confirm reason is rendered in the dialog", async () => {
+		const { bus, lifecycle } = setup();
+		const ui = createFakeUi();
+		const reason = "HTTP output file targets outside project root (/tmp).";
+
+		// Stand in for the http extension's `perm:tool` provider: a network-allow
+		// decision merged with an outside-project output-file confirm.
+		bus.on(HUB_CHANNELS.request, (payload) => {
+			const request = payload as { id?: unknown; targets?: unknown; cap?: unknown };
+			if (typeof request.id !== "string") return;
+			if (Array.isArray(request.targets) && !request.targets.includes("fake-http")) return;
+			if (!Array.isArray(request.cap)) return;
+			bus.emit(HUB_CHANNELS.reply, {
+				id: request.id,
+				from: "fake-http",
+				results: [{ what: "perm:tool", action: "confirm", reason, summary: "GET https://example.com" }],
+			});
+		});
+		bus.emit(HUB_CHANNELS.register, { id: "fake-http", caps: { provide: ["perm:tool"] } });
+
+		const toolCallHandlers = lifecycle.get("tool_call") ?? [];
+		expect(toolCallHandlers).toHaveLength(1);
+		const resultPromise = toolCallHandlers[0]!(
+			{ toolName: "http", toolCallId: "tc-reason", input: { url: "https://example.com", outputFile: "/tmp/x" } },
+			ui.ctx,
+		);
+
+		await ui.waitForSelect();
+		expect(ui.selectCalls).toHaveLength(1);
+		// The request summary alone would only show the GET; the real reason must be
+		// visible so it is not mistaken for network filtering.
+		expect(ui.selectCalls[0]!.title).toContain("GET https://example.com");
+		expect(ui.selectCalls[0]!.title).toContain(reason);
+		ui.resolveSelect("[N]o");
+		await resultPromise;
+	});
+});
+
 describe("safe-mode without hub", () => {
 	test("a tool approval uses exactly one legacy Herdr enter/exit pair", async () => {
 		const { bus, lifecycle } = setup({ hub: false });
