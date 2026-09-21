@@ -76,9 +76,10 @@ import {
 	runPreparedDispatch,
 	SubagentAbortError,
 } from "./dispatch.ts";
-import { AsyncDispatchManager } from "./lifecycle.ts";
+import { DispatchLifecycleManager } from "./lifecycle.ts";
 import {
 	ManagerHerdrActions,
+	applyDispatchOwnership,
 	buildManagerPicker,
 	clearHerdrLocation,
 	descriptorFromEntry,
@@ -87,6 +88,7 @@ import {
 	managerActions,
 	managerDetails,
 	mergeManagerDescriptors,
+	shouldAbortDispatch,
 	type ManagerRunDescriptor,
 } from "./manager.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
@@ -759,10 +761,11 @@ export default function (pi: ExtensionAPI) {
 	const newRunId = createRunIdGenerator();
 	const newDispatchId = createRunIdGenerator("dispatch");
 
-	// Extension-owned detached dispatches. Independent of any parent tool
-	// invocation: `deliver` is fire-and-forget and failures are swallowed so a
-	// stale extension instance or a replacement session can never throw here.
-	const asyncDispatches = new AsyncDispatchManager({
+	// Extension-owned dispatches: async descendants and blocking dispatches alike.
+	// Independent of any parent tool invocation: `deliver` is fire-and-forget and
+	// failures are swallowed so a stale extension instance or a replacement
+	// session can never throw here.
+	const dispatchManager = new DispatchLifecycleManager({
 		deliver: (message, options) => {
 			try {
 				pi.sendMessage(message, options);
@@ -784,6 +787,17 @@ export default function (pi: ExtensionAPI) {
 			// The event bus must never break dispatch lifecycle.
 		}
 	};
+
+	// Mark every run of a dispatch that was detached from a blocking turn so the
+	// manager/menu shows it as background work, and hold the Herdr pane `working`
+	// until the now-detached dispatch settles.
+	function markDispatchDetached(dispatchId: string): void {
+		for (const run of registry.list()) {
+			if (run.dispatchId === dispatchId) run.detached = true;
+		}
+		publishActiveSubagentWidget();
+		emitHerdrBackground(dispatchId, true);
+	}
 
 	// Parent-owned Herdr tab, created lazily by the first Herdr dispatch and
 	// reused for the session. Preflight validates the environment and prepares
@@ -1068,7 +1082,13 @@ export default function (pi: ExtensionAPI) {
 	function managerItems(ctx: ExtensionContext): ManagerItem[] {
 		const runs = registry.list();
 		const persisted = persistedAgentLogEntries(ctx.sessionManager.getBranch());
-		const descriptors = mergeManagerDescriptors(runs, persisted, dismissedPersistedHerdrRuns);
+		// Ownership is derived from the lifecycle handle (not only from runs that
+		// existed when a detach happened) so a chain step or queued parallel run
+		// that registers afterwards still shows correct attached/background state.
+		const descriptors = applyDispatchOwnership(
+			mergeManagerDescriptors(runs, persisted, dismissedPersistedHerdrRuns),
+			dispatchManager,
+		);
 		const byRunId = new Map(runs.map((run) => [run.runId, run]));
 		const entries = new Map<string, AgentLogEntry>();
 		for (const entry of persisted) {
@@ -1144,6 +1164,13 @@ export default function (pi: ExtensionAPI) {
 						continue;
 					}
 
+					if (action === "Continue in background") {
+						if (!descriptor.dispatchId) continue;
+						const outcome = dispatchManager.detach(descriptor.dispatchId);
+						ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
+						continue;
+					}
+
 					if (action === "Details") {
 						// Live-validate a Herdr location so a manually closed pane shows as
 						// missing instead of a stale active/retained status.
@@ -1202,12 +1229,14 @@ export default function (pi: ExtensionAPI) {
 						} else if (action === "Abort") {
 							if (!(await ctx.ui.confirm("Abort subagent", `Abort ${run.agentName} [${run.runId}]?`))) continue;
 							run.result.state = "aborting";
-							// Detached dispatches own an independent controller. Aborting it
-							// classifies the final completion as aborted and stops any remaining
-							// chain/parallel work. `run.abort` covers blocking runs (no manager
-							// entry) through the run's own controller so classification is fixed
-							// for them too.
-							if (run.dispatchId) asyncDispatches.abort(run.dispatchId);
+							// Detached/async work is aborted at the dispatch level so the final
+							// completion is classified as aborted and queued chain/parallel work
+							// stops. An attached blocking dispatch is per-run: cancelling its
+							// controller would kill parallel siblings, so only `run.abort` and the
+							// run's child are stopped here.
+							if (shouldAbortDispatch(run.dispatchId, (dispatchId) => dispatchManager.isAttached(dispatchId))) {
+								dispatchManager.abort(run.dispatchId as string);
+							}
 							run.abort?.();
 							try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
 							await run.child?.terminate();
@@ -1291,7 +1320,7 @@ export default function (pi: ExtensionAPI) {
 		herdrSession = undefined;
 		herdrBackend = undefined;
 		dismissedPersistedHerdrRuns.clear();
-		asyncDispatches.reset();
+		dispatchManager.reset();
 		// Remove stale persisted tab records left by a crash/manual cleanup.
 		cleanupStaleHerdrTabState();
 		// Forget the previous widget content so the first refresh always
@@ -1300,7 +1329,11 @@ export default function (pi: ExtensionAPI) {
 		publishActiveSubagentWidget();
 		// Re-announce detached work: a reload replaces the Herdr integration, so
 		// its background lease starts empty.
-		for (const handle of asyncDispatches.handles) emitHerdrBackground(handle.dispatchId, true);
+		for (const handle of dispatchManager.handles) {
+			// Attached blocking dispatches belong to the live parent turn; only
+			// backgrounded work needs a Herdr lease re-announcement.
+			if (handle.ownership !== "attached") emitHerdrBackground(handle.dispatchId, true);
+		}
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -1309,7 +1342,9 @@ export default function (pi: ExtensionAPI) {
 		// state and force a republish instead of skipping an identical snapshot.
 		activeWidget.reset();
 		publishActiveSubagentWidget();
-		for (const handle of asyncDispatches.handles) emitHerdrBackground(handle.dispatchId, true);
+		for (const handle of dispatchManager.handles) {
+			if (handle.ownership !== "attached") emitHerdrBackground(handle.dispatchId, true);
+		}
 	});
 
 	pi.on("session_shutdown", async (event) => {
@@ -1331,7 +1366,7 @@ export default function (pi: ExtensionAPI) {
 		// Clear before dropping the context: `setWidget` needs `sessionContext`.
 		activeWidget.clear();
 		sessionContext = undefined;
-		const dispatchesSettled = asyncDispatches.shutdown();
+		const dispatchesSettled = dispatchManager.shutdown();
 		approvalQueue.clear();
 		// Capture only this session's children. A replacement session can start
 		// (and spawn) while the await below drains, so never blanket-clear the set.
@@ -1469,7 +1504,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
-			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn. Detached children may modify the shared working tree, so re-read affected files before editing them.',
+			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn; a blocking dispatch can also be moved to the background mid-turn from /px:agents ("Continue in background"), after which its result arrives automatically as one completion. Detached children may modify the shared working tree, so re-read affected files before editing them.',
 			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
 		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
 		'Restricted agent names (per the user config) require a timed parent approval for each dispatch and are denied when no UI is available.',
@@ -1491,7 +1526,7 @@ export default function (pi: ExtensionAPI) {
 					{
 						runs: () => registry.list(),
 						getRun: (runId) => registry.get(runId),
-						abortDispatch: (dispatchId) => asyncDispatches.abort(dispatchId),
+						abortDispatch: (dispatchId) => dispatchManager.abort(dispatchId),
 						steer: (run, message, options) => sendSteer(run, message, options),
 					},
 					{ signal },
@@ -1560,14 +1595,39 @@ export default function (pi: ExtensionAPI) {
 			// await blocking runs (and the pre-spawn window) before disposing the tab.
 			const execution = (async () => {
 				if (dispatch.execution === "blocking") {
-					// Explicit blocking keeps the tool signal and streaming callback.
-					return runPreparedDispatch(dispatch, makeRunner(dispatch), signal, onUpdate);
+					// Blocking is only wait/stream policy: the dispatch is owned from launch
+					// by the lifecycle manager with its own controller. While attached the
+					// parent signal forwards and onUpdate streams; detaching moves the same
+					// child to the background without restarting it.
+					const handle = dispatchManager.start(
+						dispatch,
+						(dispatchSignal, gatedUpdate) =>
+							runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, gatedUpdate),
+						{
+							attach: { parentSignal: signal, onUpdate },
+							onDetach: markDispatchDetached,
+						},
+					);
+					if (!handle) {
+						return buildDispatchExceptionResult(
+							dispatch,
+							new Error("Subagent dispatch not started: the session is shutting down."),
+							{ aborted: true },
+						);
+					}
+					// Only a detached blocking dispatch holds a Herdr background lease, so
+					// clear one only when a detach actually happened.
+					const clearDetachedLease = (): void => {
+						if (handle.everDetached) emitHerdrBackground(handle.dispatchId, false);
+					};
+					void handle.promise.then(clearDetachedLease, clearDetachedLease);
+					return handle.result;
 				}
 
 				// Async acceptance is guarded against shutdown (which may have begun
 				// during the awaited preparation) and against an already-aborted parent
 				// turn. A refused dispatch is terminal, never a started acknowledgement.
-				if (shuttingDown || !asyncDispatches.canStart(signal)) {
+				if (shuttingDown || !dispatchManager.canStart(signal)) {
 					const reason = shuttingDown ? "the session is shutting down" : "the parent turn was aborted";
 					return buildDispatchExceptionResult(dispatch, new Error(`Subagent dispatch not started: ${reason}.`), {
 						aborted: true,
@@ -1577,7 +1637,7 @@ export default function (pi: ExtensionAPI) {
 				// Async: detach with an independent controller. Never pass the parent
 				// tool signal or the completed invocation's onUpdate callback; live UI
 				// comes from the registry and active-subagents widget instead.
-				const handle = asyncDispatches.start(dispatch, (dispatchSignal) =>
+				const handle = dispatchManager.start(dispatch, (dispatchSignal) =>
 					runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
 				);
 				if (!handle) {

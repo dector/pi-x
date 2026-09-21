@@ -6,9 +6,10 @@
  * the parent model can abort or redirect work without shell-killing child
  * processes and leaving the registry stale.
  *
- * `stop` escalates: the first stop aborts cooperatively (the owning controller
- * for a detached dispatch, or a run's stop handle otherwise) and a later stop
- * forces termination, so a wedged child cannot keep the registry stale.
+ * `stop` escalates: the first stop aborts cooperatively (the owning lifecycle
+ * controller for any managed dispatch, and the run's own stop handle) and a
+ * later stop forces termination, so a wedged child cannot keep the registry
+ * stale.
  *
  * `steer` reuses the child's native RPC `steer` command (see `registry.ts`).
  *

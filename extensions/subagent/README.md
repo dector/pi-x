@@ -7,6 +7,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Async by default**: Dispatches run detached in the background; the parent turn returns as soon as the request is accepted
 - **Automatic completion**: One aggregate `subagent-completion` message is injected when the whole dispatch settles — immediately when the parent is idle, as a follow-up when it is busy
 - **Explicit blocking**: `execution: "blocking"` streams progress and waits for the final result in the same turn
+- **Blocking → background**: An attached blocking dispatch can be moved to the background mid-turn from `/px:agents` → `Continue in background`; the same child keeps running and its result arrives later as one completion
 - **Isolated context**: Each subagent runs in a separate `pi` process
 - **Streaming output**: Blocking dispatches stream tool calls and progress as they happen
 - **Parallel streaming**: Blocking parallel tasks stream updates simultaneously
@@ -34,7 +35,7 @@ subagent/
 ├── restricted-agent-config.ts # Loads the global ~/.pi/agent/subagent.json policy
 ├── restricted-agent-approval.ts # Timed parent confirm prompt for restricted dispatches
 ├── dispatch.ts          # Shared single/parallel/chain orchestration runner
-├── lifecycle.ts         # Detached async dispatch ownership and exactly-once delivery
+├── lifecycle.ts         # Unified dispatch ownership: attached blocking, detach-to-background, exactly-once delivery
 ├── completion.ts        # Canonical acknowledgement/completion formatting and truncation
 ├── rpc-client.ts        # RPC process transport and JSONL framing
 ├── approval-queue.ts    # Global serialized child-dialog queue
@@ -344,6 +345,8 @@ Use a chain: first have scout-fast find the read tool, then have planner-fast su
 | omitted or `"async"` | Return immediately after acceptance; the aggregate result arrives later as one `subagent-completion` message. |
 | `"blocking"` | Stream progress and return the final tool result in this turn. |
 
+An attached blocking dispatch can be detached from `/px:agents` ("Continue in background"): the existing child keeps running without restarting, the tool call returns an acknowledgement instead of waiting, and the aggregate arrives later as exactly one `subagent-completion` message. Detaching after the dispatch already settled is a no-op and reports that there is nothing to detach.
+
 Async is the default for every capability, including agents that can edit, run bash, or write files. The parent can keep taking ordinary turns while children run. Do not poll for the result: it is delivered automatically.
 
 When a dispatch settles, exactly one aggregate message is injected:
@@ -369,7 +372,8 @@ Run `/px:agents` to list active and recent children, async and blocking alike. S
 - inspect its task, PID, state, working directory, diagnostics, execution mode, dispatch id, and inherited/effective mode;
 - configure that child's safe mode and outer access;
 - request cooperative pause or resume;
-- abort it after confirmation. For a detached child this aborts its owning dispatch, so the final completion is recorded as aborted and remaining chain/parallel work is stopped.
+- abort it after confirmation. For a detached/async child this aborts its owning dispatch, so the final completion is recorded as aborted and remaining chain/parallel work is stopped. An attached blocking child is aborted per-run, so its parallel siblings keep running;
+- detach an active blocking dispatch ("Continue in background") so the same child keeps running in the background and its result arrives later as one completion.
 
 Pause takes effect at the next safe boundary, before a provider turn or tool call. It does not interrupt a provider request or tool already in progress, so the state may remain `pause-requested` briefly.
 
@@ -463,7 +467,7 @@ recorded runs it notifies
 
 ## Output Display
 
-**Async acknowledgement**: The `subagent` tool result for a detached dispatch is a short `started in the background` note listing the dispatch id, run ids, tasks, and working directory. It is not a result. Live progress stays in the active-subagents widget and `/px:agents`.
+**Async acknowledgement**: The `subagent` tool result for a detached dispatch is a short `started in the background` note listing the dispatch id, run ids, tasks, and working directory. When a blocking dispatch is detached mid-turn the same shape is returned, but the text says it was detached and continues in the background. It is not a result. Live progress stays in the active-subagents widget and `/px:agents`.
 
 **Completion message**: When a detached dispatch settles, one `subagent-completion` message is injected. Collapsed, it shows the aggregate status and counts. Expanded (Ctrl+O), it shows every task, run id, working directory, output, and error. The model sees the same aggregate content.
 

@@ -257,21 +257,27 @@ export interface AsyncAcknowledgementInput {
 	mode: SubagentMode;
 	/** Selected transport; `herdr` is called out in the acknowledgement text. */
 	backend?: SubagentBackendKind;
+	/**
+	 * True when a blocking dispatch was detached mid-turn. The text then says
+	 * the dispatch was detached and is continuing instead of merely starting.
+	 */
+	detached?: boolean;
 	items: readonly AsyncAcknowledgementItem[];
 }
 
 /**
  * Short model-visible acknowledgement returned when a dispatch is detached.
  * Tells the parent not to poll, that the result arrives automatically, and that
- * children may have touched the shared working tree.
+ * children may have touched the shared working tree. When `detached` is set the
+ * text explains that an already-running blocking dispatch was moved to the
+ * background without restarting it.
  */
 export function formatAsyncAcknowledgement(input: AsyncAcknowledgementInput): string {
 	const transport = input.backend === "herdr" ? ", herdr" : "";
-	const lines: string[] = [
-		`Subagent dispatch ${input.dispatchId} started in the background (${input.mode}, ${input.execution ?? "async"}${transport}).`,
-		"",
-		"Tasks:",
-	];
+	const intro = input.detached
+		? `Subagent dispatch ${input.dispatchId} was detached from this turn and continues in the background (${input.mode}, ${input.execution ?? "async"}${transport}).`
+		: `Subagent dispatch ${input.dispatchId} started in the background (${input.mode}, ${input.execution ?? "async"}${transport}).`;
+	const lines: string[] = [intro, "", "Tasks:"];
 	for (const item of input.items) {
 		const cwd = item.cwd ? ` (cwd: ${item.cwd})` : "";
 		lines.push(`- ${item.agent} [${item.runId}]${cwd}: ${item.task}`);
@@ -311,6 +317,48 @@ export function buildAsyncStartResult(dispatch: PreparedSubagentDispatch): Agent
 		details: {
 			mode: dispatch.mode,
 			execution: "async",
+			dispatchId: dispatch.dispatchId,
+			dispatchStatus: "started",
+			agentScope: dispatch.agentScope,
+			projectAgentsDir: dispatch.projectAgentsDir,
+			plannedItems: dispatch.items,
+			cwd: dispatch.cwd,
+			...(dispatch.backend ? { backend: dispatch.backend } : {}),
+			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
+			results: [],
+		},
+	};
+}
+
+/**
+ * Immediate blocking tool result returned after the user detaches an attached
+ * blocking dispatch. It is a non-terminal `"started"` acknowledgement, not a
+ * completion record. The dispatch keeps its original `execution` so the later
+ * completion reads consistently, while the text says it was detached.
+ */
+export function buildDetachedStartResult(dispatch: PreparedSubagentDispatch): AgentToolResult<SubagentDetails> {
+	return {
+		content: [
+			{
+				type: "text",
+				text: formatAsyncAcknowledgement({
+					dispatchId: dispatch.dispatchId,
+					execution: dispatch.execution,
+					mode: dispatch.mode,
+					detached: true,
+					...(dispatch.backend ? { backend: dispatch.backend } : {}),
+					items: dispatch.items.map((item) => ({
+						agent: item.agent,
+						runId: item.runId,
+						task: item.task,
+						cwd: item.cwd ?? dispatch.cwd,
+					})),
+				}),
+			},
+		],
+		details: {
+			mode: dispatch.mode,
+			execution: dispatch.execution,
 			dispatchId: dispatch.dispatchId,
 			dispatchStatus: "started",
 			agentScope: dispatch.agentScope,

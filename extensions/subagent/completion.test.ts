@@ -13,6 +13,7 @@ import {
 	buildAsyncStartResult,
 	buildCompletionRenderBlocks,
 	buildCompletionRenderData,
+	buildDetachedStartResult,
 	coerceTerminalCompletionDetails,
 	collectCompletionSections,
 	formatAsyncAcknowledgement,
@@ -250,6 +251,20 @@ describe("formatAsyncAcknowledgement", () => {
 		expect(text).toContain("arrive automatically");
 		expect(text).toContain("re-read affected files");
 	});
+
+	test("explains that a detached blocking dispatch continues in the background", () => {
+		const text = formatAsyncAcknowledgement({
+			dispatchId: "dispatch-7",
+			execution: "blocking",
+			mode: "single",
+			detached: true,
+			items: [{ agent: "worker", runId: "sa-1", task: "keep going" }],
+		});
+		expect(text).toContain("was detached from this turn");
+		expect(text).toContain("continues in the background");
+		expect(text).toContain("blocking");
+		expect(text).toContain("worker [sa-1]: keep going");
+	});
 });
 
 function preparedDispatch(overrides: Partial<PreparedSubagentDispatch> = {}): PreparedSubagentDispatch {
@@ -279,6 +294,24 @@ describe("buildAsyncStartResult", () => {
 		expect(result.details).toMatchObject({
 			mode: "single",
 			execution: "async",
+			dispatchId: "dispatch-1",
+			dispatchStatus: "started",
+			results: [],
+		});
+	});
+});
+
+describe("buildDetachedStartResult", () => {
+	test("returns a non-terminal acknowledgement that keeps the blocking execution", () => {
+		const dispatch = preparedDispatch({ execution: "blocking" });
+		const result = buildDetachedStartResult(dispatch);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(text).toContain("was detached from this turn");
+		expect(text).toContain("continues in the background");
+		expect(result.details).toMatchObject({
+			mode: "single",
+			execution: "blocking",
 			dispatchId: "dispatch-1",
 			dispatchStatus: "started",
 			results: [],

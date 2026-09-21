@@ -15,6 +15,11 @@ export interface SubagentRunRuntime {
 	dispatchId?: string;
 	/** Whether the owning dispatch runs detached or blocking. */
 	execution?: SubagentExecution;
+	/**
+	 * True once an attached blocking dispatch was moved to the background. Used
+	 * by the manager to mark the run as detached after it settles.
+	 */
+	detached?: boolean;
 	/** RPC transport hosting this run; omitted means the process backend. */
 	backend?: SubagentBackendKind;
 	/** Herdr retention intent for this run's pane. */

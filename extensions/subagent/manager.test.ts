@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { HerdrTabError } from "./herdr-tab.ts";
 import {
 	ManagerHerdrActions,
+	applyDispatchOwnership,
 	buildManagerPicker,
 	clearHerdrLocation,
 	derivedPaneStatus,
@@ -22,6 +23,8 @@ import {
 	managerActions,
 	managerDetails,
 	mergeManagerDescriptors,
+	shouldAbortDispatch,
+	type DispatchOwnershipSource,
 	type HerdrManagerPort,
 	type ManagerRunDescriptor,
 	type PersistedEntryLike,
@@ -74,6 +77,24 @@ describe("manager actions", () => {
 		]);
 		expect(managerActions(activeProcess({ state: "paused" }))).toContain("Resume");
 		expect(managerActions(completedProcess())).toEqual(["View transcript", "Details", "Back"]);
+	});
+
+	test("active attached blocking runs offer Continue in background", () => {
+		expect(managerActions(activeProcess({ attachedBlocking: true }))).toEqual([
+			"Attach",
+			"Continue in background",
+			"Details",
+			"Configure permissions",
+			"Pause",
+			"Abort",
+			"Back",
+		]);
+	});
+
+	test("Continue in background is hidden for detached or completed runs", () => {
+		expect(managerActions(activeProcess())).not.toContain("Continue in background");
+		expect(managerActions(activeProcess({ detached: true }))).not.toContain("Continue in background");
+		expect(managerActions(completedProcess({ attachedBlocking: true }))).not.toContain("Continue in background");
 	});
 
 	test("active Herdr runs gain Jump after Details", () => {
@@ -158,6 +179,13 @@ describe("manager details", () => {
 		expect(text).not.toContain("Herdr tab:");
 		expect(text).not.toContain("Pane status:");
 	});
+
+	test("marks a detached blocking dispatch as background ownership", () => {
+		expect(managerDetails(activeProcess({ detached: true }))).toContain(
+			"Ownership: background (detached from blocking turn)",
+		);
+		expect(managerDetails(activeProcess())).not.toContain("Ownership:");
+	});
 });
 
 describe("descriptor mapping", () => {
@@ -205,6 +233,11 @@ describe("descriptor mapping", () => {
 		expect(descriptor.persisted).toBeUndefined();
 	});
 
+	test("maps detached ownership onto the descriptor", () => {
+		expect(descriptorFromRun(registryRun({ detached: true })).detached).toBe(true);
+		expect(descriptorFromRun(registryRun()).detached).toBeUndefined();
+	});
+
 	test("maps persisted entries as non-live", () => {
 		const descriptor = descriptorFromEntry(persistedEntry());
 		expect(descriptor.persisted).toBe(true);
@@ -230,6 +263,60 @@ describe("descriptor mapping", () => {
 			new Set(["sa-2"]),
 		);
 		expect(merged.map((descriptor) => descriptor.runId)).toEqual(["sa-1"]);
+	});
+});
+
+describe("dispatch ownership overlay", () => {
+	function source(attached: string[] = [], detached: string[] = []): DispatchOwnershipSource {
+		return {
+			isAttached: (dispatchId) => attached.includes(dispatchId),
+			wasEverDetached: (dispatchId) => detached.includes(dispatchId),
+		};
+	}
+
+	test("stamps attached blocking ownership from the lifecycle handle", () => {
+		const [descriptor] = applyDispatchOwnership([activeProcess({ dispatchId: "d1" })], source(["d1"]));
+		expect(descriptor?.attachedBlocking).toBe(true);
+		expect(descriptor?.detached).toBeUndefined();
+		expect(managerActions(descriptor as ManagerRunDescriptor)).toContain("Continue in background");
+	});
+
+	test("marks a run that registered after detach as background ownership", () => {
+		const descriptor = activeProcess({ dispatchId: "d1", runId: "sa-late-chain-step" });
+		const [overlaid] = applyDispatchOwnership([descriptor], source([], ["d1"]));
+		expect(overlaid?.detached).toBe(true);
+		expect(overlaid?.attachedBlocking).toBeUndefined();
+		expect(managerDetails(overlaid as ManagerRunDescriptor)).toContain(
+			"Ownership: background (detached from blocking turn)",
+		);
+		expect(managerActions(overlaid as ManagerRunDescriptor)).not.toContain("Continue in background");
+	});
+
+	test("preserves an already-stamped detached descriptor", () => {
+		const [descriptor] = applyDispatchOwnership(
+			[activeProcess({ dispatchId: "d1", detached: true })],
+			source([], []),
+		);
+		expect(descriptor?.detached).toBe(true);
+	});
+
+	test("returns untouched descriptors with no dispatch or no ownership", () => {
+		const noDispatch = activeProcess();
+		const unowned = activeProcess({ dispatchId: "d2" });
+		const result = applyDispatchOwnership([noDispatch, unowned], source([], []));
+		expect(result[0]).toBe(noDispatch);
+		expect(result[1]).toBe(unowned);
+	});
+});
+
+describe("manager abort scope", () => {
+	test("aborts the dispatch only when it is not attached to a blocking turn", () => {
+		// Detached/async: cancel the whole dispatch so queued work stops.
+		expect(shouldAbortDispatch("d1", () => false)).toBe(true);
+		// Attached blocking: per-run abort so parallel siblings keep running.
+		expect(shouldAbortDispatch("d1", () => true)).toBe(false);
+		// No dispatch id: only the run handle applies.
+		expect(shouldAbortDispatch(undefined, () => false)).toBe(false);
 	});
 });
 

@@ -37,6 +37,13 @@ export interface ManagerRunDescriptor {
 	herdr?: HerdrRunLocation;
 	herdrRetention?: HerdrRetention;
 	dispatchId?: string;
+	/**
+	 * True for an active blocking dispatch that is still attached to its parent
+	 * turn. The manager offers `Continue in background` only in this state.
+	 */
+	attachedBlocking?: boolean;
+	/** True once an attached blocking dispatch was moved to the background. */
+	detached?: boolean;
 	cwd?: string;
 	pid?: number;
 	inheritedMode?: string;
@@ -54,6 +61,7 @@ export interface ManagerRunDescriptor {
 
 export type ManagerAction =
 	| "Attach"
+	| "Continue in background"
 	| "View transcript"
 	| "Details"
 	| "Jump to Herdr pane"
@@ -93,6 +101,7 @@ export function managerActions(descriptor: ManagerRunDescriptor): ManagerAction[
 			descriptor.state === "paused" || descriptor.state === "pause-requested" || descriptor.state === "resuming";
 		return [
 			"Attach",
+			...(descriptor.attachedBlocking ? (["Continue in background"] as ManagerAction[]) : []),
 			"Details",
 			...(jump ? (["Jump to Herdr pane"] as ManagerAction[]) : []),
 			"Configure permissions",
@@ -111,6 +120,22 @@ export function managerActions(descriptor: ManagerRunDescriptor): ManagerAction[
 }
 
 /**
+ * Whether `/px:agents` Abort should cancel the whole owning dispatch rather
+ * than only the selected run.
+ *
+ * A detached/async dispatch is aborted at the dispatch level so its aggregate
+ * completion is classified as aborted and queued chain/parallel work stops. An
+ * attached blocking dispatch is per-run: aborting its controller would cancel
+ * parallel siblings, so Abort must use only that run's own stop handle.
+ */
+export function shouldAbortDispatch(
+	dispatchId: string | undefined,
+	isAttached: (dispatchId: string) => boolean,
+): boolean {
+	return dispatchId !== undefined && !isAttached(dispatchId);
+}
+
+/**
  * Multi-line Details body. Herdr fields are only included for Herdr-backed
  * locations; `Pane status` reflects a live probe when one was performed.
  */
@@ -119,6 +144,7 @@ export function managerDetails(descriptor: ManagerRunDescriptor): string {
 		`Agent: ${descriptor.agentName} [${descriptor.runId}]`,
 		`State: ${descriptor.state ?? (descriptor.active ? "running" : "unknown")}`,
 		`Execution: ${descriptor.execution ?? "blocking"}`,
+		...(descriptor.detached ? ["Ownership: background (detached from blocking turn)"] : []),
 		...(descriptor.backend ? [`Backend: ${descriptor.backend}`] : []),
 		...(hasHerdrPane(descriptor)
 			? [
@@ -185,6 +211,7 @@ export interface RegistryRunLike {
 	completedAt?: number;
 	dispatchId?: string;
 	execution?: SubagentExecution;
+	detached?: boolean;
 	backend?: SubagentBackendKind;
 	herdrRetention?: HerdrRetention;
 	herdr?: HerdrRunLocation;
@@ -230,6 +257,7 @@ export function descriptorFromRun(run: RegistryRunLike): ManagerRunDescriptor {
 		state: run.result.state,
 		mode: run.result.effectiveMode,
 		execution: run.execution,
+		detached: run.detached,
 		backend: run.backend,
 		herdr: run.herdr,
 		herdrRetention: run.herdrRetention,
@@ -288,6 +316,41 @@ export function mergeManagerDescriptors(
 		descriptors.push(descriptorFromEntry(entry));
 	}
 	return descriptors;
+}
+
+/** Ownership queries the manager UI needs from the dispatch lifecycle. */
+export interface DispatchOwnershipSource {
+	/** True while the dispatch is still attached to its blocking tool call. */
+	isAttached(dispatchId: string): boolean;
+	/** True once the dispatch was detached, including after its handle is gone. */
+	wasEverDetached(dispatchId: string): boolean;
+}
+
+/**
+ * Overlay live lifecycle ownership onto manager descriptors.
+ *
+ * `attachedBlocking` enables `Continue in background`; `detached` is shown in
+ * Details as background ownership. Ownership is read from the lifecycle handle
+ * instead of only from runs that already existed when the detach happened, so a
+ * later chain step or queued parallel sibling is classified correctly when it
+ * registers after the detach.
+ */
+export function applyDispatchOwnership<T extends ManagerRunDescriptor>(
+	descriptors: readonly T[],
+	ownership: DispatchOwnershipSource,
+): T[] {
+	return descriptors.map((descriptor) => {
+		const dispatchId = descriptor.dispatchId;
+		if (!dispatchId) return descriptor;
+		const attachedBlocking = ownership.isAttached(dispatchId);
+		const detached = descriptor.detached === true || ownership.wasEverDetached(dispatchId);
+		if (!attachedBlocking && !detached) return descriptor;
+		return {
+			...descriptor,
+			...(attachedBlocking ? { attachedBlocking: true } : {}),
+			...(detached ? { detached: true } : {}),
+		};
+	});
 }
 
 /** Clear only the recorded pane location; the subagent result/log is preserved. */
