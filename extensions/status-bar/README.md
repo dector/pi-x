@@ -77,19 +77,19 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 
 ### Progress row
 
-`status-bar` observes the hub semantic-progress protocol and renders one
-internal footer row (id `hub-progress`, order `50`, so it sits before `proc`).
-It subscribes to `hub:progress:changed` and, on `session_start` and
-`session_tree`, issues a correlated `hub:progress:query` after installing its
-`hub:progress:snapshot` listener. The row is hidden while no tracker is active.
+`status-bar` observes the hub semantic-progress protocol and renders one line
+at the top of the editor frame, directly above the input and below any
+above-editor widgets (for example the active-subagents widget). It subscribes
+to `hub:progress:changed` and, on `session_start` and `session_tree`, issues a
+correlated `hub:progress:query` after installing its `hub:progress:snapshot`
+listener. The line is hidden while no tracker is active.
 
 - Contract mirror: `status-bar` does not import hub runtime files; channels and
   snapshot types are mirrored locally in `progress.ts`.
 - Every text field (`title`, `unit`, `phase`) is stripped of ANSI/OSC escapes
   and all C0/C1 controls by `sanitizeUntrustedProgressText` before rendering.
   The existing per-line truncation to terminal width is the final bound.
-- At render time the descriptive text is colored `customMessageLabel` (pastel,
-  semi-muted purple), using the active theme.
+- The line is colored `customMessageLabel` using the active theme.
 - Chunk labels are not part of the observer snapshot and are not rendered.
 - Formats:
   - one active/blocked chunk: `Authentication · Stage 1/13 (reviewing)`

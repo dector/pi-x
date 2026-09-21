@@ -61,7 +61,7 @@ import {
 } from "./compose";
 import { createProtectedInterrupt, InterruptConfirmationGuard } from "./interrupt-confirmation";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
-import { applyProgressRow, HUB_PROGRESS_ROW_ID, ProgressObserver } from "./progress";
+import { formatProgressEditorLine, ProgressObserver } from "./progress";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -270,6 +270,10 @@ interface FrameStatusEditorOptions {
 	relocatedLabels?: RelocatedBorderLabels;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
+	/** Progress line rendered directly above the input frame, below any widgets. */
+	progressRow?: () => string | undefined;
+	/** Theme color for the progress line. */
+	progressColor?: (text: string) => string;
 	/** Confirmation guard used before an active agent operation is interrupted. */
 	interruptConfirmation: InterruptConfirmationGuard;
 	/** Muted theme color used for zero-valued border git stats. */
@@ -343,6 +347,8 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
+	private readonly progressRowProvider?: () => string | undefined;
+	private readonly progressColor?: (text: string) => string;
 	private readonly mutedColor?: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
@@ -366,6 +372,8 @@ class FrameStatusEditor extends CustomEditor {
 		this.topRightProvider = options.topRight;
 		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
+		this.progressRowProvider = options.progressRow;
+		this.progressColor = options.progressColor;
 		this.interruptConfirmation = options.interruptConfirmation;
 		this.mutedColor = options.mutedColor;
 		this.highlightColor = options.highlightColor;
@@ -510,7 +518,11 @@ class FrameStatusEditor extends CustomEditor {
 	 * outside the frame.
 	 */
 	render(width: number): string[] {
-		if (!this.isBorderMode() || width < 3) return super.render(width);
+		const progress = this.renderProgressLine(width);
+		if (!this.isBorderMode() || width < 3) {
+			const base = super.render(width);
+			return progress ? [progress, ...base] : base;
+		}
 
 		const innerWidth = width - 2;
 		// Host settings override constructor padding after the editor is created,
@@ -540,7 +552,14 @@ class FrameStatusEditor extends CustomEditor {
 			}
 		}
 
-		return out;
+		return progress ? [progress, ...out] : out;
+	}
+
+	/** Progress line placed above the input frame, below any above-editor widgets. */
+	private renderProgressLine(width: number): string | undefined {
+		const styled = formatProgressEditorLine(this.progressRowProvider?.(), this.progressColor ?? ((text) => text));
+		if (styled === undefined || !hasVisibleText(styled)) return undefined;
+		return truncateToWidth(styled, width, "");
 	}
 
 	private getRenderedAutocompleteHeight(): number {
@@ -1583,10 +1602,14 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// Live cache of the hub aggregate progress snapshot. The observer sanitizes
 	// and formats untrusted text in progress.ts; here we only apply the resulting
 	// footer row and request a render after an effective change.
+	// Rendered at the top of the editor frame rather than in the footer, so it
+	// sits after the active-subagents widget and directly above the input.
+	let progressRow: string | undefined;
 	const progressStore = new ProgressObserver({
 		events: pi.events,
 		onChange: (row) => {
-			if (applyProgressRow(rowById, row)) requestRender();
+			progressRow = row;
+			requestRender();
 		},
 	});
 
@@ -1719,13 +1742,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
 					const lines = line2.length > 0 ? [line1, line2] : [line1];
-					for (const [id, entry] of [...rowById.entries()].sort((a, b) => a[1].order - b[1].order)) {
-						let content = sanitizeStatusText(entry.content);
+					for (const entry of [...rowById.values()].sort((a, b) => a.order - b.order)) {
+						const content = sanitizeStatusText(entry.content);
 						if (!hasVisibleText(content)) continue;
-						if (id === HUB_PROGRESS_ROW_ID) {
-							// Pastel purple, slightly muted, so progress reads without shouting.
-							content = theme.fg("customMessageLabel", content);
-						}
 						lines.push(truncateToWidth(content, width, theme.fg("dim", "...")));
 					}
 					return lines;
@@ -1766,6 +1785,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
+			progressRow: () => progressRow,
+			progressColor: (text) => activeContext().ui.theme.fg("customMessageLabel", text),
 			interruptConfirmation: new InterruptConfirmationGuard({
 				getOperationToken: () => activeContext().signal,
 				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),

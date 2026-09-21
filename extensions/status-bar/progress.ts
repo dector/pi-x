@@ -20,10 +20,17 @@ export const HUB_PROGRESS_CHANNELS = {
 	snapshot: "hub:progress:snapshot",
 } as const;
 
-/** Internal footer row id for the progress line. */
-export const HUB_PROGRESS_ROW_ID = "hub-progress";
-/** Rendered before `proc` (order 100) and after the built-in status lines. */
-export const HUB_PROGRESS_ROW_ORDER = 50;
+/**
+ * Pure renderer for the progress line placed directly above the input frame.
+ * The caller supplies the theme color; `undefined` means no active tracker.
+ */
+export function formatProgressEditorLine(
+	row: string | undefined,
+	color: (text: string) => string,
+): string | undefined {
+	if (row === undefined || row.length === 0) return undefined;
+	return color(row);
+}
 
 export const PROGRESS_CHUNK_STATES = [
 	"pending",
@@ -327,32 +334,6 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 	if (extraTrackers > 0) base += ` · +${extraTrackers} trackers`;
 
 	return base;
-}
-
-// ---------------------------------------------------------------------------
-// Footer row application (kept pure so index.ts stays thin)
-// ---------------------------------------------------------------------------
-
-export interface ProgressRowEntry {
-	content: string;
-	order: number;
-}
-
-/**
- * Apply a formatted progress row to a footer row map. `undefined` removes the
- * row. Returns `true` only when the map actually changed, so callers render
- * only after an effective change. Never touches other rows or their order.
- */
-export function applyProgressRow(rows: Map<string, ProgressRowEntry>, row: string | undefined): boolean {
-	const existing = rows.get(HUB_PROGRESS_ROW_ID);
-	if (row === undefined) {
-		if (!existing) return false;
-		rows.delete(HUB_PROGRESS_ROW_ID);
-		return true;
-	}
-	if (existing && existing.content === row && existing.order === HUB_PROGRESS_ROW_ORDER) return false;
-	rows.set(HUB_PROGRESS_ROW_ID, { content: row, order: HUB_PROGRESS_ROW_ORDER });
-	return true;
 }
 
 // ---------------------------------------------------------------------------

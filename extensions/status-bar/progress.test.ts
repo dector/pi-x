@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	HUB_PROGRESS_CHANNELS,
-	HUB_PROGRESS_ROW_ID,
-	HUB_PROGRESS_ROW_ORDER,
+	formatProgressEditorLine,
 	ProgressObserver,
-	applyProgressRow,
 	countChunkStates,
 	formatProgressRow,
 	parseProgressSnapshot,
@@ -282,17 +280,19 @@ describe("ProgressObserver", () => {
 			bus.emit(HUB_PROGRESS_CHANNELS.snapshot, { requestId, snapshot: expected });
 		});
 
-		const rows = new Map<string, { content: string; order: number }>();
+		let lastRow: string | undefined;
 		const store = new ProgressObserver({
 			events: bus,
-			onChange: (row) => applyProgressRow(rows, row),
+			onChange: (row) => {
+				lastRow = row;
+			},
 		});
 		store.activate();
 		await store.refresh({ timeoutMs: 50 });
 
 		expect(store.current).toEqual(expected);
 		expect(store.content).toBe("Authentication · Stage 1/1 (reviewing)");
-		expect(rows.get(HUB_PROGRESS_ROW_ID)?.content).toBe("Authentication · Stage 1/1 (reviewing)");
+		expect(lastRow).toBe("Authentication · Stage 1/1 (reviewing)");
 		store.dispose();
 	});
 
@@ -312,23 +312,23 @@ describe("ProgressObserver", () => {
 	test("shutdown prevents stale restoration and ignores late changed events", async () => {
 		const bus = createBus();
 		const live = makeSnapshot([makeTracker({ states: ["active"] })]);
-		const rows = new Map<string, { content: string; order: number }>();
-		const store = new ProgressObserver({ events: bus, onChange: (row) => applyProgressRow(rows, row) });
+		let lastRow: string | undefined;
+		const store = new ProgressObserver({ events: bus, onChange: (row) => { lastRow = row; } });
 
 		store.activate();
 		bus.emit(HUB_PROGRESS_CHANNELS.changed, live);
 		expect(store.content).toBeDefined();
-		expect(rows.has(HUB_PROGRESS_ROW_ID)).toBe(true);
+		expect(lastRow).toBeDefined();
 
 		store.deactivate();
 		expect(store.current).toBeUndefined();
 		expect(store.content).toBeUndefined();
-		expect(rows.has(HUB_PROGRESS_ROW_ID)).toBe(false);
+		expect(lastRow).toBeUndefined();
 
 		// A late event after shutdown must not restore the previous row.
 		bus.emit(HUB_PROGRESS_CHANNELS.changed, live);
 		expect(store.current).toBeUndefined();
-		expect(rows.has(HUB_PROGRESS_ROW_ID)).toBe(false);
+		expect(lastRow).toBeUndefined();
 
 		// Reactivating applies fresh events again.
 		store.activate();
@@ -361,16 +361,16 @@ describe("ProgressObserver", () => {
 
 	test("an inactive changed snapshot clears the cached state and row", () => {
 		const bus = createBus();
-		const rows = new Map<string, { content: string; order: number }>();
-		const store = new ProgressObserver({ events: bus, onChange: (row) => applyProgressRow(rows, row) });
+		let lastRow: string | undefined;
+		const store = new ProgressObserver({ events: bus, onChange: (row) => { lastRow = row; } });
 		store.activate();
 		bus.emit(HUB_PROGRESS_CHANNELS.changed, makeSnapshot([makeTracker({ states: ["active"] })]));
-		expect(rows.has(HUB_PROGRESS_ROW_ID)).toBe(true);
+		expect(lastRow).toBeDefined();
 
 		bus.emit(HUB_PROGRESS_CHANNELS.changed, { active: false, count: 0, trackers: [] });
 		expect(store.current).toBeUndefined();
 		expect(store.content).toBeUndefined();
-		expect(rows.has(HUB_PROGRESS_ROW_ID)).toBe(false);
+		expect(lastRow).toBeUndefined();
 		store.dispose();
 	});
 
@@ -468,27 +468,18 @@ describe("queryProgressSnapshot", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Footer row ordering
+// Editor line
 // ---------------------------------------------------------------------------
 
-describe("progress footer row ordering", () => {
-	test("uses order 50 and leaves existing rows unchanged", () => {
-		const rows = new Map<string, { content: string; order: number }>([
-			["proc", { content: "1 running", order: 100 }],
-		]);
+describe("formatProgressEditorLine", () => {
+	test("colors the row with the supplied theme color", () => {
+		expect(formatProgressEditorLine("Authentication · Stage 1/1 (working)", (text) => `<c>${text}</c>`)).toBe(
+			"<c>Authentication · Stage 1/1 (working)</c>",
+		);
+	});
 
-		expect(applyProgressRow(rows, "Authentication · Stage 1/1 (working)")).toBe(true);
-		const sorted = [...rows.entries()].sort(([, a], [, b]) => a.order - b.order).map(([id]) => id);
-		expect(sorted).toEqual([HUB_PROGRESS_ROW_ID, "proc"]);
-		expect(rows.get("proc")).toEqual({ content: "1 running", order: 100 });
-		expect(rows.get(HUB_PROGRESS_ROW_ID)?.order).toBe(HUB_PROGRESS_ROW_ORDER);
-
-		// Re-applying the same row is not an effective change.
-		expect(applyProgressRow(rows, "Authentication · Stage 1/1 (working)")).toBe(false);
-
-		// Removing the row reports a change once and keeps `proc` intact.
-		expect(applyProgressRow(rows, undefined)).toBe(true);
-		expect(applyProgressRow(rows, undefined)).toBe(false);
-		expect([...rows.keys()]).toEqual(["proc"]);
+	test("returns undefined when there is no active row", () => {
+		expect(formatProgressEditorLine(undefined, (text) => text)).toBeUndefined();
+		expect(formatProgressEditorLine("", (text) => text)).toBeUndefined();
 	});
 });
