@@ -80,7 +80,6 @@ import { DispatchLifecycleManager } from "./lifecycle.ts";
 import {
 	ManagerHerdrActions,
 	applyDispatchOwnership,
-	buildManagerPicker,
 	clearHerdrLocation,
 	descriptorFromEntry,
 	descriptorFromRun,
@@ -91,6 +90,7 @@ import {
 	shouldAbortDispatch,
 	type ManagerRunDescriptor,
 } from "./manager.ts";
+import { ManagerListView, type ManagerListResult } from "./manager-list.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { combineAbortSignals } from "./execution.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
@@ -1144,12 +1144,34 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.notify("No subagent runs yet.", "info");
 						return;
 					}
-					const { labels, byLabel } = buildManagerPicker(items.map((item) => item.descriptor));
-					const selected = await ctx.ui.select("Subagent manager", [...labels, "Close"]);
-					if (!selected || selected === "Close") return;
-					const index = byLabel.get(selected);
-					if (index === undefined) continue;
-					const item = items[index];
+					const result = await ctx.ui.custom<ManagerListResult>((tui, theme, keybindings, done) =>
+						new ManagerListView<ManagerItem>({
+							items,
+							theme: {
+								fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+								bold: (text) => theme.bold(text),
+							},
+							keybindings,
+							requestRender: () => tui.requestRender(),
+							done,
+							hasTranscript: (item) => Boolean(item.run || item.entry?.result),
+						}),
+					);
+					if (!result || result.type === "cancel") return;
+					const item = items[result.itemIndex];
+					if (!item) continue;
+					if (result.type === "attach") {
+						if (item.run) await openAttach(item.run, ctx);
+						else if (item.entry) await openRecoveredAttach(item.entry, ctx);
+						continue;
+					}
+					if (result.type === "detach") {
+						const dispatchId = item.descriptor.dispatchId;
+						if (!dispatchId) continue;
+						const outcome = dispatchManager.detach(dispatchId);
+						ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
+						continue;
+					}
 					const descriptor = item.descriptor;
 					const run = item.run;
 					const action = await ctx.ui.select(
@@ -1164,7 +1186,7 @@ export default function (pi: ExtensionAPI) {
 						continue;
 					}
 
-					if (action === "Continue in background") {
+					if (action === "Detach") {
 						if (!descriptor.dispatchId) continue;
 						const outcome = dispatchManager.detach(descriptor.dispatchId);
 						ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
@@ -1504,7 +1526,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
-			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn; a blocking dispatch can also be moved to the background mid-turn from /px:agents ("Continue in background"), after which its result arrives automatically as one completion. Detached children may modify the shared working tree, so re-read affected files before editing them.',
+			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn; a blocking dispatch can also be moved to the background mid-turn from /px:agents ("Detach"), after which its result arrives automatically as one completion. Detached children may modify the shared working tree, so re-read affected files before editing them.',
 			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
 		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
 		'Restricted agent names (per the user config) require a timed parent approval for each dispatch and are denied when no UI is available.',

@@ -39,7 +39,7 @@ export interface ManagerRunDescriptor {
 	dispatchId?: string;
 	/**
 	 * True for an active blocking dispatch that is still attached to its parent
-	 * turn. The manager offers `Continue in background` only in this state.
+	 * turn. The manager offers `Detach` only in this state.
 	 */
 	attachedBlocking?: boolean;
 	/** True once an attached blocking dispatch was moved to the background. */
@@ -61,7 +61,7 @@ export interface ManagerRunDescriptor {
 
 export type ManagerAction =
 	| "Attach"
-	| "Continue in background"
+	| "Detach"
 	| "View transcript"
 	| "Details"
 	| "Jump to Herdr pane"
@@ -101,7 +101,7 @@ export function managerActions(descriptor: ManagerRunDescriptor): ManagerAction[
 			descriptor.state === "paused" || descriptor.state === "pause-requested" || descriptor.state === "resuming";
 		return [
 			"Attach",
-			...(descriptor.attachedBlocking ? (["Continue in background"] as ManagerAction[]) : []),
+			...(descriptor.attachedBlocking ? (["Detach"] as ManagerAction[]) : []),
 			"Details",
 			...(jump ? (["Jump to Herdr pane"] as ManagerAction[]) : []),
 			"Configure permissions",
@@ -329,7 +329,7 @@ export interface DispatchOwnershipSource {
 /**
  * Overlay live lifecycle ownership onto manager descriptors.
  *
- * `attachedBlocking` enables `Continue in background`; `detached` is shown in
+ * `attachedBlocking` enables `Detach`; `detached` is shown in
  * Details as background ownership. Ownership is read from the lifecycle handle
  * instead of only from runs that already existed when the detach happened, so a
  * later chain step or queued parallel sibling is classified correctly when it

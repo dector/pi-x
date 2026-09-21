@@ -79,10 +79,10 @@ describe("manager actions", () => {
 		expect(managerActions(completedProcess())).toEqual(["View transcript", "Details", "Back"]);
 	});
 
-	test("active attached blocking runs offer Continue in background", () => {
+	test("active attached blocking runs offer Detach", () => {
 		expect(managerActions(activeProcess({ attachedBlocking: true }))).toEqual([
 			"Attach",
-			"Continue in background",
+			"Detach",
 			"Details",
 			"Configure permissions",
 			"Pause",
@@ -91,10 +91,10 @@ describe("manager actions", () => {
 		]);
 	});
 
-	test("Continue in background is hidden for detached or completed runs", () => {
-		expect(managerActions(activeProcess())).not.toContain("Continue in background");
-		expect(managerActions(activeProcess({ detached: true }))).not.toContain("Continue in background");
-		expect(managerActions(completedProcess({ attachedBlocking: true }))).not.toContain("Continue in background");
+	test("Detach is hidden for detached or completed runs", () => {
+		expect(managerActions(activeProcess())).not.toContain("Detach");
+		expect(managerActions(activeProcess({ detached: true }))).not.toContain("Detach");
+		expect(managerActions(completedProcess({ attachedBlocking: true }))).not.toContain("Detach");
 	});
 
 	test("active Herdr runs gain Jump after Details", () => {
@@ -278,7 +278,7 @@ describe("dispatch ownership overlay", () => {
 		const [descriptor] = applyDispatchOwnership([activeProcess({ dispatchId: "d1" })], source(["d1"]));
 		expect(descriptor?.attachedBlocking).toBe(true);
 		expect(descriptor?.detached).toBeUndefined();
-		expect(managerActions(descriptor as ManagerRunDescriptor)).toContain("Continue in background");
+		expect(managerActions(descriptor as ManagerRunDescriptor)).toContain("Detach");
 	});
 
 	test("marks a run that registered after detach as background ownership", () => {
@@ -289,7 +289,7 @@ describe("dispatch ownership overlay", () => {
 		expect(managerDetails(overlaid as ManagerRunDescriptor)).toContain(
 			"Ownership: background (detached from blocking turn)",
 		);
-		expect(managerActions(overlaid as ManagerRunDescriptor)).not.toContain("Continue in background");
+		expect(managerActions(overlaid as ManagerRunDescriptor)).not.toContain("Detach");
 	});
 
 	test("preserves an already-stamped detached descriptor", () => {
