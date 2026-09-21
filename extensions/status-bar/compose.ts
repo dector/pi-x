@@ -8,8 +8,10 @@
 
 import { joinSafeModeAndNetwork } from "./network";
 
-/** Join two labels on the same border edge with three border dashes. */
+/** Heavy border bridge: three heavy dashes. Default join between bottom-left labels. */
 export const FRAME_LABEL_JOIN = "━━━";
+/** Thin border bridge used by the rounded frame style between the network and context labels. */
+export const FRAME_LABEL_JOIN_THIN = "───";
 export const FRAME_LABEL_OPEN = " ";
 export const FRAME_LABEL_CLOSE = " ";
 export const FRAME_LEFT_CORNER_OPEN = "━━ ";
@@ -270,15 +272,19 @@ export interface BorderBottomLeftArgs {
 	contextLabel?: string;
 	statusLabel?: string;
 	networkLabel?: string;
+	/** Bridge between the safe-mode/network group and the context label. Defaults to the heavy join. */
+	labelJoin?: string;
 	borderColor: (text: string) => string;
 }
 
 /**
  * Compose the editor-frame bottom-left segment. Safe mode and the network token
  * share one label joined by exactly ` · ` (colored like the border); the context
- * label follows after the standard border bridge:
+ * label follows after the border bridge. The bridge glyph comes from
+ * `labelJoin` (the rounded frame passes the thin `───`, the square frame keeps
+ * the heavy `━━━`):
  *
- *   `━━ 󰕥 SMART · 󰅟  NET? ━━━ 15.9% 210k · 0.03$ `
+ *   `━━ 󰕥 SMART · 󰅟  NET? ─── 15.9% 210k · 0.03$ `
  *
  * Either producer part may be missing; both missing yields `""`.
  */
@@ -297,7 +303,7 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const close = args.borderColor(FRAME_LABEL_CLOSE);
 
 	if (statusGroup && hasContext) {
-		const join = args.borderColor(` ${FRAME_LABEL_JOIN} `);
+		const join = args.borderColor(` ${args.labelJoin ?? FRAME_LABEL_JOIN} `);
 		return `${open}${statusGroup}${join}${sanitizeStatusText(args.contextLabel!)}${close}`;
 	}
 	if (statusGroup) return `${open}${statusGroup}${close}`;

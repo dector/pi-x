@@ -13,6 +13,7 @@ import {
 	decorateBorderSafeModeLabel,
 	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
+	FRAME_LABEL_JOIN_THIN,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
@@ -140,6 +141,19 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("15.9%"));
 		// Exactly one network token: no duplication.
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET?"]);
+	});
+
+	test("uses the thin bridge when labelJoin is given", () => {
+		const out = composeBorderBottomLeft({
+			contextLabel: "15.9% 210k",
+			statusLabel: "SMART",
+			networkLabel: "NET?",
+			labelJoin: FRAME_LABEL_JOIN_THIN,
+			borderColor: border,
+		});
+
+		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  NET?« ─── »15.9% 210k« »");
+		expect(out).not.toContain("━━━");
 	});
 
 	test("joins safe mode and network with exactly one border-colored ` · `", () => {

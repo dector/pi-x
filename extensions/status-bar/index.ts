@@ -53,6 +53,7 @@ import {
 	decorateBorderPathBranch,
 	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
+	FRAME_LABEL_JOIN_THIN,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
@@ -105,14 +106,22 @@ const WORKING_ANIMATION: WorkingAnimation = "comet";
 // Nerd Font glyph shown immediately before the model label in border mode.
 const MODEL_DISPLAY_GLYPH = "󰙴 ";
 
-// Heavy editor frame with square corners.
-const FRAME_BORDER = {
-	topLeft: "┏",
-	topRight: "┓",
-	bottomLeft: "┗",
-	bottomRight: "┛",
-	vertical: "┃",
+const FRAME_CORNER_STYLES = ["round", "square"] as const;
+type FrameCornerStyle = (typeof FRAME_CORNER_STYLES)[number];
+// Source-level default for the editor frame corners. Override for a quick preview
+// with `PI_STATUS_BAR_FRAME_CORNERS=round|square`.
+const FRAME_CORNER_STYLE: FrameCornerStyle = "round";
+
+// Heavy editor frame with light arc corners. Unicode has no heavy arcs, but the
+// arc is short enough that the weight step is barely visible, and the frame reads
+// as rounded. `square` restores the weight-matched heavy square corners.
+const FRAME_BORDERS = {
+	round: { topLeft: "╭", topRight: "╮", bottomLeft: "╰", bottomRight: "╯", vertical: "┃" },
+	square: { topLeft: "┏", topRight: "┓", bottomLeft: "┗", bottomRight: "┛", vertical: "┃" },
 } as const;
+// Resolved once at load: the frame style is a visual constant, not a runtime toggle.
+const ACTIVE_FRAME_CORNER_STYLE = loadFrameCornerStyle();
+const FRAME_BORDER = FRAME_BORDERS[ACTIVE_FRAME_CORNER_STYLE];
 // Providers whose context usage label also shows cumulative session cost.
 const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
 
@@ -289,9 +298,9 @@ function renderBorderLine(
 }
 
 /**
- * Default editor with heavy square borders and status labels rendered in the
- * frame corners. In `new` display mode the top-left corner shows the active
- * provider/model plus effort (abbreviation, or arrows-only on narrow screens)
+ * Default editor with heavy borders and rounded arc corners, plus status labels
+ * rendered in the frame corners. In `new` display mode the top-left corner shows
+ * the active provider/model plus effort (abbreviation, or arrows-only on narrow screens)
  * and the top-right corner shows the git dirty totals. While streaming, the
  * label runs the configured animation
  * (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
@@ -299,9 +308,9 @@ function renderBorderLine(
  * (`┃ <input> ┃`):
  *
  * ```
- * ┏━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━┓
+ * ╭━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━╮
  * ┃ ... input ...                                  ┃
- * ┗━━ SMART · 󰅟  NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
+ * ╰━━ SMART · 󰅟  NET? ─── 15.9% 210k · 0.03$ ━━━━━━━━━╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -650,7 +659,8 @@ class FrameStatusEditor extends CustomEditor {
 	/**
 	 * Combined bottom-left segment. Safe mode and the effective network token
 	 * share one label joined by exactly ` · `; context info follows after the
-	 * border bridge: `━━ SMART · NET? ━━━ 15.9% 210k `. Composition (including
+	 * border bridge: `━━ SMART · NET? ─── 15.9% 210k `. The rounded frame uses a
+	 * thin bridge, the square frame keeps the heavy one. Composition (including
 	 * safe-mode recoloring) lives in the pure `composeBorderBottomLeft` helper.
 	 */
 	private bottomLeftSegment(contextLabel?: string, statusLabel?: string, networkLabel?: string): string {
@@ -658,6 +668,7 @@ class FrameStatusEditor extends CustomEditor {
 			contextLabel,
 			statusLabel,
 			networkLabel,
+			labelJoin: ACTIVE_FRAME_CORNER_STYLE === "round" ? FRAME_LABEL_JOIN_THIN : undefined,
 			borderColor: (text) => this.borderColor(text),
 		});
 	}
@@ -1043,6 +1054,18 @@ function normalizeWorkingAnimation(value: unknown): WorkingAnimation | undefined
 
 function loadWorkingAnimation(): WorkingAnimation {
 	return normalizeWorkingAnimation(process.env.PI_STATUS_BAR_WORKING_ANIMATION) ?? WORKING_ANIMATION;
+}
+
+function normalizeFrameCornerStyle(value: unknown): FrameCornerStyle | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	return (FRAME_CORNER_STYLES as readonly string[]).includes(normalized)
+		? (normalized as FrameCornerStyle)
+		: undefined;
+}
+
+function loadFrameCornerStyle(): FrameCornerStyle {
+	return normalizeFrameCornerStyle(process.env.PI_STATUS_BAR_FRAME_CORNERS) ?? FRAME_CORNER_STYLE;
 }
 
 function loadDisplayMode(): StatusBarDisplayMode {

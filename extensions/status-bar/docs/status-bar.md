@@ -163,7 +163,9 @@ Aliases load at session start, so reload/restart after editing the file.
 ## Editor frame
 
 Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
-full frame (heavy `┃` sides + square `┏ ┓ ┗ ┛` corners), enables one column of
+full frame (heavy `┃` sides + light arc `╭ ╮ ╰ ╯` corners; set
+`PI_STATUS_BAR_FRAME_CORNERS=square` or change the source constant
+`FRAME_CORNER_STYLE` for the heavy square `┏ ┓ ┗ ┛` corners), enables one column of
 horizontal editor padding (`paddingX: 1`), and renders:
 
 - top-left: the model icon `󰙴 ` then active provider + model ID and thinking level (`󰙴 <ctx.model.provider>/<ctx.model.id> · <thinking>`, id-only when provider is missing; e.g. `󰙴 cdx/5.6-sol · high`), with exact-name aliases applied, colored with the frame border color. The thinking level is the 3-4 lowercase symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown (`󰙴 cdx/5.6-sol · 🡺`). While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
@@ -189,7 +191,7 @@ horizontal editor padding (`paddingX: 1`), and renders:
   value as the session cost.
 - bottom-left, before context: `safe-mode` producer content (for example `SMART`)
   followed by the effective network token, joined to the context label by the
-  three-dash border bridge (`━━ 󰕥 SMART · 󰅟  NET? ━━━ 󰊚 15.9% `). Safe mode and the
+  thin three-dash border bridge (`━━ 󰕥 SMART · 󰅟  NET? ─── 󰊚 15.9% `). Safe mode and the
   network token share one label joined by exactly ` · `, which is preserved under
   crowding. The safe-mode text is prefixed with `󰕥 `, which shares its color;
   `SMART` uses the frame border color, other modes keep the producer's own color on
@@ -198,8 +200,13 @@ horizontal editor padding (`paddingX: 1`), and renders:
   allow-trusted, ask-untrusted, and allow-all); it follows effective state only
   (PARANOID -> gray `NET?`).
 
-Border labels use spaces instead of angle tacks (`┏━━ left ━ right ━━┓`).
-Two bottom-left labels use three heavy border dashes (`┗━━ A ━━━ B ━━━┛`).
+Border labels use spaces instead of angle tacks (`╭━━ left ━ right ━━╮`).
+Two bottom-left labels are bridged by a thin line in the round style
+(`╰━━ A ─── B ━━━╯`); the square style keeps the heavy three-dash bridge
+(`╰━━ A ━━━ B ━━━╯`).
+The frame corner style is switchable: default is `round` (`╭ ╮ ╰ ╯`); set
+`PI_STATUS_BAR_FRAME_CORNERS=square` or change the source constant
+`FRAME_CORNER_STYLE` for the weight-matched heavy square corners `┏ ┓ ┗ ┛`.
 Labels are dropped when the terminal is too narrow.
 The inner editor renders 2 columns narrower and applies `paddingX: 1`; autocomplete
 stays outside the frame and is indented to match. Mouse coordinates are shifted back by one

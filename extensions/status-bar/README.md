@@ -81,18 +81,22 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-┏━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━┓
+╭━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━╮
 ┃ ... input ...                                     ┃
-┗━━ 󰕥 SMART · 󰅟  NET? ━━━ 󰊚 15.9% 210k · 󰇁 0.03 ━━━━━┛
+╰━━ 󰕥 SMART · 󰅟  NET? ─── 󰊚 15.9% 210k · 󰇁 0.03 ━━━━━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
-  side borders and square corners (`┏ ┓ ┗ ┛`). The editor uses one column of
+  side borders and light arc corners (`╭ ╮ ╰ ╯`). The editor uses one column of
   horizontal padding (`paddingX: 1`), so input sits at `┃ <input> ┃`. The
   autocomplete list stays outside the frame and is indented to line up.
-- Border labels use spaces instead of angle tacks: `┏━━ <left> ━ <right> ━━┓`.
-  Two labels sharing the bottom-left edge use three heavy border dashes:
-  `┗━━ <safe-mode> · <network> ━━━ <context> ━━━┛`.
+- Corner style: Unicode has no heavy arcs, so the short arc is a slightly thinner
+  stroke than the `━`/`┃` lines. Set `PI_STATUS_BAR_FRAME_CORNERS=square` (or
+  change the `FRAME_CORNER_STYLE` constant) for the weight-matched heavy square
+  corners `┏ ┓ ┗ ┛`.
+- Border labels use spaces instead of angle tacks: `╭━━ <left> ━ <right> ━━╮`.
+  Two labels sharing the bottom-left edge are bridged by a thin line in the round
+  style: `╰━━ <safe-mode> · <network> ─── <context> ━━━╯`.
   Safe mode and the network token always share one label and keep the spaced
   ` · ` separator even when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
@@ -109,7 +113,9 @@ labels are rendered in the frame corners:
   the totals are hidden from the first line to avoid duplication; in `legacy` mode
   they stay on the first line.
 - **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
-  - Format: `━━ 󰕥 <safe-mode> · 󰅟  <NET> ━━━ 󰊚 <percent> <tokens> · 󰇁 <cost> `. Each
+  - Format: `━━ 󰕥 <safe-mode> · 󰅟  <NET> ─── 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
+    network-to-context bridge is a thin line in the round corner style and the
+    heavy three-dash bridge in the square style. Each
     part is prefixed with a Nerd Font icon that inherits the color of the text it
     prefixes. The safe-mode and network parts are omitted when their producer/core is absent.
   - **network** — effective policy from `permissions-core`, shown only after safe
