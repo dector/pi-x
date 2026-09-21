@@ -60,6 +60,7 @@ import {
 	sanitizeStatusText,
 } from "./compose";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
+import { applyProgressRow, ProgressObserver } from "./progress";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -1568,6 +1569,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// `changed` events win over slower in-flight queries (see network.ts).
 	const networkStore = new NetworkStateStore({ events: pi.events, onChange: requestRender });
 
+	// Live cache of the hub aggregate progress snapshot. The observer sanitizes
+	// and formats untrusted text in progress.ts; here we only apply the resulting
+	// footer row and request a render after an effective change.
+	const progressStore = new ProgressObserver({
+		events: pi.events,
+		onChange: (row) => {
+			if (applyProgressRow(rowById, row)) requestRender();
+		},
+	});
+
 	const installFooter = (ctx: ExtensionContext): void => {
 		if (!ctx.hasUI) return;
 		if (footerOwnerContext === ctx) return;
@@ -1787,17 +1798,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		// Only an active session may apply live network `changed` events.
+		// Only an active session may apply live network/progress `changed` events.
 		networkStore.activate();
+		progressStore.activate();
 		bindContextAndRender(ctx);
 		// Refresh in the background; a live `changed` event also updates state.
 		void networkStore.refresh();
+		void progressStore.refresh();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		networkStore.activate();
+		progressStore.activate();
 		bindContextAndRender(ctx);
 		void networkStore.refresh();
+		void progressStore.refresh();
 	});
 
 	const refreshOnEvent = async (_event: unknown, ctx: ExtensionContext): Promise<void> => {
@@ -1836,9 +1851,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		if (lastContext === ctx) {
 			lastContext = undefined;
 		}
-		// Drop stale network state and deactivate so late `changed` events after
-		// shutdown cannot restore the previous session's effective policy.
+		// Drop stale network/progress state and deactivate so late `changed`
+		// events after shutdown cannot restore the previous session's UI.
 		networkStore.deactivate();
+		progressStore.deactivate();
 		requestFooterRender = undefined;
 	});
 

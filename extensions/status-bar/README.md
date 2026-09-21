@@ -73,6 +73,35 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - Rows are display-mode agnostic (rendered in both `new` and `legacy`).
 - Current producers:
   - [`proc`](../proc/README.md) (id `proc`, order `100`).
+  - `hub-progress` (id `hub-progress`, order `50`) — see [Progress row](#progress-row).
+
+### Progress row
+
+`status-bar` observes the hub semantic-progress protocol and renders one
+internal footer row (id `hub-progress`, order `50`, so it sits before `proc`).
+It subscribes to `hub:progress:changed` and, on `session_start` and
+`session_tree`, issues a correlated `hub:progress:query` after installing its
+`hub:progress:snapshot` listener. The row is hidden while no tracker is active.
+
+- Contract mirror: `status-bar` does not import hub runtime files; channels and
+  snapshot types are mirrored locally in `progress.ts`.
+- Every text field (`title`, `unit`, `phase`) is stripped of ANSI/OSC escapes
+  and all C0/C1 controls by `sanitizeUntrustedProgressText` before rendering.
+  The existing per-line truncation to terminal width is the final bound.
+- Chunk labels are not part of the observer snapshot and are not rendered.
+- Formats:
+  - one active/blocked chunk: `Authentication · Stage 1/13 (reviewing)`
+    (active fallback `working`; blocked always `(blocked)`);
+  - several active/blocked: `Authentication · 4/13 done · 2 active · 1 blocked`
+    (optional `blocked`/`failed`/`skipped` counts only when non-zero);
+  - none active/blocked but pending remains:
+    `Authentication · 4/13 done · 9 pending`;
+  - all chunks terminal but unfinished:
+    `Authentication · 13/13 settled · awaiting finish`.
+- With several active trackers, the most recently updated tracker is rendered
+  and ` · +N trackers` is appended.
+- State is cleared on `session_shutdown`; late `changed` events are ignored so a
+  previous session's row cannot reappear.
 
 ### Editor frame
 
