@@ -85,6 +85,8 @@ import {
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { combineAbortSignals } from "./execution.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
+import { loadRestrictedAgentConfig } from "./restricted-agent-config.ts";
+import { requestRestrictedAgentApproval as promptRestrictedAgentApproval } from "./restricted-agent-approval.ts";
 import {
 	HerdrSubagentBackend,
 	ProcessSubagentBackend,
@@ -1439,6 +1441,7 @@ export default function (pi: ExtensionAPI) {
 			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn. Detached children may modify the shared working tree, so re-read affected files before editing them.',
 			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
 		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
+		'Restricted agent names (per the user config) require a timed parent approval for each dispatch and are denied when no UI is available.',
 			`Available agents: ${agentListText}.`,
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
@@ -1469,9 +1472,18 @@ export default function (pi: ExtensionAPI) {
 			if (shuttingDown) {
 				return buildNotStartedResult("Subagent dispatch not started: the session is shutting down.");
 			}
+			const restrictedConfig = loadRestrictedAgentConfig();
 			const preparation = await prepareSubagentDispatch(params as SubagentRequest, {
 				discoverAgents,
 				requestPermission: (what, data) => askHubPermission(what, data, ctx),
+				restrictedAgentPatterns: restrictedConfig.restrictedAgentPatterns,
+				requestRestrictedAgentApproval: (approvalRequest) =>
+					promptRestrictedAgentApproval(
+						approvalRequest,
+						restrictedConfig.restrictedAgentPromptTimeoutSeconds,
+						ctx,
+						pi.events,
+					),
 				snapshotSafeMode: getSafeModeSnapshot,
 				preflightHerdr: async (herdr) => {
 					const result = await runHerdrPreflight(ctx.sessionManager.getSessionId());
