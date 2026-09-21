@@ -53,7 +53,6 @@ import {
 	decorateBorderPathBranch,
 	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
-	FRAME_LABEL_JOIN_THIN,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
@@ -122,6 +121,14 @@ const FRAME_BORDERS = {
 // Resolved once at load: the frame style is a visual constant, not a runtime toggle.
 const ACTIVE_FRAME_CORNER_STYLE = loadFrameCornerStyle();
 const FRAME_BORDER = FRAME_BORDERS[ACTIVE_FRAME_CORNER_STYLE];
+
+// The frame line is heavy, but wherever it touches a corner label the glyph
+// tapers so the light half faces the text.
+const FRAME_LINE = "━";
+/** Light on the left, heavy on the right: the line resumes after a label. */
+const FRAME_LINE_AFTER_LABEL = "╼";
+/** Heavy on the left, light on the right: the line ends at a label. */
+const FRAME_LINE_BEFORE_LABEL = "╾";
 // Providers whose context usage label also shows cumulative session cost.
 const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
 
@@ -286,7 +293,7 @@ function renderBorderLine(
 	const rightWidth = visibleWidth(rightSegment);
 
 	if (leftWidth === 0 && rightWidth === 0) {
-		return borderColor("━".repeat(width));
+		return borderColor(FRAME_LINE.repeat(width));
 	}
 
 	if (leftWidth + rightWidth >= width) {
@@ -294,7 +301,17 @@ function renderBorderLine(
 		return truncateToWidth(rightSegment, width, "");
 	}
 
-	return `${leftSegment}${borderColor("━".repeat(width - leftWidth - rightWidth))}${rightSegment}`;
+	// The filler starts and ends with a tapered glyph whenever a label sits on
+	// that side, so the heavy line stays thin where it touches the text. Both
+	// transitions replace heavy dashes, so the total width is unchanged.
+	const lead = leftWidth > 0 ? FRAME_LINE_AFTER_LABEL : "";
+	const tail = rightWidth > 0 ? FRAME_LINE_BEFORE_LABEL : "";
+	const fill = width - leftWidth - rightWidth;
+	if (fill < lead.length + tail.length) {
+		return `${leftSegment}${borderColor("─".repeat(fill))}${rightSegment}`;
+	}
+	const filler = lead + FRAME_LINE.repeat(fill - lead.length - tail.length) + tail;
+	return `${leftSegment}${borderColor(filler)}${rightSegment}`;
 }
 
 /**
@@ -308,9 +325,9 @@ function renderBorderLine(
  * (`┃ <input> ┃`):
  *
  * ```
- * ╭━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━╮
+ * ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
  * ┃ ... input ...                                  ┃
- * ╰━━ SMART · 󰅟  NET? ─── 15.9% 210k · 0.03$ ━━━━━━━━━╯
+ * ╰━╾ SMART · 󰅟  NET? ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -659,16 +676,16 @@ class FrameStatusEditor extends CustomEditor {
 	/**
 	 * Combined bottom-left segment. Safe mode and the effective network token
 	 * share one label joined by exactly ` · `; context info follows after the
-	 * border bridge: `━━ SMART · NET? ─── 15.9% 210k `. The rounded frame uses a
-	 * thin bridge, the square frame keeps the heavy one. Composition (including
-	 * safe-mode recoloring) lives in the pure `composeBorderBottomLeft` helper.
+	 * tapered border bridge: `━╾ SMART · NET? ╼━╾ 15.9% 210k `. The bridge keeps
+	 * its light halves on the label sides, so it reads as one line either way.
+	 * Composition (including safe-mode recoloring) lives in the pure
+	 * `composeBorderBottomLeft` helper.
 	 */
 	private bottomLeftSegment(contextLabel?: string, statusLabel?: string, networkLabel?: string): string {
 		return composeBorderBottomLeft({
 			contextLabel,
 			statusLabel,
 			networkLabel,
-			labelJoin: ACTIVE_FRAME_CORNER_STYLE === "round" ? FRAME_LABEL_JOIN_THIN : undefined,
 			borderColor: (text) => this.borderColor(text),
 		});
 	}

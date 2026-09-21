@@ -191,7 +191,7 @@ horizontal editor padding (`paddingX: 1`), and renders:
   value as the session cost.
 - bottom-left, before context: `safe-mode` producer content (for example `SMART`)
   followed by the effective network token, joined to the context label by the
-  thin three-dash border bridge (`━━ 󰕥 SMART · 󰅟  NET? ─── 󰊚 15.9% `). Safe mode and the
+  tapered border bridge (`━╾ 󰕥 SMART · 󰅟  NET? ╼━╾ 󰊚 15.9% `). Safe mode and the
   network token share one label joined by exactly ` · `, which is preserved under
   crowding. The safe-mode text is prefixed with `󰕥 `, which shares its color;
   `SMART` uses the frame border color, other modes keep the producer's own color on
@@ -200,10 +200,11 @@ horizontal editor padding (`paddingX: 1`), and renders:
   allow-trusted, ask-untrusted, and allow-all); it follows effective state only
   (PARANOID -> gray `NET?`).
 
-Border labels use spaces instead of angle tacks (`╭━━ left ━ right ━━╮`).
-Two bottom-left labels are bridged by a thin line in the round style
-(`╰━━ A ─── B ━━━╯`); the square style keeps the heavy three-dash bridge
-(`╰━━ A ━━━ B ━━━╯`).
+Border labels use spaces instead of angle tacks (`╭━╾ left ╼━╮`).
+The frame line is heavy, but every point where it touches a label tapers to a
+light half cell so the light side faces the text: `╾` running into a label, `╼`
+leaving one. Two bottom-left labels are bridged the same way at both ends
+(`╰━╾ A ╼━╾ B ╼━━━╯`).
 The frame corner style is switchable: default is `round` (`╭ ╮ ╰ ╯`); set
 `PI_STATUS_BAR_FRAME_CORNERS=square` or change the source constant
 `FRAME_CORNER_STYLE` for the weight-matched heavy square corners `┏ ┓ ┗ ┛`.

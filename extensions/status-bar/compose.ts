@@ -8,14 +8,22 @@
 
 import { joinSafeModeAndNetwork } from "./network";
 
-/** Heavy border bridge: three heavy dashes. Default join between bottom-left labels. */
-export const FRAME_LABEL_JOIN = "━━━";
-/** Thin border bridge used by the rounded frame style between the network and context labels. */
-export const FRAME_LABEL_JOIN_THIN = "───";
+/**
+ * Border bridge between two labels that share the bottom edge. The outer cells
+ * are light/heavy half glyphs, so the line stays thin where it touches a label
+ * and heavy in between:
+ *
+ *   `󰅟  NET? ╼━╾ 󰊚 15.9% 210k`
+ */
+export const FRAME_LABEL_JOIN = "╼━╾";
 export const FRAME_LABEL_OPEN = " ";
 export const FRAME_LABEL_CLOSE = " ";
-export const FRAME_LEFT_CORNER_OPEN = "━━ ";
-export const FRAME_RIGHT_CORNER_CLOSE = " ━━";
+/**
+ * Corner-adjacent bridges. The frame line is heavy, but the half that touches a
+ * label is light: `╰━╾ <label>` and `<label> ╼━╮`.
+ */
+export const FRAME_LEFT_CORNER_OPEN = "━╾ ";
+export const FRAME_RIGHT_CORNER_CLOSE = " ╼━";
 
 export function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
@@ -272,19 +280,15 @@ export interface BorderBottomLeftArgs {
 	contextLabel?: string;
 	statusLabel?: string;
 	networkLabel?: string;
-	/** Bridge between the safe-mode/network group and the context label. Defaults to the heavy join. */
-	labelJoin?: string;
 	borderColor: (text: string) => string;
 }
 
 /**
  * Compose the editor-frame bottom-left segment. Safe mode and the network token
  * share one label joined by exactly ` · ` (colored like the border); the context
- * label follows after the border bridge. The bridge glyph comes from
- * `labelJoin` (the rounded frame passes the thin `───`, the square frame keeps
- * the heavy `━━━`):
+ * label follows after the tapered border bridge:
  *
- *   `━━ 󰕥 SMART · 󰅟  NET? ─── 15.9% 210k · 0.03$ `
+ *   `━╾ 󰕥 SMART · 󰅟  NET? ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 `
  *
  * Either producer part may be missing; both missing yields `""`.
  */
@@ -303,7 +307,7 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const close = args.borderColor(FRAME_LABEL_CLOSE);
 
 	if (statusGroup && hasContext) {
-		const join = args.borderColor(` ${args.labelJoin ?? FRAME_LABEL_JOIN} `);
+		const join = args.borderColor(` ${FRAME_LABEL_JOIN} `);
 		return `${open}${statusGroup}${join}${sanitizeStatusText(args.contextLabel!)}${close}`;
 	}
 	if (statusGroup) return `${open}${statusGroup}${close}`;

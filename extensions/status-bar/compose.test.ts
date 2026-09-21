@@ -13,7 +13,7 @@ import {
 	decorateBorderSafeModeLabel,
 	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
-	FRAME_LABEL_JOIN_THIN,
+	FRAME_LABEL_JOIN,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
@@ -67,8 +67,12 @@ describe("pure text helpers", () => {
 	test("frame labels use spaces instead of angle tacks", () => {
 		expect(FRAME_LABEL_OPEN).toBe(" ");
 		expect(FRAME_LABEL_CLOSE).toBe(" ");
-		expect(FRAME_LEFT_CORNER_OPEN).toBe("━━ ");
-		expect(FRAME_RIGHT_CORNER_CLOSE).toBe(" ━━");
+		expect(FRAME_LEFT_CORNER_OPEN).toBe("━╾ ");
+		expect(FRAME_RIGHT_CORNER_CLOSE).toBe(" ╼━");
+	});
+
+	test("the label bridge tapers at both label sides", () => {
+		expect(FRAME_LABEL_JOIN).toBe("╼━╾");
 	});
 
 	test("styleSafeModeLabel recolors only SMART/SMART+", () => {
@@ -135,7 +139,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  <muted>NET?</muted>« ━━━ »15.9% 210k · 0.03$« »");
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  <muted>NET?</muted>« ╼━╾ »15.9% 210k · 0.03$« »");
 		// Order: safe mode, then network, then context.
 		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("NET?"));
 		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("15.9%"));
@@ -143,16 +147,15 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET?"]);
 	});
 
-	test("uses the thin bridge when labelJoin is given", () => {
+	test("tapers the context bridge so its light halves face the labels", () => {
 		const out = composeBorderBottomLeft({
 			contextLabel: "15.9% 210k",
 			statusLabel: "SMART",
 			networkLabel: "NET?",
-			labelJoin: FRAME_LABEL_JOIN_THIN,
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  NET?« ─── »15.9% 210k« »");
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET?« ╼━╾ »15.9% 210k« »");
 		expect(out).not.toContain("━━━");
 	});
 
@@ -162,13 +165,13 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			networkLabel: "NET+",
 			borderColor: border,
 		});
-		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  NET+« »");
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET+« »");
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET+"]);
 	});
 
 	test("keeps the network token with no safe-mode producer", () => {
 		const out = composeBorderBottomLeft({ networkLabel: "NET", borderColor: border });
-		expect(out).toBe("«━━ »󰅟  NET« »");
+		expect(out).toBe("«━╾ »󰅟  NET« »");
 		expect(out).not.toContain("«󰅟");
 	});
 
@@ -177,12 +180,12 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			networkLabel: "\u001b[1m\u001b[38;5;34mNET+\u001b[0m",
 			borderColor: border,
 		});
-		expect(out).toBe("«━━ »\u001b[1m\u001b[38;5;34m󰅟  \u001b[0m\u001b[1m\u001b[38;5;34mNET+\u001b[0m« »");
+		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;34m󰅟  \u001b[0m\u001b[1m\u001b[38;5;34mNET+\u001b[0m« »");
 	});
 
 	test("keeps safe mode when the core is absent", () => {
 		const out = composeBorderBottomLeft({ statusLabel: "PARANOID", borderColor: border });
-		expect(out).toBe("«━━ »󰕥 PARANOID« »");
+		expect(out).toBe("«━╾ »󰕥 PARANOID« »");
 	});
 
 	test("colors the safe-mode icon like the producer, not the border", () => {
@@ -190,12 +193,12 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			statusLabel: "\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m",
 			borderColor: border,
 		});
-		expect(out).toBe("«━━ »\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m« »");
+		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m« »");
 	});
 
 	test("context-only output still renders", () => {
 		const out = composeBorderBottomLeft({ contextLabel: "15.9% 210k", borderColor: border });
-		expect(out).toBe("«━━ »15.9% 210k« »");
+		expect(out).toBe("«━╾ »15.9% 210k« »");
 	});
 
 	test("renders nothing when every part is empty", () => {
