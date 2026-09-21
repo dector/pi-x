@@ -349,6 +349,27 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 	return bar.length > 0 ? `${bar} ${base}` : base;
 }
 
+/**
+ * Minimal color hooks for the footer row. `bar` is the `■□` prefix; `text` is
+ * everything after it. Kept as a tiny interface so this module stays pure and
+ * does not import the TUI theme type.
+ */
+export interface ProgressRowPalette {
+	bar(text: string): string;
+	text(text: string): string;
+}
+
+/**
+ * Split a formatted row into its bar and text segments and color them
+ * independently. The bar is styled less muted than the descriptive text. A row
+ * without a leading bar is treated as all text.
+ */
+export function styleProgressRow(row: string, palette: ProgressRowPalette): string {
+	const space = row.indexOf(" ");
+	if (space <= 0) return palette.text(row);
+	return `${palette.bar(row.slice(0, space))} ${palette.text(row.slice(space + 1))}`;
+}
+
 // ---------------------------------------------------------------------------
 // Footer row application (kept pure so index.ts stays thin)
 // ---------------------------------------------------------------------------

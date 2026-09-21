@@ -13,6 +13,7 @@ import {
 	queryProgressSnapshot,
 	sanitizeUntrustedProgressText,
 	selectMostRecentTracker,
+	styleProgressRow,
 	type ProgressChunkState,
 	type ProgressSnapshot,
 	type ProgressTrackerSnapshot,
@@ -135,6 +136,27 @@ describe("formatProgressBar", () => {
 	test("a tracker with a skipped chunk fills the corresponding cell", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "done", 2: "skipped", 3: "active" })]);
 		expect(formatProgressRow(snapshot)?.startsWith("■■")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Row styling
+// ---------------------------------------------------------------------------
+
+describe("styleProgressRow", () => {
+	const palette = {
+		bar: (text: string) => `<b>${text}</b>`,
+		text: (text: string) => `<t>${text}</t>`,
+	};
+
+	test("colors the bar and the descriptive text independently", () => {
+		expect(styleProgressRow("■■□□ Authentication · 1/3 done · 2 active", palette)).toBe(
+			"<b>■■□□</b> <t>Authentication · 1/3 done · 2 active</t>",
+		);
+	});
+
+	test("treats a row without a leading bar as all text", () => {
+		expect(styleProgressRow("Authentication", palette)).toBe("<t>Authentication</t>");
 	});
 });
 

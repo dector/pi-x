@@ -60,7 +60,7 @@ import {
 	sanitizeStatusText,
 } from "./compose";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
-import { applyProgressRow, ProgressObserver } from "./progress";
+import { applyProgressRow, HUB_PROGRESS_ROW_ID, ProgressObserver, styleProgressRow } from "./progress";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -1708,9 +1708,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
 					const lines = line2.length > 0 ? [line1, line2] : [line1];
-					for (const entry of [...rowById.values()].sort((a, b) => a.order - b.order)) {
-						const content = sanitizeStatusText(entry.content);
+					for (const [id, entry] of [...rowById.entries()].sort((a, b) => a[1].order - b[1].order)) {
+						let content = sanitizeStatusText(entry.content);
 						if (!hasVisibleText(content)) continue;
+						if (id === HUB_PROGRESS_ROW_ID) {
+							// The `■□` bar reads as pastel-accent progress while the descriptive
+							// text stays semi-muted behind it.
+							content = styleProgressRow(content, {
+								bar: (text) => theme.fg("accent", text),
+								text: (text) => theme.fg("muted", text),
+							});
+						}
 						lines.push(truncateToWidth(content, width, theme.fg("dim", "...")));
 					}
 					return lines;
