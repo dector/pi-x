@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { HERDR_BACKGROUND_EVENT as PRODUCER_EVENT, herdrBackgroundPayload } from "../subagent/herdr-background.ts";
 import { HERDR_BACKGROUND_EVENT, applyBackgroundEvent, desiredAgentState, parseBackgroundId } from "./index.ts";
 
 describe("herdr background contract", () => {
@@ -94,5 +95,26 @@ describe("desiredAgentState", () => {
 			state: "blocked",
 			message: "approve?",
 		});
+	});
+});
+
+describe("subagent -> integration contract", () => {
+	test("the emitted lease holds the pane working until the last dispatch settles", () => {
+		expect(PRODUCER_EVENT).toBe(HERDR_BACKGROUND_EVENT);
+		const background = new Set<string>();
+
+		// A detached dispatch starts while the pane is working, then the
+		// accepting turn settles (agentActive false): still working.
+		expect(applyBackgroundEvent(background, herdrBackgroundPayload("dispatch-1", true))).toBe(true);
+		expect(desiredAgentState({ blockedCount: 0, agentActive: false, backgroundCount: background.size }).state).toBe("working");
+
+		// Parallel dispatch: clearing one keeps the pane working.
+		applyBackgroundEvent(background, herdrBackgroundPayload("dispatch-2", true));
+		applyBackgroundEvent(background, herdrBackgroundPayload("dispatch-1", false));
+		expect(desiredAgentState({ blockedCount: 0, agentActive: false, backgroundCount: background.size }).state).toBe("working");
+
+		// Last dispatch settles.
+		applyBackgroundEvent(background, herdrBackgroundPayload("dispatch-2", false));
+		expect(desiredAgentState({ blockedCount: 0, agentActive: false, backgroundCount: background.size }).state).toBe("idle");
 	});
 });
