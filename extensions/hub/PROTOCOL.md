@@ -262,6 +262,22 @@ tracker. The token is a concurrency identity, not a secret: it stops a delayed
 update for a removed tracker from hitting a recreated `owner` + `trackerId`.
 Every mutation carries a correlation `requestId`.
 
+```ts
+// create: immutable ordered chunks; unit defaults to "Item"
+{ requestId, trackerId, trackerToken, owner, title, unit?, chunks: { id, label? }[] }
+// update: full chunk replacement; omitted phase/detail clears them
+{ requestId, trackerId, trackerToken, owner, chunkId, state, phase?, detail? }
+// finish: terminal outcome, optional summary
+{ requestId, trackerId, trackerToken, owner, outcome, summary? }
+// remove: drop one owner + trackerId + trackerToken incarnation
+{ requestId, trackerId, trackerToken, owner }
+```
+
+Chunk states are `pending | active | blocked | done | failed | skipped`;
+outcomes are `completed | failed | cancelled`. `reviewing` is a `phase` on an
+`active` chunk, never a state. Non-empty `phase` is rejected on any other state;
+`done`/`failed`/`skipped` are terminal.
+
 ### Acknowledgement
 
 Hub answers each syntactically **valid** mutation on `hub:progress:ack` with
@@ -294,6 +310,27 @@ parent's hub directly. A child must relay validated progress through the
 subagent RPC UI channel (the parent's subagent extension re-emits it as
 `hub:progress:*` on the parent hub). Nested grandchildren report only to their
 immediate parent, never to the root.
+
+### Bounds
+
+Over-limit input is syntactically invalid and receives no ack; data is never
+truncated in the protocol (rendering still sanitizes and truncates to terminal
+width). The named constants live in `progress.ts`.
+
+| field | limit |
+| --- | --- |
+| active trackers | 8 (`MAX_ACTIVE_PROGRESS_TRACKERS`) |
+| finished history records | 16 (`MAX_FINISHED_PROGRESS_TRACKERS`) |
+| chunks per tracker | 100 (`MAX_PROGRESS_CHUNKS`) |
+| `requestId` / `owner` / `trackerId` / `trackerToken` / `chunkId` | 128 chars each |
+| `title` / `label` | 200 chars |
+| `unit` | 40 chars |
+| `phase` | 80 chars |
+| `detail` / `summary` | 500 chars |
+| relayed `setStatus` text | 256 KiB UTF-8 (`MAX_PROGRESS_RELAY_BYTES`) |
+
+`limit-exceeded` is reserved for an otherwise valid create over the active
+capacity; oversized fields are malformed and get no ack.
 
 ## One-time execution authorization
 
