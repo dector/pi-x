@@ -20,7 +20,7 @@ export const ACTIVE_SUBAGENT_WIDGET_ID = "px-subagents-active";
 /**
  * Pi renders at most 10 widget lines and appends its own truncation notice for
  * anything longer, so the formatter keeps the content within this limit and
- * emits its own `… N more` line instead.
+ * emits its own `… N more` line instead. Each run occupies three lines.
  */
 export const ACTIVE_SUBAGENT_WIDGET_MAX_LINES = 10;
 
@@ -32,7 +32,7 @@ export const ACTIVE_SUBAGENT_WIDGET_MAX_LINES = 10;
  */
 export const ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH = 120;
 
-/** Per-field caps that keep the two run lines compact before the line budget applies. */
+/** Per-field caps that keep the three run lines compact before the line budget applies. */
 export const ACTIVE_SUBAGENT_AGENT_MAX_LENGTH = 24;
 export const ACTIVE_SUBAGENT_STATE_MAX_LENGTH = 16;
 export const ACTIVE_SUBAGENT_MODEL_MAX_LENGTH = 42;
@@ -68,11 +68,24 @@ export interface ActiveSubagentWidgetRun {
 export interface ActiveSubagentWidgetStyles {
 	bold: (text: string) => string;
 	italic: (text: string) => string;
+	accent: (text: string) => string;
+	muted: (text: string) => string;
+	dim: (text: string) => string;
+	success: (text: string) => string;
+	warning: (text: string) => string;
+	error: (text: string) => string;
 }
 
+const identity = (text: string): string => text;
 const PLAIN_STYLES: ActiveSubagentWidgetStyles = {
-	bold: (text) => text,
-	italic: (text) => text,
+	bold: identity,
+	italic: identity,
+	accent: identity,
+	muted: identity,
+	dim: identity,
+	success: identity,
+	warning: identity,
+	error: identity,
 };
 
 export interface ActiveSubagentWidgetFormatOptions {
@@ -97,66 +110,70 @@ export function formatActiveSubagentWidget(
 	if (active.length === 0) return undefined;
 
 	const styles = options.styles ?? PLAIN_STYLES;
-	const header = styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${active.length} active)`);
-	const runBudget = Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1) / 2);
+	const header = styles.accent(styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${active.length} active)`));
+	const fullRunBudget = Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1) / 3);
+	// A hidden-count notice cannot fit after three complete runs, so overflow
+	// reserves that notice by showing two runs and leaving two rows unused.
+	const runBudget = active.length > fullRunBudget
+		? Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 2) / 3)
+		: fullRunBudget;
 	const shown = active.slice(0, runBudget);
 	const lines = [
 		header,
 		...shown.flatMap((run) => formatActiveSubagentWidgetLines(run, now, styles, options.contextWindowForModel)),
 	];
 	const hidden = active.length - shown.length;
-	if (hidden > 0) lines.push(styles.italic(`… ${hidden} more`));
+	if (hidden > 0) lines.push(styles.dim(styles.italic(`… ${hidden} more`)));
 	return lines.slice(0, ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
 }
 
-/** Format one run as metadata and task lines. Important fields stay upright; supporting text is italic. */
+/** Format one run as identity, runtime details, and task lines. */
 function formatActiveSubagentWidgetLines(
 	run: ActiveSubagentWidgetRun,
 	now: number,
 	styles: ActiveSubagentWidgetStyles,
 	contextWindowForModel?: (model?: string) => number | undefined,
-): [string, string] {
-	const icon = run.result.pendingApproval ? "◐" : stateIcon(run.result.state);
+): [string, string, string] {
+	const appearance = stateAppearance(run.result.state, Boolean(run.result.pendingApproval));
 	const state = truncate(
 		run.result.pendingApproval ? "waiting approval" : (run.result.state ?? "running").replace(/-/g, " "),
 		ACTIVE_SUBAGENT_STATE_MAX_LENGTH,
 	);
 	const agent = truncate(run.agentName, ACTIVE_SUBAGENT_AGENT_MAX_LENGTH);
+	const id = truncate(run.runId, ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH);
+	const identityLine = " " + styles[appearance.tone](appearance.icon) + " " + styles.dim(`[${id}]`)
+		+ styles.dim(" · ") + styles.muted(agent);
+
 	const elapsed = formatElapsed((run.completedAt ?? now) - run.startedAt);
-	const effort = run.result.thinkingLevel;
 	const turns = formatTurns(run.result.usage?.turns);
 	const usage = truncate(formatWidgetUsage(run.result.usage, run.result.model, contextWindowForModel), 30);
-	const activity = `${state} ${elapsed}${turns ? `, ${turns}` : ""}`;
-	const base = `${icon} ${agent} (${activity})`;
-	const usageSuffix = usage ? ` · ${usage}` : "";
+	const activity = `${state} ${elapsed}${turns ? `, ${turns}` : ""}${usage ? ` · ${usage}` : ""}`;
+	const effort = run.result.thinkingLevel;
 	const effortSuffix = effort ? ` (${effort})` : "";
+	const detailsPrefix = " │ ";
+	const modelSuffix = ` · ${activity}`;
 	const modelBudget = Math.max(
 		1,
 		Math.min(
 			ACTIVE_SUBAGENT_MODEL_MAX_LENGTH,
-			ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(base + usageSuffix + effortSuffix + " · "),
+			ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(detailsPrefix + effortSuffix + modelSuffix),
 		),
 	);
 	const model = run.result.model ? truncate(run.result.model, modelBudget) : undefined;
-
-	let metadata = styles.italic(`${icon} `) + agent + styles.italic(` (${activity})`);
+	let detailsLine = styles.dim(detailsPrefix);
 	if (model) {
-		metadata += styles.italic(" · ") + model;
-		if (effort) metadata += styles.italic(" (") + effort + styles.italic(")");
+		detailsLine += styles.muted(model);
+		if (effort) detailsLine += styles.dim(" (") + styles.muted(effort) + styles.dim(")");
+		detailsLine += styles.dim(` · ${activity}`);
 	} else if (effort) {
-		metadata += styles.italic(" · ") + effort;
+		detailsLine += styles.muted(effort) + styles.dim(` · ${activity}`);
+	} else {
+		detailsLine += styles.dim(activity);
 	}
-	if (usage) metadata += styles.italic(usageSuffix);
 
-	const id = truncate(run.runId, ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH);
-	const taskPrefix = `│ [${id}] · `;
-	const taskBudget = Math.min(
-		ACTIVE_SUBAGENT_TASK_MAX_LENGTH,
-		Math.max(1, ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(taskPrefix)),
-	);
-	const task = truncate(run.task || "(no task description)", taskBudget);
-	const taskLine = styles.italic("│ ") + `[${id}]` + styles.italic(` · ${task}`);
-	return [metadata, taskLine];
+	const task = truncate(run.task || "(no task description)", ACTIVE_SUBAGENT_TASK_MAX_LENGTH);
+	const taskLine = styles.dim(" │ ") + styles.muted(task);
+	return [identityLine, detailsLine, taskLine];
 }
 
 function formatWidgetUsage(
@@ -180,21 +197,18 @@ function formatTurns(turns: number | undefined): string {
 	return turns && turns > 0 ? `${turns} turn${turns === 1 ? "" : "s"}` : "";
 }
 
-function stateIcon(state: SubagentRunState | undefined): string {
-	switch (state) {
-		case "starting":
-			return "○";
-		case "failed":
-			return "✗";
-		case "waiting-approval":
-		case "pause-requested":
-		case "paused":
-		case "resuming":
-		case "aborting":
-			return "◐";
-		default:
-			return "●";
+type StateTone = "success" | "warning" | "error" | "muted";
+
+function stateAppearance(
+	state: SubagentRunState | undefined,
+	pendingApproval: boolean,
+): { icon: string; tone: StateTone } {
+	if (state === "failed") return { icon: "✗", tone: "error" };
+	if (pendingApproval || ["waiting-approval", "pause-requested", "paused", "resuming", "aborting"].includes(state ?? "")) {
+		return { icon: "◐", tone: "warning" };
 	}
+	if (state === "starting") return { icon: "○", tone: "muted" };
+	return { icon: "●", tone: "success" };
 }
 
 /** Compact elapsed rendering: `34s`, `5m 2s`, `1h 3m`. */

@@ -679,9 +679,13 @@ describe("stopped-chain completion details", () => {
 		const data = buildCompletionRenderData(stoppedChainDetails);
 		if (!data) throw new Error("expected render data");
 		const blocks = buildCompletionRenderBlocks(data);
+		// Every entry first (planned order), then the verbose per-run detail.
 		expect(blocks.map((block) => block.kind)).toEqual([
 			"title",
 			"summary",
+			"entry",
+			"entry",
+			"entry",
 			"header",
 			"task",
 			"directory",
@@ -697,6 +701,28 @@ describe("stopped-chain completion details", () => {
 		]);
 		const outputLabels = blocks.filter((block) => block.kind === "output").map((block) => block.label);
 		expect(outputLabels).toEqual(["Output", "Failure", "Not run"]);
+	});
+
+	test("expanded entry list carries a compact line per planned run in order", () => {
+		const data = buildCompletionRenderData(stoppedChainDetails);
+		if (!data) throw new Error("expected render data");
+		const entries = buildCompletionRenderBlocks(data)
+			.filter((block) => block.kind === "entry")
+			.map((block) => block.parts);
+		expect(entries.map((parts) => [parts.runId, parts.outcome])).toEqual([
+			["sa-1", "finished"],
+			["sa-2", "failed"],
+			["sa-3", "notRun"],
+		]);
+		expect(entries[0]?.detail).toBe("finished");
+		expect(entries[2]?.detail).toBe("not run");
+	});
+
+	test("expanded entry list renders each compact line in the plain text output", () => {
+		const expanded = formatCompletionRenderText(stoppedChainDetails, { expanded: true }) ?? "";
+		expect(expanded).toContain("✓ sa-1 finished");
+		expect(expanded).toContain("✗ sa-2 failed");
+		expect(expanded).toContain("⊘ sa-3 not run");
 	});
 
 	test("still renders every result when planned items are absent (old records)", () => {

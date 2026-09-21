@@ -16,6 +16,15 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { formatUsageStats } from "./format.ts";
 import { getResultOutput, isAbortedResult, isFailedResult, type ResultStatusFields } from "./result-output.ts";
+import {
+	contextPercentOf,
+	formatRunLineDetail,
+	formatRunLinePlain,
+	type RunLineParts,
+	type RunOutcome,
+	runOutcomeFromResult,
+} from "./run-line.ts";
+import type { SubagentTiming } from "./timing.ts";
 import type {
 	HerdrRetention,
 	NormalizedSubagentDetails,
@@ -396,6 +405,10 @@ export interface CompletionRenderSection {
 	thinkingLevel?: SingleResult["thinkingLevel"];
 	/** Context window resolved for `model`, used to render `ctx:<n>%`. */
 	contextWindow?: number;
+	/** Wall-clock/phase timing for the run, when the result carried it. */
+	timing?: SubagentTiming;
+	/** Terminal outcome, driving the compact entry line's glyph and verb. */
+	outcome: RunOutcome;
 }
 
 function sectionFromResult(raw: unknown, resolveContextWindow?: ContextWindowResolver): CompletionRenderSection | undefined {
@@ -419,6 +432,26 @@ function sectionFromResult(raw: unknown, resolveContextWindow?: ContextWindowRes
 		...(model ? { model } : {}),
 		...(thinkingLevel ? { thinkingLevel } : {}),
 		contextWindow: resolveContextWindow?.(model),
+		timing: isRecord(raw.timing) ? (raw.timing as unknown as SubagentTiming) : undefined,
+		outcome: runOutcomeFromResult(raw),
+	};
+}
+
+/**
+ * Compact one-line parts for a section, used by the expanded entry list exactly
+ * as the live per-run entry uses them, so both surfaces read identically.
+ */
+export function completionEntryParts(section: CompletionRenderSection): RunLineParts {
+	return {
+		outcome: section.outcome,
+		runId: section.runId ?? section.agent,
+		detail: formatRunLineDetail({
+			outcome: section.outcome,
+			durationMs: section.timing?.wallMs,
+			turns: section.usage?.turns,
+			cost: section.usage?.cost,
+			contextPercent: contextPercentOf(section.usage?.contextTokens, section.contextWindow),
+		}),
 	};
 }
 
@@ -434,6 +467,7 @@ function sectionForUnstartedItem(item: PreparedDispatchItem, mode: SubagentMode,
 		output: notRun ? "the chain stopped before this step." : "the run produced no result.",
 		failed: !notRun,
 		notRun,
+		outcome: notRun ? "notRun" : "failed",
 	};
 }
 
@@ -626,6 +660,7 @@ export function buildCompletionRenderData(
 export type CompletionRenderBlock =
 	| { kind: "title"; text: string }
 	| { kind: "summary"; text: string }
+	| { kind: "entry"; section: CompletionRenderSection; parts: RunLineParts }
 	| { kind: "header"; section: CompletionRenderSection; text: string }
 	| { kind: "task"; section: CompletionRenderSection; text: string }
 	| { kind: "directory"; section: CompletionRenderSection; text: string }
@@ -690,6 +725,11 @@ export function buildCompletionRenderBlocks(data: CompletionRenderData): Complet
 		{ kind: "title", text: data.title },
 		{ kind: "summary", text: data.summary },
 	];
+	// Every entry first, in planned order: the expanded view opens with the same
+	// compact list the live per-run entries use, then the verbose per-run detail.
+	for (const section of data.sections) {
+		blocks.push({ kind: "entry", section, parts: completionEntryParts(section) });
+	}
 	for (const section of data.sections) {
 		blocks.push({ kind: "header", section, text: completionSectionHeader(section) });
 		blocks.push({ kind: "task", section, text: section.task });
@@ -723,6 +763,9 @@ export function formatCompletionRenderText(
 				break;
 			case "summary":
 				lines.push(block.text);
+				break;
+			case "entry":
+				lines.push(formatRunLinePlain(block.parts));
 				break;
 			case "header":
 				lines.push("", `### ${block.text}`);

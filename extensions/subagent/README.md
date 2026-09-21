@@ -405,21 +405,24 @@ The widget is cleared when the last child finishes and on `session_shutdown`.
 
 ```text
 󰚩 Subagents (2 active)
-● worker-fast (running 34s 3 turns) · openai/gpt-5 (minimal) · ctx:10% $0.0266
-│ [red-panda-00k3w9fz2q] · Implement validation
-◐ researcher-fast (waiting approval 12s) · openai/gpt-5 (low)
-│ [calm-otter-01ab4cd9xy] · Check API behavior
+ ● [red-panda-00k3w9fz2q] · worker-fast
+ │ openai/gpt-5 (minimal) · running 34s, 3 turns · ctx:10% $0.0266
+ │ Implement validation
+ ◐ [calm-otter-01ab4cd9xy] · researcher-fast
+ │ openai/gpt-5 (low) · waiting approval 12s
+ │ Check API behavior
 ```
 
-The bold title uses the Nerd Font robot glyph. Each run uses two lines: the
-first shows its state icon, highlighted agent name, state, elapsed time, turns,
-model/effort, context percentage, and cost; the second continues a small
-`│` border with the readable run id and task preview. Supporting text is italic
-while the agent, model, effort, and id stay upright. Fields and both complete
+The accented bold title uses the Nerd Font robot glyph. Each run uses three
+lines: state icon, run id, and agent; model and runtime details; then the task
+preview. The `│` border, run id, separators, and activity text use the theme's
+dim color. Agent, model, effort, and task text use the brighter muted color
+instead of plain terminal white. Running, waiting, and failed icons use success,
+warning, and error colors; a starting icon uses muted. Fields and complete
 lines are capped to keep the widget compact. Truncation works on Unicode code
 points so it does not split a surrogate pair. Pi limits each widget to 10
-lines, so the formatter shows at most four runs and appends a final `… N more`
-line when more agents are active than fit.
+lines. Three runs fit exactly; when more are active, the formatter shows two
+runs and reserves a final dim `… N more` line.
 
 The display refreshes on registry changes (start/complete) and on progress
 updates (state, waiting approval, model, and usage). While at least one run is

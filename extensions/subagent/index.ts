@@ -25,7 +25,7 @@ import {
 	getSelectListTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Editor, Markdown, Spacer, Text, type EditorTheme } from "@earendil-works/pi-tui";
+import { Container, Editor, Markdown, Spacer, Text, type Component, type EditorTheme } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildAgentLogPicker,
@@ -69,6 +69,17 @@ import {
 	buildNotStartedResult,
 	SUBAGENT_COMPLETION_CUSTOM_TYPE,
 } from "./completion.ts";
+import { ClickToggleComponent } from "./completion-view.ts";
+import {
+	buildRunFinishedEntry,
+	formatRunLine,
+	normalizeRunFinishedEntry,
+	runLinePartsFromEntry,
+	RUN_LINE_OUTPUT_PAD,
+	SUBAGENT_RUN_FINISHED_CUSTOM_TYPE,
+	type RunLineStyles,
+	type SubagentRunFinishedEntry,
+} from "./run-line.ts";
 import {
 	type DispatchRuntimeDependencies,
 	type SingleRunRequest,
@@ -205,6 +216,8 @@ interface SingleAgentRuntimeDependencies {
 	shutdownSignal: AbortSignal;
 	/** Refresh the active-subagents widget after a visible progress change. */
 	onProgress?: () => void;
+	/** Report one settled run to the parent UI (detached dispatches only). */
+	onRunSettled?: (runId: string, result: SingleResult) => void;
 	/** True when the parent process has registered the hub `progress` tool. */
 	hasProgressTool: boolean;
 	/** Re-emit one validated child relay on the parent `pi.events` bus. */
@@ -614,6 +627,10 @@ async function runSingleAgent(
 		approvalQueue.cancelRun(runId);
 		currentResult.timing = timing.finish();
 		registry.complete(runId);
+		// Detached runs are the ones the parent cannot watch settle, so each gets a
+		// muted TUI-only line. Blocking dispatches already stream into the tool call
+		// and report through the aggregate, so they are left alone.
+		if (dispatch.execution === "async") runtime.onRunSettled?.(runId, currentResult);
 		if (child) {
 			// Classify the terminal outcome so a Herdr lease can be recycled or
 			// retained. `release` is a no-op for the process backend.
@@ -759,6 +776,12 @@ export default function (pi: ExtensionAPI) {
 		styles: () => ({
 			bold: (text) => sessionContext?.ui.theme.bold(text) ?? text,
 			italic: (text) => sessionContext?.ui.theme.italic(text) ?? text,
+			accent: (text) => sessionContext?.ui.theme.fg("accent", text) ?? text,
+			muted: (text) => sessionContext?.ui.theme.fg("muted", text) ?? text,
+			dim: (text) => sessionContext?.ui.theme.fg("dim", text) ?? text,
+			success: (text) => sessionContext?.ui.theme.fg("success", text) ?? text,
+			warning: (text) => sessionContext?.ui.theme.fg("warning", text) ?? text,
+			error: (text) => sessionContext?.ui.theme.fg("error", text) ?? text,
 		}),
 		contextWindowForModel,
 	});
@@ -1456,11 +1479,75 @@ export default function (pi: ExtensionAPI) {
 		});
 	};
 
+	// Shared theming for the compact run lines: a colored outcome glyph, the run
+	// id upright, and the rest italic and muted. Used by the live per-run entry
+	// and by the expanded dispatch list so a settled run reads identically.
+	const runLineStylesFor = (theme: {
+		fg: (color: any, text: string) => string;
+		italic: (text: string) => string;
+	}): RunLineStyles => ({
+		success: (text) => theme.fg("success", text),
+		warning: (text) => theme.fg("warning", text),
+		error: (text) => theme.fg("error", text),
+		muted: (text) => theme.fg("muted", text),
+		italic: (text) => theme.italic(text),
+	});
+
+	// One muted TUI-only line per settled detached run. `appendEntry` keeps it out
+	// of the LLM context and never triggers a turn, so the dispatch's single
+	// injected aggregate stays the only thing the model sees.
+	function publishRunFinishedEntry(runId: string, result: SingleResult): void {
+		if (shuttingDown || process.env.PI_SUBAGENT_CHILD === "1") return;
+		try {
+			pi.appendEntry<SubagentRunFinishedEntry>(
+				SUBAGENT_RUN_FINISHED_CUSTOM_TYPE,
+				buildRunFinishedEntry(runId, result, contextWindowForModel(result.model)),
+			);
+		} catch {
+			// A stale instance or a replacement session must never break a run.
+		}
+	}
+
+	// Renderer for the live per-run line. The host owns transcript spacing and
+	// adds one blank line before every entry; the entry API never receives
+	// `outputPad`, so the line pads itself. Expanded adds the identity the
+	// collapsed line omits.
+	pi.registerEntryRenderer<SubagentRunFinishedEntry>(
+		SUBAGENT_RUN_FINISHED_CUSTOM_TYPE,
+		(entry, { expanded }, theme) => {
+			const data = normalizeRunFinishedEntry(entry.data);
+			if (!data) {
+				return new Text(theme.fg("dim", theme.italic("⊘ subagent run settled")), RUN_LINE_OUTPUT_PAD, 0);
+			}
+			const container = new Container();
+			container.addChild(
+				new Text(
+					formatRunLine(runLinePartsFromEntry(data), runLineStylesFor(theme)),
+					RUN_LINE_OUTPUT_PAD,
+					0,
+				),
+			);
+			if (expanded) {
+				const detailPad = RUN_LINE_OUTPUT_PAD + 2;
+				const identity = [data.agent && `agent ${data.agent}`, data.model].filter(Boolean).join(" · ");
+				if (identity) {
+					container.addChild(new Text(theme.fg("dim", theme.italic(identity)), detailPad, 0));
+				}
+				if (data.task) {
+					const task = data.task.length > 120 ? `${data.task.slice(0, 120)}…` : data.task;
+					container.addChild(new Text(theme.fg("dim", theme.italic(task)), detailPad, 0));
+				}
+			}
+			return container;
+		},
+	);
+
 	// Compact/expanded renderer for the one async aggregate completion message.
 	// Pure data/text/blocks live in `completion.ts`; this adapter only maps them
 	// onto TUI components, so collapsed and expanded output cannot drift from the
 	// tested model. Legacy/malformed details fall back to the model-visible
-	// content so a completion is never hidden.
+	// content so a completion is never hidden. A left click toggles this message
+	// on its own; ctrl+o still drives every message through the harness.
 	pi.registerMessageRenderer<SubagentDetails>(
 		SUBAGENT_COMPLETION_CUSTOM_TYPE,
 		(message, { expanded, outputPad }, theme) => {
@@ -1482,46 +1569,60 @@ export default function (pi: ExtensionAPI) {
 						? theme.fg("warning", "⊘")
 						: theme.fg("error", "✗");
 
-			if (!expanded) {
-				return new Text(`${icon} ${data.title}`, outputPad, 0);
-			}
-
-			const container = new Container();
-			const mdTheme = getMarkdownTheme();
-			for (const block of buildCompletionRenderBlocks(data)) {
-				switch (block.kind) {
-					case "title":
-						container.addChild(new Text(`${icon} ${block.text}`, outputPad, 0));
-						break;
-					case "summary":
-						container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
-						break;
-					case "header": {
-						const sectionIcon = block.section.notRun
-							? theme.fg("warning", "⊘")
-							: block.section.failed
-								? theme.fg("error", "✗")
-								: theme.fg("success", "✓");
-						container.addChild(new Spacer(1));
-						container.addChild(new Text(`${sectionIcon} ${theme.fg("accent", block.text)}`, outputPad, 0));
-						break;
+			const build = (isExpanded: boolean): Component => {
+				if (!isExpanded) return new Text(`${icon} ${data.title}`, outputPad, 0);
+				const container = new Container();
+				const mdTheme = getMarkdownTheme();
+				const styles = runLineStylesFor(theme);
+				let entrySeen = false;
+				for (const block of buildCompletionRenderBlocks(data)) {
+					switch (block.kind) {
+						case "title":
+							container.addChild(new Text(`${icon} ${block.text}`, outputPad, 0));
+							break;
+						case "summary":
+							container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
+							break;
+						case "entry":
+							// Every settled run first, in planned order, before the verbose
+							// per-run detail below.
+							if (!entrySeen) {
+								container.addChild(new Spacer(1));
+								entrySeen = true;
+							}
+							container.addChild(
+								new Text(formatRunLine(block.parts, styles), outputPad, 0),
+							);
+							break;
+						case "header": {
+							const sectionIcon = block.section.notRun
+								? theme.fg("warning", "⊘")
+								: block.section.failed
+									? theme.fg("error", "✗")
+									: theme.fg("success", "✓");
+							container.addChild(new Spacer(1));
+							container.addChild(new Text(`${sectionIcon} ${theme.fg("accent", block.text)}`, outputPad, 0));
+							break;
+						}
+						case "task":
+							container.addChild(new Text(theme.fg("dim", `Task: ${block.text}`), outputPad, 0));
+							break;
+						case "directory":
+							container.addChild(new Text(theme.fg("dim", `Directory: ${block.text}`), outputPad, 0));
+							break;
+						case "output":
+							container.addChild(new Spacer(1));
+							container.addChild(new Markdown(block.text.trim(), outputPad, 0, mdTheme));
+							break;
+						case "usage":
+							container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
+							break;
 					}
-					case "task":
-						container.addChild(new Text(theme.fg("dim", `Task: ${block.text}`), outputPad, 0));
-						break;
-					case "directory":
-						container.addChild(new Text(theme.fg("dim", `Directory: ${block.text}`), outputPad, 0));
-						break;
-					case "output":
-						container.addChild(new Spacer(1));
-						container.addChild(new Markdown(block.text.trim(), outputPad, 0, mdTheme));
-						break;
-					case "usage":
-						container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
-						break;
 				}
-			}
-			return container;
+				return container;
+			};
+
+			return new ClickToggleComponent(build, expanded);
 		},
 	);
 
@@ -1611,6 +1712,7 @@ export default function (pi: ExtensionAPI) {
 				backendFor,
 				shutdownSignal: sessionShutdown.signal,
 				onProgress: publishActiveSubagentWidget,
+				onRunSettled: publishRunFinishedEntry,
 				hasProgressTool,
 				emitProgressRelay: (channel, payload) => pi.events.emit(channel, payload),
 			};
