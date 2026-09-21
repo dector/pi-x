@@ -120,6 +120,10 @@ import type {
 
 const COLLAPSED_ITEM_COUNT = 10;
 
+// Nerd Font hourglass shown while a subagent run is still active (replaces the
+// `⏳` emoji, which renders inconsistently across terminals).
+const RUNNING_ICON = "\u{f051f}";
+
 // hub permission protocol (see extensions/hub/PROTOCOL.md)
 const HUB_ID = "subagent";
 const HUB_ASK_EVENT = "hub:ask";
@@ -1575,7 +1579,7 @@ export default function (pi: ExtensionAPI) {
 				const r = details.results[0];
 				const isActive = r.exitCode === -1;
 				const isError = !isActive && isFailedResult(r);
-				const icon = isActive ? theme.fg("warning", "⏳") : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+				const icon = isActive ? theme.fg("warning", RUNNING_ICON) : isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r);
 				const finalOutput = getFinalOutput(r.messages);
 
@@ -1644,7 +1648,7 @@ export default function (pi: ExtensionAPI) {
 				const successCount = details.results.filter((r) => r.exitCode === 0).length;
 				const chainRunning = details.results.some((r) => r.exitCode === -1);
 				const icon = chainRunning
-					? theme.fg("warning", "⏳")
+					? theme.fg("warning", RUNNING_ICON)
 					: successCount === details.results.length
 						? theme.fg("success", "✓")
 						: theme.fg("error", "✗");
@@ -1663,7 +1667,7 @@ export default function (pi: ExtensionAPI) {
 					);
 
 					for (const r of details.results) {
-						const rIcon = r.exitCode === -1 ? theme.fg("warning", "⏳") : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
+						const rIcon = r.exitCode === -1 ? theme.fg("warning", RUNNING_ICON) : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r);
 						const finalOutput = getFinalOutput(r.messages);
 
@@ -1709,7 +1713,7 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("toolTitle", theme.bold("chain ")) +
 					theme.fg("accent", `${successCount}/${details.results.length} steps`);
 				for (const r of details.results) {
-					const rIcon = r.exitCode === -1 ? theme.fg("warning", "⏳") : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
+					const rIcon = r.exitCode === -1 ? theme.fg("warning", RUNNING_ICON) : r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
@@ -1729,7 +1733,7 @@ export default function (pi: ExtensionAPI) {
 				const failCount = details.results.filter((r) => r.exitCode !== -1 && isFailedResult(r)).length;
 				const isRunning = running > 0;
 				const icon = isRunning
-					? theme.fg("warning", "⏳")
+					? theme.fg("warning", RUNNING_ICON)
 					: failCount > 0
 						? theme.fg("warning", "◐")
 						: theme.fg("success", "✓");
@@ -1788,7 +1792,7 @@ export default function (pi: ExtensionAPI) {
 				for (const r of details.results) {
 					const rIcon =
 						r.exitCode === -1
-							? theme.fg("warning", "⏳")
+							? theme.fg("warning", RUNNING_ICON)
 							: isFailedResult(r)
 								? theme.fg("error", "✗")
 								: theme.fg("success", "✓");
