@@ -1,6 +1,17 @@
-// installed by herdr
-// managed by herdr; reinstalling or updating the integration overwrites this file.
-// add custom hooks/plugins beside this file instead of editing it.
+// FORK of the official Herdr Pi integration.
+// Upstream: herdrdev/herdr src/integration/assets/pi/herdr-agent-state.ts
+// (HERDR_INTEGRATION_ID=pi, HERDR_INTEGRATION_VERSION=9, v0.9.1 == master).
+//
+// Why: the official integration only knows `agentActive`, so it reports `idle`
+// on `agent_settled`. A Pi session that detaches background work (for example a
+// `subagent` async dispatch) therefore looks done while the work is still
+// running. This fork adds the `herdr:background` lease: while any producer
+// keeps an id active, the pane stays `working`.
+//
+// Transfer: re-vendor the official file and re-apply the hunks marked
+// `FORK: background` (see README.md). Everything else stays upstream so the
+// diff is small and rebasable.
+//
 // HERDR_INTEGRATION_ID=pi
 // HERDR_INTEGRATION_VERSION=9
 // @ts-nocheck
@@ -176,6 +187,39 @@ async function drainStateQueue(): Promise<void> {
   }
 }
 
+// FORK: background-work lease helpers.
+
+const MAX_BACKGROUND_ID_LENGTH = 128;
+
+export function parseBackgroundId(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_BACKGROUND_ID_LENGTH
+    ? value
+    : undefined;
+}
+
+/** Apply one `herdr:background` payload. Returns true when the set changed. */
+export function applyBackgroundEvent(background: Set<string>, data: unknown): boolean {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const id = parseBackgroundId((data as { id?: unknown }).id);
+  if (!id) {
+    return false;
+  }
+  const active = (data as { active?: unknown }).active;
+  if (active === true) {
+    if (background.has(id)) {
+      return false;
+    }
+    background.add(id);
+    return true;
+  }
+  if (active === false) {
+    return background.delete(id);
+  }
+  return false;
+}
+
 export default function (pi) {
   if (!enabled()) {
     return;
@@ -187,12 +231,15 @@ export default function (pi) {
   let lastState: AgentState | undefined;
   let lastMessage: string | undefined;
   let rootSession = false;
+  // FORK: background ids currently holding the pane in `working`.
+  const background = new Set<string>();
 
   function desiredState() {
     if (blockedCount > 0) {
       return { state: "blocked" as const, message: blockedMessage };
     }
-    if (agentActive) {
+    // FORK: background work keeps the pane working after a settled turn.
+    if (agentActive || background.size > 0) {
       return { state: "working" as const, message: undefined };
     }
     return { state: "idle" as const, message: undefined };
@@ -226,6 +273,20 @@ export default function (pi) {
     publishState();
   });
 
+  // FORK: `herdr:background` lease. Producers (for example the `subagent`
+  // extension) mark an id active while detached work is running and clear it
+  // when that work settles. Events that arrive before `session_start` are
+  // buffered in the set and published once `rootSession` is set, so producer
+  // and integration startup order does not matter.
+  pi.events.on("herdr:background", (data) => {
+    if (!applyBackgroundEvent(background, data)) {
+      return;
+    }
+    if (rootSession) {
+      publishState();
+    }
+  });
+
   pi.on("session_start", async (event, ctx) => {
     // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
     // and RPC still reports hasUI=true, so mode is the reliable gate.
@@ -257,5 +318,10 @@ export default function (pi) {
 
     agentActive = false;
     publishState();
+  });
+
+  // FORK: a replacement session must not inherit background ids.
+  pi.on("session_shutdown", () => {
+    background.clear();
   });
 }

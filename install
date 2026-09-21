@@ -97,6 +97,7 @@ extensions=(
   "git"
   "pi-nvim"
   "subagent"
+  "herdr-agent-state"
 )
 
 installed_extensions=()
@@ -187,6 +188,14 @@ if [[ $has_prompts -eq 1 ]]; then
   done
 else
   echo "No extension prompt directories found, skipping prompts."
+fi
+
+# This repo forks Herdr's managed Pi integration. Keeping both the fork and
+# Herdr's flat managed file double-reports the pane, so drop the flat file.
+FLAT_HERDR_EXT="$DEST_ROOT/herdr-agent-state.ts"
+if [[ -f "$FLAT_HERDR_EXT" ]]; then
+  echo "Removing managed Herdr integration at $FLAT_HERDR_EXT (replaced by the fork)."
+  rm -f "$FLAT_HERDR_EXT"
 fi
 
 echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."
