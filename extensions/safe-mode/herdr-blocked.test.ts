@@ -59,7 +59,6 @@ function createFakePi(bus: Bus) {
 		},
 		registerFlag() {},
 		registerCommand() {},
-		registerTool() {},
 		registerShortcut() {},
 		appendEntry() {},
 		getFlag() {

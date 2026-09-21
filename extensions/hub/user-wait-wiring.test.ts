@@ -68,7 +68,6 @@ function createFakePi(bus: Bus) {
 		registerCommand: (name: string, options: HubCommand) => {
 			commands.set(name, options);
 		},
-		registerTool() {},
 		registerFlag() {},
 		registerShortcut() {},
 		appendEntry() {},

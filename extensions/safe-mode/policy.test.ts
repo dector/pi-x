@@ -8,8 +8,6 @@ import {
 	isBashCommandAllowedAnyArgs,
 	isBashCommandAllowedByAllowlist,
 	normalizeGitToolArgs,
-	PROGRESS_TOOL_NAME,
-	SAFE_MODES,
 	type BashCommandType,
 	type SafeMode,
 } from "./policy.ts";
@@ -528,49 +526,6 @@ test("decideToolCall: paranoid/yolo sanity", () => {
 	).toBe("allow");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }).action).toBe("confirm");
 	expect(decide("yolo", "bash", { command: "rm -rf /tmp/x" }, PROJECT_ROOT, true).action).toBe("allow");
-});
-
-test("decideToolCall: progress tool is allowed in every safe mode", () => {
-	expect(PROGRESS_TOOL_NAME).toBe("progress");
-
-	for (const mode of SAFE_MODES) {
-		expect(decide(mode, PROGRESS_TOOL_NAME, { action: "start" }).action).toBe("allow");
-		expect(decide(mode, PROGRESS_TOOL_NAME, { action: "update" }).action).toBe("allow");
-		expect(decide(mode, PROGRESS_TOOL_NAME, { action: "finish" }).action).toBe("allow");
-		expect(decide(mode, PROGRESS_TOOL_NAME, { action: "clear" }).action).toBe("allow");
-	}
-
-	// Provider verdicts cannot downgrade the exception, but a block still wins.
-	expect(
-		decideToolCall({
-			mode: "paranoid",
-			toolName: PROGRESS_TOOL_NAME,
-			input: { action: "update" },
-			projectRoot: PROJECT_ROOT,
-			outerAccess: false,
-			providerDecision: { action: "confirm", reason: "provider said confirm" },
-		}).action,
-	).toBe("allow");
-	expect(
-		decideToolCall({
-			mode: "smart",
-			toolName: PROGRESS_TOOL_NAME,
-			input: { action: "update" },
-			projectRoot: PROJECT_ROOT,
-			outerAccess: false,
-			providerDecision: { action: "block", reason: "provider said block" },
-		}).action,
-	).toBe("block");
-});
-
-test("decideToolCall: the progress exception does not broaden to lookalike tools", () => {
-	const lookalikes = ["progress-tool", "progress_extra", "px:progress", "progresses", "Progress"];
-
-	for (const toolName of lookalikes) {
-		expect(decide("paranoid", toolName, {}).action).toBe("confirm");
-		expect(decide("reader", toolName, {}).action).toBe("confirm");
-		expect(decide("smart", toolName, {}).action).toBe("confirm");
-	}
 });
 
 test("describeToolCall: git summaries", () => {

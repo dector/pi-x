@@ -11,12 +11,6 @@ export const DEFAULT_SAFE_MODE: SafeMode = "smart";
 const READ_ONLY_TOOLS = new Set(["read", "ls", "grep"]);
 const PATH_SCOPED_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
 
-/**
- * Name-exact exception for the hub's bounded in-memory progress reporter.
- * Exported so policy tests can assert the rule does not broaden to other tools.
- */
-export const PROGRESS_TOOL_NAME = "progress";
-
 const PROC_ACTIONS = new Set(["run", "list", "status", "logs", "stop", "kill", "write", "forget"]);
 const PROC_READ_ONLY_ACTIONS = new Set(["list", "status", "logs"]);
 
@@ -497,14 +491,6 @@ export function decideToolCall(args: {
 
 	if (providerDecision?.action === "block") {
 		return { action: "block", reason: providerDecision.reason, summary };
-	}
-
-	// `progress` only performs bounded in-memory hub event updates (no
-	// filesystem, shell, or network access), so auto-allow it in every mode
-	// including PARANOID. This is deliberately name-exact: do not broaden it to
-	// other tools.
-	if (toolName === PROGRESS_TOOL_NAME) {
-		return { action: "allow", summary };
 	}
 
 	if (mode === "paranoid") {

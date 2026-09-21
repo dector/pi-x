@@ -18,18 +18,9 @@ Status: draft. Payloads below are the agreed shape; marked items are still open.
 | `hub:user-wait:clear` | UI owner → hub | `{ id, owner }` |
 | `hub:user-wait:changed` | hub → observers | `{ active, count, waits[] }` |
 | `hub:user-wait:ack` | hub → UI owner | `{ id, owner, operation: "set" \| "clear" }` |
-| `hub:progress:create` | producer → hub | `ProgressCreatePayload` |
-| `hub:progress:update` | producer → hub | `ProgressUpdatePayload` |
-| `hub:progress:finish` | producer → hub | `ProgressFinishPayload` |
-| `hub:progress:remove` | producer → hub | `ProgressRemovePayload` |
-| `hub:progress:changed` | hub → observers | `ProgressSnapshot` |
-| `hub:progress:ack` | hub → producer | `HubProgressAckPayload` |
-| `hub:progress:query` | observer → hub | `ProgressQueryPayload` |
-| `hub:progress:snapshot` | hub → observer | `HubProgressSnapshotPayload` |
 
 - `id` on `hub:ask` is a correlation id; the same `id` comes back on `hub:answer`.
 - User-wait channels are a separate protocol; see [User waits](#user-waits).
-- Progress channels are a separate observer protocol; see [Progress](#progress).
 - Clients may register at any time. Registration is idempotent (upsert by `id`).
 
 ```ts
@@ -243,94 +234,6 @@ crossings only:
 Emitting another `{ active: true }` merely to refresh a label would increment
 Herdr's counter and could leave the pane stuck as blocked. The complete updated
 list is still available on `hub:user-wait:changed`.
-
-## Progress
-
-Semantic progress is an **observer protocol, not a capability**. It is not in
-`HUB_CHANNELS.register` and never flows through permission arbitration. A hub
-owns a `ProgressRegistry` of trackers; producers mutate it and observers read
-detached aggregate snapshots. The public types live in [`contract.ts`](contract.ts).
-
-### Mutation
-
-A tracker is keyed by `owner` + `trackerId` and guarded by an opaque
-`trackerToken` generated per incarnation. `create` supplies the immutable,
-ordered chunk list; `update` replaces one chunk's state/phase/detail (`update`
-is a full replacement, so an omitted `phase` or `detail` clears it); `finish`
-sets a terminal `outcome` and freezes the tracker; `remove` drops an owned
-tracker. The token is a concurrency identity, not a secret: it stops a delayed
-update for a removed tracker from hitting a recreated `owner` + `trackerId`.
-Every mutation carries a correlation `requestId`.
-
-```ts
-// create: immutable ordered chunks; unit defaults to "Item"
-{ requestId, trackerId, trackerToken, owner, title, unit?, chunks: { id, label? }[] }
-// update: full chunk replacement; omitted phase/detail clears them
-{ requestId, trackerId, trackerToken, owner, chunkId, state, phase?, detail? }
-// finish: terminal outcome, optional summary
-{ requestId, trackerId, trackerToken, owner, outcome, summary? }
-// remove: drop one owner + trackerId + trackerToken incarnation
-{ requestId, trackerId, trackerToken, owner }
-```
-
-Chunk states are `pending | active | blocked | done | failed | skipped`;
-outcomes are `completed | failed | cancelled`. `reviewing` is a `phase` on an
-`active` chunk, never a state. Non-empty `phase` is rejected on any other state;
-`done`/`failed`/`skipped` are terminal.
-
-### Acknowledgement
-
-Hub answers each syntactically **valid** mutation on `hub:progress:ack` with
-`{ requestId, trackerId, trackerToken, owner, operation, ok, changed, error? }`.
-Malformed payloads are ignored and get no ack. `ok: false` carries a
-`ProgressAckError`. `ack.changed` means the full registry record/history
-mutated, so accepted idempotent operations are `ok: true, changed: false`.
-Hub emits `ack` **before** `changed`, matching user-wait ordering. Event
-dispatch is synchronous, so a direct client installs an ack listener, emits,
-and knows the result before `emit` returns.
-
-### Observe
-
-`hub:progress:changed` carries a `ProgressSnapshot`
-`{ active, count, trackers[] }` containing unfinished trackers only. Chunk
-order is creation order; `index` is one-based. Snapshot order is `updatedAt`
-descending, then `owner` and `trackerId` ascending. `changed` is emitted only
-when the lightweight active snapshot actually changes.
-
-To read current state, subscribe to `hub:progress:snapshot` **before** emitting
-`hub:progress:query` `{ requestId }`; the synchronous reply
-`{ requestId, snapshot }` is correlated by `requestId`. Subscribe to `changed`
-separately for later mutations. Snapshots are detached from registry state and
-the observer protocol exposes no `detail`, labels, outcomes, or history.
-
-### Child processes
-
-`pi.events` is process-local, so a hub in a child process cannot update its
-parent's hub directly. A child must relay validated progress through the
-subagent RPC UI channel (the parent's subagent extension re-emits it as
-`hub:progress:*` on the parent hub). Nested grandchildren report only to their
-immediate parent, never to the root.
-
-### Bounds
-
-Over-limit input is syntactically invalid and receives no ack; data is never
-truncated in the protocol (rendering still sanitizes and truncates to terminal
-width). The named constants live in `progress.ts`.
-
-| field | limit |
-| --- | --- |
-| active trackers | 8 (`MAX_ACTIVE_PROGRESS_TRACKERS`) |
-| finished history records | 16 (`MAX_FINISHED_PROGRESS_TRACKERS`) |
-| chunks per tracker | 100 (`MAX_PROGRESS_CHUNKS`) |
-| `requestId` / `owner` / `trackerId` / `trackerToken` / `chunkId` | 128 chars each |
-| `title` / `label` | 200 chars |
-| `unit` | 40 chars |
-| `phase` | 80 chars |
-| `detail` / `summary` | 500 chars |
-| relayed `setStatus` text | 256 KiB UTF-8 (`MAX_PROGRESS_RELAY_BYTES`) |
-
-`limit-exceeded` is reserved for an otherwise valid create over the active
-capacity; oversized fields are malformed and get no ack.
 
 ## One-time execution authorization
 

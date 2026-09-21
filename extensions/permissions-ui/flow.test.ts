@@ -40,7 +40,6 @@ interface FakePi {
 	commands: Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>;
 	on(event: string, handler: BusHandler): void;
 	registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }): void;
-	registerTool(): void;
 	appendEntry(customType: string, data: unknown): void;
 }
 
@@ -59,7 +58,6 @@ function createFakePi(bus: Bus): FakePi {
 		registerCommand(name, options) {
 			commands.set(name, options);
 		},
-		registerTool() {},
 		appendEntry() {},
 	};
 	return pi;

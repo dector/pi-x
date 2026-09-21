@@ -27,10 +27,8 @@ infers a wait from a pending `hub:ask`.
 ## Commands
 
 - `/px:hub` — show registered providers, pending permission requests, active
-  user waits (`owner/<short-id>: label`), a compact progress count, and the
-  current Herdr tab status (`<status> (<tab_id>)` or `off`).
-- `/px:progress [owner/]trackerId` — show active and recently finished progress
-  trackers, or one tracker's chunks with state and phase.
+  user waits (`owner/<short-id>: label`), and the current Herdr tab status
+  (`<status> (<tab_id>)` or `off`).
 
 See [`PROTOCOL.md`](PROTOCOL.md) for the channel and payload contract.
 
@@ -62,84 +60,6 @@ nothing while the count stays non-zero. This prevents a label update or a second
 concurrent wait from incrementing Herdr's counter into a stuck state. Safe-mode's
 direct `herdr:blocked` emission is a fallback for an absent or old hub only
 (see [`../safe-mode/README.md`](../safe-mode/README.md#herdr-blocked-state)).
-
-## Progress
-
-Hub brokers explicit **semantic progress** for a coordinating agent and its
-subagents. The `progress` tool creates a tracker with a fixed, ordered list of
-chunks, reports each chunk's lifecycle state, and finishes the tracker. Hub
-publishes detached aggregate snapshots on `hub:progress:changed`; `status-bar`
-renders one footer row and `/px:progress` shows a detailed view. Progress is
-reported state, never inferred from tool calls or subagent runtime state.
-
-States are `pending`, `active`, `blocked`, `done`, `failed`, and `skipped`.
-`reviewing` is a `phase` on an active chunk, not a state. `start` returns a
-`trackerId` and an opaque `trackerToken`; later calls and delegated children
-must pass both.
-
-### Sequential example
-
-Start a tracker, mark one chunk active with a phase, then done:
-
-```json
-{ "action": "start", "title": "Authentication", "unit": "Stage",
-  "chunks": [ { "id": "schema", "label": "Database schema" },
-              { "id": "api", "label": "API" },
-              { "id": "ui", "label": "UI" } ] }
-```
-
-```json
-{ "action": "update", "trackerId": "progress-...", "trackerToken": "pt-...",
-  "chunkId": "schema", "state": "active", "phase": "reviewing" }
-```
-
-```json
-{ "action": "update", "trackerId": "progress-...", "trackerToken": "pt-...",
-  "chunkId": "schema", "state": "done" }
-```
-
-### Parallel example
-
-Several chunks may be in flight at once; the footer switches from the focused
-`Stage 1/3 (reviewing)` form to the aggregate counts:
-
-```json
-{ "action": "update", "trackerId": "progress-...", "trackerToken": "pt-...",
-  "chunkId": "api", "state": "active" }
-```
-
-```json
-{ "action": "update", "trackerId": "progress-...", "trackerToken": "pt-...",
-  "chunkId": "ui", "state": "blocked" }
-```
-
-Finish is explicit once the tracker has an outcome:
-
-```json
-{ "action": "finish", "trackerId": "progress-...", "trackerToken": "pt-...",
-  "outcome": "completed", "summary": "All stages implemented and reviewed" }
-```
-
-### Lifetime and clear
-
-- Progress is **session-only**. It is kept in memory, reset on session
-  shutdown, and never persisted across restarts.
-- A finished tracker leaves the active footer row but stays visible to
-  `/px:progress` until it is explicitly cleared, evicted as the oldest finished
-  record, or the session ends. Clear it with
-  `{ "action": "clear", "trackerId": "progress-...", "trackerToken": "pt-..." }`.
-- Hub never guesses completion; `finish` is always required.
-
-### Child relay limitation
-
-A subagent runs in its own process, so its `progress` calls are relayed through
-`subagent` over a best-effort `setStatus` channel. The child learns only that a
-valid envelope reached the parent transport, **not** that the parent accepted
-the transition. Relay is **immediate-child only**: a grandchild reports to its
-own process, never to the root. Relayed progress is not cleared when a child
-exits; if a child fails with a chunk still active, the coordinator must report
-that chunk `blocked` or `failed`. See
-[`../subagent/README.md`](../subagent/README.md#progress-relay).
 
 ## Herdr tab status
 
