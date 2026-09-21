@@ -718,6 +718,7 @@ function createFakePi(): FakePi {
 		registerCommand: (name: string, options: unknown) => {
 			commands.set(name, options);
 		},
+		registerTool() {},
 	};
 	return { pi, handlers, commands };
 }

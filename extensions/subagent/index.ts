@@ -49,6 +49,13 @@ import {
 	type SubagentControlInput,
 } from "./control-ops.ts";
 import {
+	applyProgressRelay,
+	PROGRESS_RELAY_DIAGNOSTIC,
+	PROGRESS_RELAY_STATUS_KEY,
+	withProgressGuidance,
+	withProgressTool,
+} from "./progress-relay.ts";
+import {
 	applyRpcStreamEvent,
 	emptyUsage,
 	interruptActiveTools,
@@ -196,6 +203,10 @@ interface SingleAgentRuntimeDependencies {
 	shutdownSignal: AbortSignal;
 	/** Refresh the active-subagents widget after a visible progress change. */
 	onProgress?: () => void;
+	/** True when the parent process has registered the hub `progress` tool. */
+	hasProgressTool: boolean;
+	/** Re-emit one validated child relay on the parent `pi.events` bus. */
+	emitProgressRelay?: (channel: string, payload: Record<string, unknown>) => void;
 }
 
 async function runSingleAgent(
@@ -260,7 +271,8 @@ async function runSingleAgent(
 	if (model) args.push("--model", model);
 	const thinkingLevel = agent.thinking ?? (inheritsDispatchConfig ? dispatchDefaults.thinkingLevel : undefined);
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	const childTools = withProgressTool(agent.tools, runtime.hasProgressTool);
+	if (childTools && childTools.length > 0) args.push("--tools", childTools.join(","));
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -310,8 +322,9 @@ async function runSingleAgent(
 	// the backend (for example to recycle or retain a Herdr pane).
 	let wasAborted = false;
 	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+		const childSystemPrompt = withProgressGuidance(agent.systemPrompt, runtime.hasProgressTool);
+		if (childSystemPrompt.trim()) {
+			const tmp = await writePromptToTempFile(agent.name, childSystemPrompt);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
 			args.push("--append-system-prompt", tmpPromptPath);
@@ -350,6 +363,24 @@ async function runSingleAgent(
 				},
 				onExtensionUiRequest(request) {
 					void (async () => {
+						// Child-to-parent progress relay. Handled before the generic
+						// fire-and-forget setStatus path so a valid envelope is re-emitted on
+						// the parent bus and the raw status is never mistaken for a control.
+						if (request.method === "setStatus" && request.statusKey === PROGRESS_RELAY_STATUS_KEY) {
+							applyProgressRelay(
+								request.statusText,
+								(channel, payload) => runtime.emitProgressRelay?.(channel, payload),
+								() => {
+									// Bound to one relay diagnostic per run so a bad child cannot grow
+									// result memory without limit. Never store the raw payload text.
+									const diagnostics = (currentResult.diagnostics ??= []);
+									if (diagnostics.length < 20 && !diagnostics.includes(PROGRESS_RELAY_DIAGNOSTIC)) {
+										diagnostics.push(PROGRESS_RELAY_DIAGNOSTIC);
+									}
+								},
+							);
+							return;
+						}
 						const fireAndForget = new Set(["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]);
 						if (fireAndForget.has(request.method)) {
 							if (
@@ -1501,6 +1532,14 @@ export default function (pi: ExtensionAPI) {
 			if (!preparation.ok) return preparation.result;
 
 			const dispatch = preparation.dispatch;
+			// `progress` is optional: subagent must keep working when hub is absent.
+			// Build the relay wiring per dispatch from the parent runtime.
+			let hasProgressTool = false;
+			try {
+				hasProgressTool = pi.getAllTools().some((tool) => tool.name === "progress");
+			} catch {
+				hasProgressTool = false;
+			}
 			const runtime: SingleAgentRuntimeDependencies = {
 				activeChildren,
 				approvalQueue,
@@ -1510,6 +1549,8 @@ export default function (pi: ExtensionAPI) {
 				backendFor,
 				shutdownSignal: sessionShutdown.signal,
 				onProgress: publishActiveSubagentWidget,
+				hasProgressTool,
+				emitProgressRelay: (channel, payload) => pi.events.emit(channel, payload),
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
 				runSingle: (request) => runSingleAgent(request, target, runtime),

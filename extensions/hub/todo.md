@@ -59,6 +59,9 @@ each registering as a `perm:tool` provider.
 - [ ] **Observers** — `status-bar`, `herdr` subscribe to hub traffic for badges/telemetry
   - [x] **Explicit user-wait signal** — `hub:user-wait:set`/`clear`/`changed`/`ack`; observers read the aggregate snapshot and never infer waits from pending requests. Hub maps aggregate crossings to the external `herdr:blocked` event.
   - [x] **Herdr tab status** — adjacent, not hub traffic: hub mirrors Herdr's `pane.agent_status_changed` onto its own tab label ([`herdr-tab.ts`](herdr-tab.ts); see [README](README.md#herdr-tab-status)). It does not use the capability registry.
+  - [x] **Semantic progress** — hub `progress` tool + `hub:progress:*` registry, immediate-child relay, and `status-bar` observer/formatter ([`progress.ts`](../status-bar/progress.ts), `formatProgressRow`). Automated tests cover the full path (interactive TUI smoke test in [`idea-progress.md`](idea-progress.md) section 12 remains manual).
+    - [ ] Persist progress across Pi restarts (session state or sidecar file).
+    - [ ] Parse a milestone document into tracker/chunk definitions.
   - [ ] **status-bar** observer over the user-wait aggregate (badges/telemetry)
 
 ## 5. Protocol / open items
