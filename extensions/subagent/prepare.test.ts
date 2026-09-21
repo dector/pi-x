@@ -16,6 +16,7 @@ import {
 	type HerdrPreflightOutcome,
 	type HerdrRequest,
 	type PreparationDependencies,
+	type RestrictedAgentApprovalRequest,
 } from "./prepare.ts";
 import type { SafeModeSnapshot } from "./safe-mode.ts";
 
@@ -41,12 +42,17 @@ interface HarnessOptions {
 	dispatchIds?: string[];
 	/** Injected Herdr preflight result; defaults to a successful `failed` policy. */
 	preflightHerdr?: (request: HerdrRequest) => Promise<HerdrPreflightOutcome>;
+	/** Effective restricted patterns; defaults to empty, which disables the gate. */
+	restrictedAgentPatterns?: readonly string[];
+	/** Restricted approval answer; a function can inspect the request per test. */
+	restrictedApproval?: boolean | ((request: RestrictedAgentApprovalRequest) => boolean | Promise<boolean>);
 }
 
 function createHarness(options: HarnessOptions = {}) {
 	const calls = {
 		discover: [] as Array<{ cwd: string; scope: AgentScope }>,
 		permission: [] as Array<{ what: string; data: Record<string, unknown> }>,
+		restrictedApproval: [] as RestrictedAgentApprovalRequest[],
 		safeMode: 0,
 		nextDispatchId: 0,
 		nextRunId: 0,
@@ -67,6 +73,14 @@ function createHarness(options: HarnessOptions = {}) {
 			calls.permission.push({ what, data });
 			calls.order.push("permission");
 			return options.permission;
+		},
+		restrictedAgentPatterns: options.restrictedAgentPatterns ?? [],
+		requestRestrictedAgentApproval: async (request) => {
+			calls.restrictedApproval.push(request);
+			calls.order.push("restricted-approval");
+			const answer = options.restrictedApproval;
+			if (typeof answer === "function") return answer(request);
+			return answer ?? false;
 		},
 		snapshotSafeMode: async () => {
 			calls.safeMode += 1;
@@ -475,6 +489,203 @@ describe("project-agent approval", () => {
 		);
 		expect(result.ok).toBe(true);
 		expect(calls.permission[0]?.data.agents).toBe("alpha, beta");
+	});
+});
+
+describe("restricted-agent approval", () => {
+	const RESTRICTED_PATTERNS = ["*-strong", "*-explicit"];
+
+	test("allows a restricted single dispatch and calls approval exactly once", async () => {
+		const { deps, calls } = createHarness({
+			agents: [agent("reviewer-ultra-explicit"), agent("reviewer-fast"), agent("reviewer-strong")],
+			restrictedAgentPatterns: ["*-explicit", "*-strong"],
+			restrictedApproval: true,
+			runIds: ["sa-1"],
+			dispatchIds: ["d-1"],
+		});
+
+		const result = await prepareSubagentDispatch({ agent: "reviewer-ultra-explicit", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.items).toEqual([{ runId: "sa-1", agent: "reviewer-ultra-explicit", task: "t" }]);
+		expect(calls.restrictedApproval).toEqual([
+			{
+				mode: "single",
+				restrictedAgents: ["reviewer-ultra-explicit"],
+				patterns: ["*-explicit", "*-strong"],
+				alternatives: ["reviewer-fast"],
+			},
+		]);
+	});
+
+	test("aborts the whole single dispatch when approval is denied", async () => {
+		const { deps, calls } = createHarness({
+			agents: [agent("reviewer-ultra-explicit"), agent("reviewer-fast"), agent("reviewer-strong")],
+			restrictedAgentPatterns: ["*-explicit", "*-strong"],
+			restrictedApproval: false,
+			runIds: ["sa-1"],
+			dispatchIds: ["d-1"],
+		});
+
+		const result = await prepareSubagentDispatch({ agent: "reviewer-ultra-explicit", task: "t" }, deps);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(textOf(result.result)).toBe(
+			"Restricted agents not approved: reviewer-ultra-explicit. Allowed alternatives: reviewer-fast. No agents were started.",
+		);
+		expect(result.result.details?.mode).toBe("single");
+		expect(result.result.details?.dispatchStatus).toBe("aborted");
+		expect(result.result.details?.results).toEqual([]);
+		expect(result.result.isError).toBeUndefined();
+		expect(calls.nextRunId).toBe(0);
+		expect(calls.nextDispatchId).toBe(0);
+		expect(calls.safeMode).toBe(0);
+	});
+
+	test("prompts once and dedupes restricted names across a parallel dispatch", async () => {
+		const { deps, calls } = createHarness({
+			agents: [
+				agent("reviewer-ultra-explicit"),
+				agent("reviewer-strong"),
+				agent("reviewer-fast"),
+				agent("worker-fast"),
+			],
+			restrictedAgentPatterns: RESTRICTED_PATTERNS,
+			restrictedApproval: true,
+		});
+
+		const result = await prepareSubagentDispatch(
+			{
+				tasks: [
+					{ agent: "reviewer-ultra-explicit", task: "1" },
+					{ agent: "reviewer-fast", task: "2" },
+					{ agent: "reviewer-ultra-explicit", task: "3" },
+					{ agent: "reviewer-strong", task: "4" },
+				],
+			},
+			deps,
+		);
+
+		expect(result.ok).toBe(true);
+		expect(calls.restrictedApproval).toHaveLength(1);
+		expect(calls.restrictedApproval[0]?.mode).toBe("parallel");
+		expect(calls.restrictedApproval[0]?.restrictedAgents).toEqual(["reviewer-ultra-explicit", "reviewer-strong"]);
+	});
+
+	test("rejects a chain when a later restricted step is denied", async () => {
+		const { deps, calls } = createHarness({
+			agents: [agent("reviewer-fast"), agent("reviewer-ultra-explicit")],
+			restrictedAgentPatterns: RESTRICTED_PATTERNS,
+			restrictedApproval: false,
+			runIds: ["sa-1", "sa-2"],
+			dispatchIds: ["d-1"],
+		});
+
+		const result = await prepareSubagentDispatch(
+			{
+				chain: [
+					{ agent: "reviewer-fast", task: "first" },
+					{ agent: "reviewer-ultra-explicit", task: "second" },
+				],
+			},
+			deps,
+		);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.result.details?.mode).toBe("chain");
+		expect(result.result.details?.dispatchStatus).toBe("aborted");
+		expect(result.result.details?.results).toEqual([]);
+		expect(calls.restrictedApproval).toHaveLength(1);
+		expect(calls.restrictedApproval[0]?.restrictedAgents).toEqual(["reviewer-ultra-explicit"]);
+		expect(calls.nextRunId).toBe(0);
+		expect(calls.nextDispatchId).toBe(0);
+		expect(calls.safeMode).toBe(0);
+	});
+
+	test("never prompts when patterns are empty or no requested agent is restricted", async () => {
+		const unrestricted = createHarness({
+			agents: [agent("reviewer-ultra-explicit"), agent("reviewer-fast")],
+			restrictedAgentPatterns: RESTRICTED_PATTERNS,
+		});
+		const unrestrictedResult = await prepareSubagentDispatch({ agent: "reviewer-fast", task: "t" }, unrestricted.deps);
+		expect(unrestrictedResult.ok).toBe(true);
+		expect(unrestricted.calls.restrictedApproval).toHaveLength(0);
+
+		const disabled = createHarness({
+			agents: [agent("reviewer-ultra-explicit"), agent("reviewer-fast")],
+			restrictedAgentPatterns: [],
+		});
+		const disabledResult = await prepareSubagentDispatch(
+			{ agent: "reviewer-ultra-explicit", task: "t" },
+			disabled.deps,
+		);
+		expect(disabledResult.ok).toBe(true);
+		expect(disabled.calls.restrictedApproval).toHaveLength(0);
+	});
+
+	test("merges deduped alternatives with same-family options first", async () => {
+		const { deps, calls } = createHarness({
+			agents: [
+				agent("reviewer-ultra-explicit"),
+				agent("reviewer-xfast"),
+				agent("reviewer-fast"),
+				agent("worker-strong-explicit"),
+				agent("worker-xfast"),
+				agent("worker-fast"),
+				agent("planner-fast"),
+			],
+			restrictedAgentPatterns: RESTRICTED_PATTERNS,
+			restrictedApproval: false,
+		});
+
+		await prepareSubagentDispatch(
+			{
+				tasks: [
+					{ agent: "reviewer-ultra-explicit", task: "1" },
+					{ agent: "worker-strong-explicit", task: "2" },
+				],
+			},
+			deps,
+		);
+
+		expect(calls.restrictedApproval).toHaveLength(1);
+		expect(calls.restrictedApproval[0]?.alternatives).toEqual([
+			"reviewer-xfast",
+			"reviewer-fast",
+			"worker-xfast",
+			"worker-fast",
+			"planner-fast",
+		]);
+	});
+
+	test("orders project approval, restricted approval, preflight, then IDs and safe-mode", async () => {
+		const { deps, calls } = createHarness({
+			agents: [agent("worker-strong-explicit", "project")],
+			projectAgentsDir: "/repo/.pi/agents",
+			permission: "allow",
+			restrictedAgentPatterns: RESTRICTED_PATTERNS,
+			restrictedApproval: true,
+			runIds: ["sa-1"],
+			dispatchIds: ["d-1"],
+		});
+
+		const result = await prepareSubagentDispatch(
+			{ agent: "worker-strong-explicit", task: "t", agentScope: "project", herdr: {} },
+			deps,
+		);
+
+		expect(result.ok).toBe(true);
+		expect(calls.order).toEqual([
+			"permission",
+			"restricted-approval",
+			"preflight",
+			"run-id",
+			"dispatch-id",
+			"safe-mode",
+		]);
 	});
 });
 
