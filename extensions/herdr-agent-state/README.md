@@ -59,26 +59,27 @@ Marked hunks (search for `FORK: background`):
    nothing upstream-specific.
 3. Bump the upstream version in the header comment.
 
-## Install / clobber warning
+## Install
 
-Herdr considers the **flat** file `~/.pi/agent/extensions/herdr-agent-state.ts`
-the official install. This fork must be the only reporter:
+`./install` writes this fork to Herdr's managed path
+`~/.pi/agent/extensions/herdr-agent-state.ts`. The fork keeps the
+`HERDR_INTEGRATION_ID=pi` / `HERDR_INTEGRATION_VERSION=9` markers, so
+`herdr integration status` reports `pi: current` instead of nagging to install
+the official one, and Pi still loads a single reporter.
 
-- `./install` removes the flat file and installs the fork;
-- never run `herdr integration install pi` — it recreates the flat file and the
-  pane would be reported twice.
+Before touching any file, `./install` hashes an existing flat file:
 
-Before touching any file, `./install` hashes an existing flat file and compares
-it with the upstream revision this fork was based on (herdr pi v9, sha256
-`2c5272d7…aca1e4`). If it differs, install aborts so a newer official
-integration is not silently overwritten. Then choose:
+- our fork (marker present) -> overwrite in place;
+- exact upstream revision (`sha256 2c5272d7...aca1e4`) -> replace with the fork;
+- anything else -> abort so a newer official integration is not silently lost.
+
+On abort, choose:
 
 ```bash
-./install --skip-herdr     # keep the official integration, skip the fork
+./install --skip-herdr     # keep the file as-is, skip the fork
 ./install --replace-herdr  # overwrite it with this fork anyway
 ```
 
-`--skip-herdr` leaves the official file in place and does not install the fork.
-
-`herdr integration status` will show Pi as not installed; that is expected for
-the fork.
+If Herdr reinstalls the official file (`herdr integration install pi`, or a
+future version), rerun `./install` to restore the fork. A newer official version
+aborts first, so you can rebase instead of silently losing the fix.

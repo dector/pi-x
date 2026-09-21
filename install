@@ -56,10 +56,12 @@ THEMES_SRC="$SCRIPT_DIR/themes"
 THEMES_DEST="${PI_THEMES_DIR:-$HOME/.pi/agent/themes}"
 
 # Herdr's managed Pi integration is a single file here and this repo ships a
-# fork of it. Replacing an unknown revision could drop fixes, so only
-# auto-replace the exact upstream file the fork was based on. This check runs
-# before any file operation.
+# fork of it. We install the fork AT that path, so Herdr still sees the
+# integration as installed. Replacing an unknown revision could drop fixes, so
+# only auto-replace the exact upstream file the fork was based on (or our own
+# fork, recognized by its marker). This check runs before any file operation.
 HERDR_FLAT_EXT="$DEST_ROOT/herdr-agent-state.ts"
+HERDR_FORK_MARKER="FORK of the official Herdr Pi integration"
 # sha256 of herdrdev/herdr src/integration/assets/pi/herdr-agent-state.ts v9 (0.9.1).
 HERDR_UPSTREAM_SHA256="2c5272d732b475bbf91a027203b1f98d25fe43d2c1402530a442b288aeaca1e4"
 
@@ -73,7 +75,9 @@ file_sha256() {
 
 if [[ $SKIP_HERDR -eq 0 && -f "$HERDR_FLAT_EXT" ]]; then
   herdr_actual_sha256="$(file_sha256 "$HERDR_FLAT_EXT")"
-  if [[ "$herdr_actual_sha256" != "$HERDR_UPSTREAM_SHA256" && $REPLACE_HERDR -eq 0 ]]; then
+  herdr_is_fork=0
+  grep -qF "$HERDR_FORK_MARKER" "$HERDR_FLAT_EXT" 2>/dev/null && herdr_is_fork=1
+  if [[ $herdr_is_fork -eq 0 && "$herdr_actual_sha256" != "$HERDR_UPSTREAM_SHA256" && $REPLACE_HERDR -eq 0 ]]; then
     {
       echo "Error: the installed Herdr integration does not match this fork's upstream."
       echo
@@ -179,6 +183,15 @@ for ext in "${extensions[@]}"; do
     continue
   fi
 
+  if [[ "$ext" == "herdr-agent-state" ]]; then
+    # Install as Herdr's managed flat file so `herdr integration status` still
+    # sees the integration as installed. The fork keeps the ID/version markers.
+    rm -rf "$dest"
+    cp "$src/index.ts" "$HERDR_FLAT_EXT"
+    echo "- $ext -> $HERDR_FLAT_EXT"
+    continue
+  fi
+
   echo "- $ext"
   rsync -a --delete "$src" "$dest"
   installed_extensions+=("$ext")
@@ -255,13 +268,6 @@ if [[ $has_prompts -eq 1 ]]; then
   done
 else
   echo "No extension prompt directories found, skipping prompts."
-fi
-
-# Installing the fork means it must be the only reporter for the pane. Drop the
-# flat managed file so Pi does not load both.
-if [[ $SKIP_HERDR -eq 0 && -f "$HERDR_FLAT_EXT" ]]; then
-  echo "Removing managed Herdr integration at $HERDR_FLAT_EXT (replaced by the fork)."
-  rm -f "$HERDR_FLAT_EXT"
 fi
 
 echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."
