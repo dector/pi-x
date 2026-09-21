@@ -41,6 +41,7 @@ export function formatUsageStats(
 	},
 	model?: string,
 	thinkingLevel?: ThinkingLevel,
+	contextWindow?: number,
 ): string {
 	const parts: string[] = [];
 	if (usage.turns) parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
@@ -49,8 +50,8 @@ export function formatUsageStats(
 	if (usage.cacheRead) parts.push(`R${formatTokens(usage.cacheRead)}`);
 	if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`);
 	if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
-	if (usage.contextTokens && usage.contextTokens > 0) {
-		parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
+	if (usage.contextTokens && usage.contextTokens > 0 && contextWindow && contextWindow > 0) {
+		parts.push(`ctx:${Math.round((usage.contextTokens / contextWindow) * 100)}%`);
 	}
 	if (model) parts.push(thinkingLevel ? `${model} (${thinkingLevel})` : model);
 	return parts.join(" ");

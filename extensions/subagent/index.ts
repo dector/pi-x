@@ -60,7 +60,6 @@ import {
 	buildCompletionRenderBlocks,
 	buildCompletionRenderData,
 	buildNotStartedResult,
-	formatCompletionRenderText,
 	SUBAGENT_COMPLETION_CUSTOM_TYPE,
 } from "./completion.ts";
 import {
@@ -853,6 +852,29 @@ export default function (pi: ExtensionAPI) {
 		activeWidget.refresh(registry.list());
 	}
 
+	// Resolve a model's context window for the chat usage line's `ctx:<n>%`. The
+	// recorded model may be a bare id (from the child's message) or a
+	// `provider/id` string (from the parent's dispatch defaults), so try the split
+	// form first and fall back to scanning every registered model. Returns
+	// undefined when the registry has no match, which omits the percentage rather
+	// than falling back to an absolute token count.
+	function contextWindowForModel(model?: string): number | undefined {
+		if (!model) return undefined;
+		const registry = sessionContext?.modelRegistry;
+		if (!registry) return undefined;
+		const slash = model.indexOf("/");
+		if (slash > 0) {
+			const direct = registry.find(model.slice(0, slash), model.slice(slash + 1));
+			if (direct && direct.contextWindow > 0) return direct.contextWindow;
+		}
+		for (const candidate of registry.getAll()) {
+			if ((candidate.id === model || `${candidate.provider}/${candidate.id}` === model) && candidate.contextWindow > 0) {
+				return candidate.contextWindow;
+			}
+		}
+		return undefined;
+	}
+
 	// Live attach overlay. Only one can be open at a time because a focused
 	// overlay owns keyboard input. `closeActiveAttach` is captured so session
 	// teardown can close it even though the command handler is suspended inside
@@ -1347,7 +1369,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerMessageRenderer<SubagentDetails>(
 		SUBAGENT_COMPLETION_CUSTOM_TYPE,
 		(message, { expanded, outputPad }, theme) => {
-			const data = buildCompletionRenderData(message.details);
+			const data = buildCompletionRenderData(message.details, undefined, contextWindowForModel);
 			if (!data) {
 				const content =
 					typeof message.content === "string"
@@ -1366,11 +1388,7 @@ export default function (pi: ExtensionAPI) {
 						: theme.fg("error", "✗");
 
 			if (!expanded) {
-				return new Text(
-					`${icon} ${formatCompletionRenderText(message.details, { expanded: false }) ?? data.title}`,
-					outputPad,
-					0,
-				);
+				return new Text(`${icon} ${data.title}`, outputPad, 0);
 			}
 
 			const container = new Container();
@@ -1402,6 +1420,9 @@ export default function (pi: ExtensionAPI) {
 					case "output":
 						container.addChild(new Spacer(1));
 						container.addChild(new Markdown(block.text.trim(), outputPad, 0, mdTheme));
+						break;
+					case "usage":
+						container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
 						break;
 				}
 			}
@@ -1641,7 +1662,7 @@ export default function (pi: ExtensionAPI) {
 						}
 					}
 					const timingStr = formatResultTiming(r);
-					const usageStr = formatUsageStats(r.usage, r.model, r.thinkingLevel);
+					const usageStr = formatUsageStats(r.usage, r.model, r.thinkingLevel, contextWindowForModel(r.model));
 					if (timingStr || usageStr) container.addChild(new Spacer(1));
 					if (timingStr) container.addChild(new Text(theme.fg("dim", timingStr), 0, 0));
 					if (usageStr) container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
@@ -1658,7 +1679,7 @@ export default function (pi: ExtensionAPI) {
 					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 				}
 				const timingStr = formatResultTiming(r);
-				const usageStr = formatUsageStats(r.usage, r.model, r.thinkingLevel);
+				const usageStr = formatUsageStats(r.usage, r.model, r.thinkingLevel, contextWindowForModel(r.model));
 				if (timingStr) text += `\n${theme.fg("dim", timingStr)}`;
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
 				return new Text(text, 0, 0);
@@ -1726,7 +1747,7 @@ export default function (pi: ExtensionAPI) {
 						}
 
 						const stepTiming = formatResultTiming(r);
-						const stepUsage = formatUsageStats(r.usage, r.model, r.thinkingLevel);
+						const stepUsage = formatUsageStats(r.usage, r.model, r.thinkingLevel, contextWindowForModel(r.model));
 						if (stepTiming) container.addChild(new Text(theme.fg("dim", stepTiming), 0, 0));
 						if (stepUsage) container.addChild(new Text(theme.fg("dim", stepUsage), 0, 0));
 					}
@@ -1807,7 +1828,7 @@ export default function (pi: ExtensionAPI) {
 						}
 
 						const taskTiming = formatResultTiming(r);
-						const taskUsage = formatUsageStats(r.usage, r.model, r.thinkingLevel);
+						const taskUsage = formatUsageStats(r.usage, r.model, r.thinkingLevel, contextWindowForModel(r.model));
 						if (taskTiming) container.addChild(new Text(theme.fg("dim", taskTiming), 0, 0));
 						if (taskUsage) container.addChild(new Text(theme.fg("dim", taskUsage), 0, 0));
 					}

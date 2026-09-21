@@ -492,6 +492,96 @@ describe("subagent-completion renderer", () => {
 		});
 	});
 
+	test("renders per-run usage with context as a percentage via the resolver", () => {
+		const withUsage = {
+			mode: "parallel",
+			execution: "async",
+			dispatchId: "dispatch-8",
+			dispatchStatus: "completed",
+			results: [
+				singleResult("worker", "done", {
+					runId: "sa-1",
+					task: "t",
+					model: "claude-sonnet-4",
+					thinkingLevel: "high",
+					usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0.0123, contextTokens: 50000, turns: 3 },
+				}),
+			],
+		};
+		const resolved: Array<string | undefined> = [];
+		const resolver = (model?: string) => {
+			resolved.push(model);
+			return 200000;
+		};
+		const data = buildCompletionRenderData(withUsage, undefined, resolver);
+		expect(data?.sections[0]?.contextWindow).toBe(200000);
+		expect(resolved).toContain("claude-sonnet-4");
+
+		const usageBlock = buildCompletionRenderBlocks(data!).find((block) => block.kind === "usage");
+		expect(usageBlock?.text).toContain("3 turns");
+		expect(usageBlock?.text).toContain("$0.0123");
+		expect(usageBlock?.text).toContain("ctx:25%");
+		expect(usageBlock?.text).toContain("claude-sonnet-4 (high)");
+
+		const expanded = formatCompletionRenderText(withUsage, { expanded: true, contextWindowForModel: resolver }) ?? "";
+		expect(expanded).toContain("ctx:25%");
+	});
+
+	test("omits the usage block when a run has neither usage nor a model", () => {
+		const data = buildCompletionRenderData(details);
+		const blocks = buildCompletionRenderBlocks(data!);
+		expect(blocks.some((block) => block.kind === "usage")).toBe(false);
+	});
+
+	test("collapsed title carries an aggregate usage tail for a single-model dispatch", () => {
+		const withUsage = {
+			mode: "single",
+			execution: "async",
+			dispatchId: "dispatch-9",
+			dispatchStatus: "completed",
+			results: [
+				singleResult("worker", "done", {
+					runId: "sa-1",
+					model: "claude-sonnet-4",
+					thinkingLevel: "high",
+					usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0.0123, contextTokens: 50000, turns: 3 },
+				}),
+			],
+		};
+		const data = buildCompletionRenderData(withUsage, undefined, () => 200000);
+		expect(data?.usage).toContain("3 turns");
+		expect(data?.usage).toContain("$0.0123");
+		expect(data?.usage).toContain("ctx:25%");
+		expect(data?.usage).toContain("claude-sonnet-4 (high)");
+		expect(data?.title).toContain("ctx:25%");
+	});
+
+	test("collapsed aggregate drops model and context when runs disagree on a model", () => {
+		const mixed = {
+			mode: "parallel",
+			execution: "async",
+			dispatchId: "dispatch-10",
+			dispatchStatus: "completed",
+			results: [
+				singleResult("a", "x", {
+					runId: "sa-1",
+					model: "m-a",
+					usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.5, contextTokens: 100, turns: 1 },
+				}),
+				singleResult("b", "y", {
+					runId: "sa-2",
+					model: "m-b",
+					usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.2, contextTokens: 900, turns: 2 },
+				}),
+			],
+		};
+		const data = buildCompletionRenderData(mixed, undefined, () => 1000);
+		expect(data?.usage).toContain("3 turns");
+		expect(data?.usage).toContain("$0.7000");
+		expect(data?.usage).not.toContain("ctx");
+		expect(data?.usage).not.toContain("m-a");
+	});
+
 	test("returns undefined for non-dispatch details", () => {
 		expect(formatCompletionRenderText(undefined)).toBeUndefined();
 		expect(formatCompletionRenderText({ mode: "banana", results: [] })).toBeUndefined();

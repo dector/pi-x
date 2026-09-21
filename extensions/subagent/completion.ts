@@ -14,6 +14,7 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { formatUsageStats } from "./format.ts";
 import { getResultOutput, isAbortedResult, isFailedResult, type ResultStatusFields } from "./result-output.ts";
 import type {
 	HerdrRetention,
@@ -26,7 +27,19 @@ import type {
 	SubagentDispatchStatus,
 	SubagentExecution,
 	SubagentMode,
+	UsageStats,
 } from "./types.ts";
+
+/**
+ * Resolves a model's context window (in tokens) so a usage line can render
+ * context as a percentage. Injected by the renderer, which owns the model
+ * registry; `completion.ts` stays pure and falls back to omitting the
+ * percentage when no resolver (or no match) is available.
+ */
+export type ContextWindowResolver = (model?: string) => number | undefined;
+
+/** Zero usage, so a section with a model but no recorded usage still renders. */
+const ZERO_USAGE: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 /** Model-visible output cap per task, in bytes. */
 export const PER_TASK_OUTPUT_CAP = 50 * 1024;
@@ -327,11 +340,23 @@ export interface CompletionRenderSection {
 	failed: boolean;
 	/** True for a planned chain step that never started. */
 	notRun: boolean;
+	/** Token/cost accounting for the run, when the result carried it. */
+	usage?: UsageStats;
+	/** Model id reported by the child, rendered alongside the context percent. */
+	model?: string;
+	/** Thinking level (effort) the run used. */
+	thinkingLevel?: SingleResult["thinkingLevel"];
+	/** Context window resolved for `model`, used to render `ctx:<n>%`. */
+	contextWindow?: number;
 }
 
-function sectionFromResult(raw: unknown): CompletionRenderSection | undefined {
+function sectionFromResult(raw: unknown, resolveContextWindow?: ContextWindowResolver): CompletionRenderSection | undefined {
 	if (!isRecord(raw)) return undefined;
 	const failed = isFailedResult(raw);
+	const usage = isRecord(raw.usage) ? (raw.usage as unknown as UsageStats) : undefined;
+	const model = typeof raw.model === "string" && raw.model ? raw.model : undefined;
+	const thinkingLevel =
+		typeof raw.thinkingLevel === "string" ? (raw.thinkingLevel as SingleResult["thinkingLevel"]) : undefined;
 	return {
 		agent: typeof raw.agent === "string" ? raw.agent : "unknown",
 		runId: typeof raw.runId === "string" && raw.runId ? raw.runId : undefined,
@@ -342,6 +367,10 @@ function sectionFromResult(raw: unknown): CompletionRenderSection | undefined {
 		output: truncateTaskOutput(getResultOutput(raw)),
 		failed,
 		notRun: false,
+		...(usage ? { usage } : {}),
+		...(model ? { model } : {}),
+		...(thinkingLevel ? { thinkingLevel } : {}),
+		contextWindow: resolveContextWindow?.(model),
 	};
 }
 
@@ -370,6 +399,7 @@ export function collectCompletionSections(
 	results: readonly unknown[],
 	mode: SubagentMode,
 	fallbackCwd?: string,
+	resolveContextWindow?: ContextWindowResolver,
 ): CompletionRenderSection[] {
 	const sections: CompletionRenderSection[] = [];
 	const matched = new Set<number>();
@@ -384,7 +414,7 @@ export function collectCompletionSections(
 	for (const item of plannedItems) {
 		const index = item.runId ? indexByRunId.get(item.runId) : undefined;
 		if (index !== undefined) {
-			const section = sectionFromResult(results[index]);
+			const section = sectionFromResult(results[index], resolveContextWindow);
 			if (section) {
 				// The planned item carries the original task/step/cwd; fill gaps
 				// rather than dropping them when a runner result is terse.
@@ -403,7 +433,7 @@ export function collectCompletionSections(
 	// unexpected extra run) rather than silently dropping them.
 	for (let index = 0; index < results.length; index += 1) {
 		if (matched.has(index)) continue;
-		const section = sectionFromResult(results[index]);
+		const section = sectionFromResult(results[index], resolveContextWindow);
 		if (!section) continue;
 		section.cwd = section.cwd ?? fallbackCwd;
 		sections.push(section);
@@ -490,6 +520,8 @@ export interface CompletionRenderData {
 	dispatchStatus: SubagentDispatchStatus;
 	/** One-line collapsed summary. */
 	title: string;
+	/** Aggregate usage tail for the collapsed title, when any run reported it. */
+	usage?: string;
 	/** Aggregate success summary. */
 	summary: string;
 	succeeded: number;
@@ -509,24 +541,27 @@ export interface CompletionRenderData {
 export function buildCompletionRenderData(
 	value: unknown,
 	plannedFallback?: readonly PreparedDispatchItem[],
+	resolveContextWindow?: ContextWindowResolver,
 ): CompletionRenderData | undefined {
 	const details = normalizeSubagentDetails(value);
 	if (!details) return undefined;
 
 	const plannedItems = details.plannedItems ?? plannedFallback ?? [];
-	const sections = collectCompletionSections(plannedItems, details.results, details.mode, details.cwd);
+	const sections = collectCompletionSections(plannedItems, details.results, details.mode, details.cwd, resolveContextWindow);
 	const succeeded = sections.filter((section) => !section.failed && !section.notRun).length;
 	const notRun = sections.filter((section) => section.notRun).length;
 	const failed = sections.length - succeeded - notRun;
 	const dispatchId = details.dispatchId;
 	const counts = formatCompletionCounts(succeeded, sections.length, notRun);
+	const usage = aggregateSectionUsageText(sections);
 	return {
 		dispatchId,
 		mode: details.mode,
 		execution: details.execution,
 		dispatchStatus: details.dispatchStatus,
-		title: `Subagent dispatch ${dispatchId ?? "(unknown)"} ${details.dispatchStatus} (${details.mode}, ${details.execution}) — ${counts}`,
+		title: `Subagent dispatch ${dispatchId ?? "(unknown)"} ${details.dispatchStatus} (${details.mode}, ${details.execution}) — ${counts}${usage ? ` · ${usage}` : ""}`,
 		summary: `Summary: ${counts}.`,
+		...(usage ? { usage } : {}),
 		succeeded,
 		failed,
 		notRun,
@@ -546,7 +581,61 @@ export type CompletionRenderBlock =
 	| { kind: "header"; section: CompletionRenderSection; text: string }
 	| { kind: "task"; section: CompletionRenderSection; text: string }
 	| { kind: "directory"; section: CompletionRenderSection; text: string }
-	| { kind: "output"; section: CompletionRenderSection; label: string; text: string };
+	| { kind: "output"; section: CompletionRenderSection; label: string; text: string }
+	| { kind: "usage"; section: CompletionRenderSection; text: string };
+
+/**
+ * Usage line for one settled section: turns, tokens, cost, `ctx:<n>%`, and the
+ * model with its thinking level. Returns `undefined` when the section carries
+ * nothing worth showing (for example an unstarted chain step). Context is only
+ * shown as a percentage, so a missing context window simply omits it.
+ */
+function sectionUsageText(section: CompletionRenderSection): string | undefined {
+	if (!section.usage && !section.model) return undefined;
+	const text = formatUsageStats(
+		section.usage ?? ZERO_USAGE,
+		section.model,
+		section.thinkingLevel,
+		section.contextWindow,
+	);
+	return text || undefined;
+}
+
+/**
+ * Dispatch-level usage tail for the collapsed title: summed turns/cost over
+ * every usage-bearing run. Model, effort, and context percent are only carried
+ * when all runs agree on a single model, because a context window is per-model;
+ * the deepest run supplies the context size in that case.
+ */
+function aggregateSectionUsageText(sections: readonly CompletionRenderSection[]): string | undefined {
+	const rows = sections.filter(
+		(section): section is CompletionRenderSection & { usage: UsageStats } => section.usage !== undefined,
+	);
+	if (rows.length === 0) return undefined;
+
+	const total: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+	for (const row of rows) {
+		total.input += row.usage.input;
+		total.output += row.usage.output;
+		total.cacheRead += row.usage.cacheRead;
+		total.cacheWrite += row.usage.cacheWrite;
+		total.cost += row.usage.cost;
+		total.turns += row.usage.turns;
+	}
+
+	const models = new Set(rows.map((row) => row.model).filter((model): model is string => Boolean(model)));
+	const singleModel = models.size === 1 ? [...models][0] : undefined;
+	let contextWindow: number | undefined;
+	let thinkingLevel: SingleResult["thinkingLevel"];
+	if (singleModel) {
+		const deepest = rows.reduce((a, b) => (b.usage.contextTokens > a.usage.contextTokens ? b : a));
+		total.contextTokens = deepest.usage.contextTokens;
+		contextWindow = deepest.contextWindow;
+		thinkingLevel = deepest.thinkingLevel;
+	}
+
+	return formatUsageStats(total, singleModel, thinkingLevel, contextWindow) || undefined;
+}
 
 export function buildCompletionRenderBlocks(data: CompletionRenderData): CompletionRenderBlock[] {
 	const blocks: CompletionRenderBlock[] = [
@@ -558,6 +647,8 @@ export function buildCompletionRenderBlocks(data: CompletionRenderData): Complet
 		blocks.push({ kind: "task", section, text: section.task });
 		if (section.cwd) blocks.push({ kind: "directory", section, text: section.cwd });
 		blocks.push({ kind: "output", section, label: completionOutputLabel(section), text: section.output });
+		const usageText = sectionUsageText(section);
+		if (usageText) blocks.push({ kind: "usage", section, text: usageText });
 	}
 	return blocks;
 }
@@ -570,9 +661,9 @@ export function buildCompletionRenderBlocks(data: CompletionRenderData): Complet
  */
 export function formatCompletionRenderText(
 	value: unknown,
-	options: { expanded?: boolean } = {},
+	options: { expanded?: boolean; contextWindowForModel?: ContextWindowResolver } = {},
 ): string | undefined {
-	const data = buildCompletionRenderData(value);
+	const data = buildCompletionRenderData(value, undefined, options.contextWindowForModel);
 	if (!data) return undefined;
 	if (!options.expanded) return data.title;
 
@@ -596,6 +687,9 @@ export function formatCompletionRenderText(
 				break;
 			case "output":
 				lines.push(`${block.label}: ${block.text}`);
+				break;
+			case "usage":
+				lines.push(block.text);
 				break;
 		}
 	}

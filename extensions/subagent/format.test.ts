@@ -40,18 +40,28 @@ describe("usage and timing formatting", () => {
 		expect(formatTokens(2_500_000)).toBe("2.5M");
 	});
 
-	test("formats usage stats", () => {
+	test("formats usage stats with context as a percentage", () => {
 		const line = formatUsageStats(
 			{ input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0.0123, contextTokens: 5000, turns: 2 },
 			"claude",
 			"medium",
+			20000,
 		);
 		expect(line).toContain("2 turns");
 		expect(line).toContain("↑1.0k");
 		expect(line).toContain("↓200");
 		expect(line).toContain("$0.0123");
-		expect(line).toContain("ctx:5.0k");
+		expect(line).toContain("ctx:25%");
 		expect(line).toContain("claude (medium)");
+	});
+
+	test("omits context entirely when the window is unknown (percent only)", () => {
+		const line = formatUsageStats(
+			{ input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 5000, turns: 1 },
+			"claude",
+		);
+		expect(line).not.toContain("ctx");
+		expect(line).not.toContain("5.0k");
 	});
 
 	test("omits timing for a still-running result", () => {
