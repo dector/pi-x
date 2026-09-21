@@ -119,7 +119,7 @@ To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only
 
 When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
 
-Children use pi RPC mode. Project-agent approval happens before an async dispatch is accepted, so a denied request never starts detached work. Child safe-mode approvals appear in the parent UI with the agent name and stable run ID, and can appear while you are chatting with the parent. Dialogs are serialized globally, one at a time. In a non-interactive parent, requests fail closed instead of hanging.
+Children use pi RPC mode. Project-agent approval happens before an async dispatch is accepted, so a denied request never starts detached work. Child safe-mode approvals appear in the parent UI with the agent name and stable run ID, and can appear while you are chatting with the parent. Dialogs are serialized globally, one at a time. In a non-interactive parent, requests fail closed instead of hanging. While a relayed approval/input dialog is open the parent declares a hub user wait, so the Herdr pane/tab reports `blocked` (needs attention) instead of `working`.
 
 Safe mode is captured when a dispatch is prepared, before an async dispatch is accepted. Parent changes only affect dispatches prepared later. Session-only approvals remain local to the child that received them; project-persistent approvals continue to use the repository allowlist.
 

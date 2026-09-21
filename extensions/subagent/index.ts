@@ -110,6 +110,7 @@ import { createRunIdGenerator } from "./run-id.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
 import { SubagentTimingTracker } from "./timing.ts";
+import { withUserWait, type UserWaitEventBus } from "./user-wait.ts";
 import type {
 	PreparedSubagentDispatch,
 	SingleResult,
@@ -186,6 +187,8 @@ interface SingleAgentRuntimeDependencies {
 	approvalQueue: ApprovalQueue;
 	parentContext: ExtensionContext;
 	registry: SubagentRegistry;
+	/** Pi event bus, used to declare parent-facing user waits (Herdr `blocked`). */
+	events: UserWaitEventBus;
 	/** Select the RPC transport for a prepared dispatch (process or Herdr). */
 	backendFor: (kind: SubagentBackendKind | undefined) => SubagentBackend;
 	/** Session-level abort signal; aborted once during shutdown. */
@@ -409,10 +412,14 @@ async function runSingleAgent(
 						emitUpdate();
 						const heading = `Subagent: ${agent.name} [${runId}]\nWorking directory: ${cwd ?? defaultCwd}\n\n${typeof request.title === "string" ? request.title.slice(0, 500) : "Approval requested"}`;
 						const timeout = typeof request.timeout === "number" ? Math.min(Math.max(request.timeout, 0), 300_000) : undefined;
-						const response = await approvalQueue.enqueue({
-							runId,
-							requestId: request.id,
-							async run(dialogSignal) {
+						const response = await withUserWait(
+							runtime.events,
+							{ owner: "subagent", label: approvalTitle ?? `${agent.name} approval`, kind: "approval" },
+							() =>
+								approvalQueue.enqueue({
+									runId,
+									requestId: request.id,
+									async run(dialogSignal) {
 								if (request.method === "select") {
 									const options = Array.isArray(request.options)
 										? request.options.filter((item): item is string => typeof item === "string").slice(0, 50).map((item) => item.slice(0, 500))
@@ -434,7 +441,7 @@ async function runSingleAgent(
 								const value = await parentContext.ui.editor(heading, prefill);
 								return value === undefined ? denyWithoutUi() : { type: "extension_ui_response" as const, id: request.id, value };
 							},
-						}).catch(() => undefined);
+						})).catch(() => undefined);
 						currentResult.pendingApproval = undefined;
 						if (currentResult.state === "waiting-approval") currentResult.state = "running";
 						const finalResponse = response ?? denyWithoutUi();
@@ -1466,6 +1473,7 @@ export default function (pi: ExtensionAPI) {
 				approvalQueue,
 				parentContext: ctx,
 				registry,
+				events: pi.events,
 				backendFor,
 				shutdownSignal: sessionShutdown.signal,
 				onProgress: publishActiveSubagentWidget,
