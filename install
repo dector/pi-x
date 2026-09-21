@@ -7,17 +7,33 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./install
+Usage: ./install [--skip-herdr | --replace-herdr]
 
 This installer always requires interactive confirmation.
+
+This repo forks Herdr's managed Pi integration (herdr-agent-state). If the
+installed ~/.pi/agent/extensions/herdr-agent-state.ts does not match the
+upstream revision this fork was based on, install aborts before touching any
+file. Choose one:
+
+  --skip-herdr     keep the official integration, do not install the fork
+  --replace-herdr  overwrite the official integration with the fork anyway
 EOF
 }
 
-if [[ $# -gt 0 ]]; then
+SKIP_HERDR=0
+REPLACE_HERDR=0
+while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
       usage
       exit 0
+      ;;
+    --skip-herdr)
+      SKIP_HERDR=1
+      ;;
+    --replace-herdr)
+      REPLACE_HERDR=1
       ;;
     *)
       echo "Error: unknown option: $1" >&2
@@ -25,6 +41,12 @@ if [[ $# -gt 0 ]]; then
       exit 1
       ;;
   esac
+  shift
+done
+
+if [[ $SKIP_HERDR -eq 1 && $REPLACE_HERDR -eq 1 ]]; then
+  echo "Error: --skip-herdr and --replace-herdr are mutually exclusive." >&2
+  exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +54,42 @@ SRC_ROOT="$SCRIPT_DIR/extensions"
 DEST_ROOT="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"
 THEMES_SRC="$SCRIPT_DIR/themes"
 THEMES_DEST="${PI_THEMES_DIR:-$HOME/.pi/agent/themes}"
+
+# Herdr's managed Pi integration is a single file here and this repo ships a
+# fork of it. Replacing an unknown revision could drop fixes, so only
+# auto-replace the exact upstream file the fork was based on. This check runs
+# before any file operation.
+HERDR_FLAT_EXT="$DEST_ROOT/herdr-agent-state.ts"
+# sha256 of herdrdev/herdr src/integration/assets/pi/herdr-agent-state.ts v9 (0.9.1).
+HERDR_UPSTREAM_SHA256="2c5272d732b475bbf91a027203b1f98d25fe43d2c1402530a442b288aeaca1e4"
+
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+if [[ $SKIP_HERDR -eq 0 && -f "$HERDR_FLAT_EXT" ]]; then
+  herdr_actual_sha256="$(file_sha256 "$HERDR_FLAT_EXT")"
+  if [[ "$herdr_actual_sha256" != "$HERDR_UPSTREAM_SHA256" && $REPLACE_HERDR -eq 0 ]]; then
+    {
+      echo "Error: the installed Herdr integration does not match this fork's upstream."
+      echo
+      echo "  file:     $HERDR_FLAT_EXT"
+      echo "  expected: $HERDR_UPSTREAM_SHA256  (herdr pi v9 / 0.9.1)"
+      echo "  actual:   $herdr_actual_sha256"
+      echo
+      echo "Herdr likely shipped a newer integration. Rebase the fork first"
+      echo "(see extensions/herdr-agent-state/README.md), or rerun with:"
+      echo
+      echo "  ./install --skip-herdr     keep the official integration, skip the fork"
+      echo "  ./install --replace-herdr  overwrite it with this fork anyway"
+    } >&2
+    exit 1
+  fi
+fi
 
 if [[ ! -d "$SRC_ROOT" ]]; then
   echo "Error: source extensions directory not found: $SRC_ROOT" >&2
@@ -99,6 +157,15 @@ extensions=(
   "subagent"
   "herdr-agent-state"
 )
+
+if [[ $SKIP_HERDR -eq 1 ]]; then
+  extensions_without_herdr=()
+  for ext in "${extensions[@]}"; do
+    [[ "$ext" == "herdr-agent-state" ]] && continue
+    extensions_without_herdr+=("$ext")
+  done
+  extensions=("${extensions_without_herdr[@]}")
+fi
 
 installed_extensions=()
 
@@ -190,12 +257,11 @@ else
   echo "No extension prompt directories found, skipping prompts."
 fi
 
-# This repo forks Herdr's managed Pi integration. Keeping both the fork and
-# Herdr's flat managed file double-reports the pane, so drop the flat file.
-FLAT_HERDR_EXT="$DEST_ROOT/herdr-agent-state.ts"
-if [[ -f "$FLAT_HERDR_EXT" ]]; then
-  echo "Removing managed Herdr integration at $FLAT_HERDR_EXT (replaced by the fork)."
-  rm -f "$FLAT_HERDR_EXT"
+# Installing the fork means it must be the only reporter for the pane. Drop the
+# flat managed file so Pi does not load both.
+if [[ $SKIP_HERDR -eq 0 && -f "$HERDR_FLAT_EXT" ]]; then
+  echo "Removing managed Herdr integration at $HERDR_FLAT_EXT (replaced by the fork)."
+  rm -f "$HERDR_FLAT_EXT"
 fi
 
 echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."

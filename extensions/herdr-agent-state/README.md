@@ -64,9 +64,21 @@ Marked hunks (search for `FORK: background`):
 Herdr considers the **flat** file `~/.pi/agent/extensions/herdr-agent-state.ts`
 the official install. This fork must be the only reporter:
 
-- remove `~/.pi/agent/extensions/herdr-agent-state.ts` (do not keep both);
+- `./install` removes the flat file and installs the fork;
 - never run `herdr integration install pi` — it recreates the flat file and the
   pane would be reported twice.
+
+Before touching any file, `./install` hashes an existing flat file and compares
+it with the upstream revision this fork was based on (herdr pi v9, sha256
+`2c5272d7…aca1e4`). If it differs, install aborts so a newer official
+integration is not silently overwritten. Then choose:
+
+```bash
+./install --skip-herdr     # keep the official integration, skip the fork
+./install --replace-herdr  # overwrite it with this fork anyway
+```
+
+`--skip-herdr` leaves the official file in place and does not install the fork.
 
 `herdr integration status` will show Pi as not installed; that is expected for
 the fork.
