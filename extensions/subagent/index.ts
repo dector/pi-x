@@ -756,6 +756,11 @@ export default function (pi: ExtensionAPI) {
 		// Ticks re-read the registry so elapsed time (and any state change that
 		// did not emit a progress update) keeps moving during silent periods.
 		listRuns: () => registry.list(),
+		styles: () => ({
+			bold: (text) => sessionContext?.ui.theme.bold(text) ?? text,
+			italic: (text) => sessionContext?.ui.theme.italic(text) ?? text,
+		}),
+		contextWindowForModel,
 	});
 
 	const newRunId = createRunIdGenerator();

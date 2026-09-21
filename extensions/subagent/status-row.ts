@@ -11,7 +11,8 @@
  * active, and to clear the widget on shutdown.
  */
 
-import type { SubagentRunState } from "./types.ts";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { SubagentRunState, UsageStats } from "./types.ts";
 
 /** Stable widget id used by the subagent extension. */
 export const ACTIVE_SUBAGENT_WIDGET_ID = "px-subagents-active";
@@ -29,16 +30,17 @@ export const ACTIVE_SUBAGENT_WIDGET_MAX_LINES = 10;
  * still clips anything wider. Keeping it here stops a long task preview from
  * pushing state/tool data off-screen.
  */
-export const ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH = 100;
+export const ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH = 120;
 
-/** Per-field caps that keep one run line compact before the line budget applies. */
-export const ACTIVE_SUBAGENT_AGENT_MAX_LENGTH = 16;
+/** Per-field caps that keep the two run lines compact before the line budget applies. */
+export const ACTIVE_SUBAGENT_AGENT_MAX_LENGTH = 24;
 export const ACTIVE_SUBAGENT_STATE_MAX_LENGTH = 16;
-export const ACTIVE_SUBAGENT_TOOL_MAX_LENGTH = 20;
-export const ACTIVE_SUBAGENT_TASK_MAX_LENGTH = 40;
+export const ACTIVE_SUBAGENT_MODEL_MAX_LENGTH = 42;
+export const ACTIVE_SUBAGENT_TASK_MAX_LENGTH = 100;
+export const ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH = 28;
 
-/** Shortest-run-id budget that still preserves the distinctive tail. */
-export const ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH = 12;
+/** Nerd Font Material Design robot (`nf-md-robot`). */
+export const ACTIVE_SUBAGENT_WIDGET_ICON = "\u{f06a9}";
 
 /**
  * How often the widget re-renders elapsed time while at least one run is
@@ -56,9 +58,26 @@ export interface ActiveSubagentWidgetRun {
 	completedAt?: number;
 	result: {
 		state?: SubagentRunState;
-		activeTool?: string;
+		model?: string;
+		thinkingLevel?: ThinkingLevel;
+		usage?: UsageStats;
 		pendingApproval?: { method: string; title?: string };
 	};
+}
+
+export interface ActiveSubagentWidgetStyles {
+	bold: (text: string) => string;
+	italic: (text: string) => string;
+}
+
+const PLAIN_STYLES: ActiveSubagentWidgetStyles = {
+	bold: (text) => text,
+	italic: (text) => text,
+};
+
+export interface ActiveSubagentWidgetFormatOptions {
+	styles?: ActiveSubagentWidgetStyles;
+	contextWindowForModel?: (model?: string) => number | undefined;
 }
 
 /**
@@ -72,25 +91,31 @@ export interface ActiveSubagentWidgetRun {
 export function formatActiveSubagentWidget(
 	runs: readonly ActiveSubagentWidgetRun[],
 	now = Date.now(),
+	options: ActiveSubagentWidgetFormatOptions = {},
 ): string[] | undefined {
 	const active = runs.filter((run) => !run.completedAt);
 	if (active.length === 0) return undefined;
 
-	const header = `Subagents (${active.length} active)`;
-	const runLineBudget = ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1;
-	const shown =
-		active.length <= runLineBudget
-			? active
-			: active.slice(0, Math.max(0, runLineBudget - 1));
-
-	const lines = [header, ...shown.map((run) => formatActiveSubagentWidgetLine(run, now))];
+	const styles = options.styles ?? PLAIN_STYLES;
+	const header = styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${active.length} active)`);
+	const runBudget = Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1) / 2);
+	const shown = active.slice(0, runBudget);
+	const lines = [
+		header,
+		...shown.flatMap((run) => formatActiveSubagentWidgetLines(run, now, styles, options.contextWindowForModel)),
+	];
 	const hidden = active.length - shown.length;
-	if (hidden > 0) lines.push(`… ${hidden} more`);
+	if (hidden > 0) lines.push(styles.italic(`… ${hidden} more`));
 	return lines.slice(0, ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
 }
 
-/** Format one run line: icon, agent, short run id, state, elapsed, tool, task. */
-function formatActiveSubagentWidgetLine(run: ActiveSubagentWidgetRun, now: number): string {
+/** Format one run as metadata and task lines. Important fields stay upright; supporting text is italic. */
+function formatActiveSubagentWidgetLines(
+	run: ActiveSubagentWidgetRun,
+	now: number,
+	styles: ActiveSubagentWidgetStyles,
+	contextWindowForModel?: (model?: string) => number | undefined,
+): [string, string] {
 	const icon = run.result.pendingApproval ? "◐" : stateIcon(run.result.state);
 	const state = truncate(
 		run.result.pendingApproval ? "waiting approval" : (run.result.state ?? "running").replace(/-/g, " "),
@@ -98,19 +123,61 @@ function formatActiveSubagentWidgetLine(run: ActiveSubagentWidgetRun, now: numbe
 	);
 	const agent = truncate(run.agentName, ACTIVE_SUBAGENT_AGENT_MAX_LENGTH);
 	const elapsed = formatElapsed((run.completedAt ?? now) - run.startedAt);
-	const tool = run.result.activeTool
-		? ` · ${truncate(run.result.activeTool, ACTIVE_SUBAGENT_TOOL_MAX_LENGTH)}`
-		: "";
-	const prefix = `${icon} ${agent} ${shortRunId(run.runId)} ${state} · ${elapsed}${tool}`;
-	if (!run.task) return truncate(prefix, ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	const effort = run.result.thinkingLevel;
+	const turns = formatTurns(run.result.usage?.turns);
+	const usage = truncate(formatWidgetUsage(run.result.usage, run.result.model, contextWindowForModel), 30);
+	const activity = `${state} ${elapsed}${turns ? ` ${turns}` : ""}`;
+	const base = `${icon} ${agent} (${activity})`;
+	const usageSuffix = usage ? ` · ${usage}` : "";
+	const effortSuffix = effort ? ` (${effort})` : "";
+	const modelBudget = Math.max(
+		1,
+		Math.min(
+			ACTIVE_SUBAGENT_MODEL_MAX_LENGTH,
+			ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(base + usageSuffix + effortSuffix + " · "),
+		),
+	);
+	const model = run.result.model ? truncate(run.result.model, modelBudget) : undefined;
 
-	// Reserve the two-space separator, then give the task whatever budget is
-	// left (never more than its own cap). This keeps the whole line bounded
-	// even when the agent name, state, and tool all sit at their caps.
-	const remaining = ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(prefix) - 2;
-	if (remaining <= 0) return truncate(prefix, ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
-	const task = truncate(run.task, Math.min(ACTIVE_SUBAGENT_TASK_MAX_LENGTH, remaining));
-	return truncate(`${prefix}  ${task}`, ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	let metadata = styles.italic(`${icon} `) + agent + styles.italic(` (${activity})`);
+	if (model) {
+		metadata += styles.italic(" · ") + model;
+		if (effort) metadata += styles.italic(" (") + effort + styles.italic(")");
+	} else if (effort) {
+		metadata += styles.italic(" · ") + effort;
+	}
+	if (usage) metadata += styles.italic(usageSuffix);
+
+	const id = truncate(run.runId, ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH);
+	const taskPrefix = `│ [${id}] · `;
+	const taskBudget = Math.min(
+		ACTIVE_SUBAGENT_TASK_MAX_LENGTH,
+		Math.max(1, ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(taskPrefix)),
+	);
+	const task = truncate(run.task || "(no task description)", taskBudget);
+	const taskLine = styles.italic("│ ") + `[${id}]` + styles.italic(` · ${task}`);
+	return [metadata, taskLine];
+}
+
+function formatWidgetUsage(
+	usage: UsageStats | undefined,
+	model: string | undefined,
+	contextWindowForModel?: (model?: string) => number | undefined,
+): string {
+	if (!usage) return "";
+	const parts: string[] = [];
+	if (usage.contextTokens > 0) {
+		const contextWindow = contextWindowForModel?.(model);
+		if (contextWindow && contextWindow > 0) {
+			parts.push(`ctx:${Math.round((usage.contextTokens / contextWindow) * 100)}%`);
+		}
+	}
+	if (usage.cost > 0) parts.push(`$${usage.cost.toFixed(4)}`);
+	return parts.join(" ");
+}
+
+function formatTurns(turns: number | undefined): string {
+	return turns && turns > 0 ? `${turns} turn${turns === 1 ? "" : "s"}` : "";
 }
 
 function stateIcon(state: SubagentRunState | undefined): string {
@@ -142,17 +209,6 @@ function formatElapsed(milliseconds: number): string {
 	const hours = Math.floor(minutes / 60);
 	const remainder = minutes % 60;
 	return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
-}
-
-/**
- * Keep the run id informative and distinctive without letting it push out the
- * task preview. Real ids share a long `sa-<time>-<seq>` prefix, so keep the
- * unique tail (the random suffix and sequence) and trim from the left.
- */
-function shortRunId(runId: string, max = ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH): string {
-	const points = Array.from(runId);
-	if (points.length <= max) return runId;
-	return `…${points.slice(-(max - 1)).join("")}`;
 }
 
 function codePointLength(text: string): number {
@@ -197,6 +253,10 @@ export interface ActiveSubagentWidgetOptions {
 	refreshIntervalMs?: number;
 	/** Injectable timers for tests. Defaults to `setInterval`/`clearInterval`. */
 	timers?: ActiveSubagentWidgetTimers;
+	/** Optional terminal styling, resolved on every publish. */
+	styles?: () => ActiveSubagentWidgetStyles;
+	/** Resolve a model's context window for the live context percentage. */
+	contextWindowForModel?: (model?: string) => number | undefined;
 }
 
 /**
@@ -227,7 +287,10 @@ export class ActiveSubagentWidget {
 	}
 
 	private publish(): void {
-		const content = formatActiveSubagentWidget(this.runs, (this.options.now ?? Date.now)());
+		const content = formatActiveSubagentWidget(this.runs, (this.options.now ?? Date.now)(), {
+			styles: this.options.styles?.(),
+			contextWindowForModel: this.options.contextWindowForModel,
+		});
 		const key = content?.join("\n");
 		if (this.initialized && key === this.last) return;
 		this.initialized = true;

@@ -97,13 +97,12 @@ test("completed runs are excluded and return undefined when none are active", ()
 test("one active run renders a header and a line with state, elapsed, and task", () => {
 	const lines = formatActiveSubagentWidget([makeRun()], NOW);
 	expect(lines).toBeDefined();
-	expect(lines).toHaveLength(2);
-	expect(lines?.[0]).toBe("Subagents (1 active)");
+	expect(lines).toHaveLength(3);
+	expect(lines?.[0]).toBe("󰚩 Subagents (1 active)");
 	expect(lines?.[1]).toContain("worker");
-	expect(lines?.[1]).toContain("sa-abc123");
 	expect(lines?.[1]).toContain("running");
 	expect(lines?.[1]).toContain("34s");
-	expect(lines?.[1]).toContain("Implement validation");
+	expect(lines?.[2]).toBe("│ [sa-abc123] · Implement validation");
 });
 
 test("multiple active runs list every active run", () => {
@@ -114,14 +113,14 @@ test("multiple active runs list every active run", () => {
 		],
 		NOW,
 	);
-	expect(lines?.[0]).toBe("Subagents (2 active)");
-	expect(lines).toHaveLength(3);
+	expect(lines?.[0]).toBe("󰚩 Subagents (2 active)");
+	expect(lines).toHaveLength(5);
 	expect(lines?.[1]).toContain("worker");
-	expect(lines?.[1]).toContain("First task");
-	expect(lines?.[2]).toContain("researcher");
-	expect(lines?.[2]).toContain("waiting approval");
-	expect(lines?.[2]).toContain("12s");
-	expect(lines?.[2]).toContain("Second task");
+	expect(lines?.[2]).toContain("First task");
+	expect(lines?.[3]).toContain("researcher");
+	expect(lines?.[3]).toContain("waiting approval");
+	expect(lines?.[3]).toContain("12s");
+	expect(lines?.[4]).toContain("Second task");
 });
 
 test("mixed completed and active runs count and render only the active one", () => {
@@ -134,10 +133,10 @@ test("mixed completed and active runs count and render only the active one", () 
 	});
 	const active = makeRun({ runId: "sa-active", agentName: "researcher", task: "Live task" });
 	const lines = formatActiveSubagentWidget([completed, active], NOW);
-	expect(lines?.[0]).toBe("Subagents (1 active)");
-	expect(lines).toHaveLength(2);
+	expect(lines?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(lines).toHaveLength(3);
 	expect(lines?.[1]).toContain("researcher");
-	expect(lines?.[1]).toContain("Live task");
+	expect(lines?.[2]).toContain("Live task");
 	expect(lines?.join("\n")).not.toContain("Finished task");
 });
 
@@ -153,17 +152,44 @@ test("state maps to a distinct icon", () => {
 	expect(waiting?.startsWith("◐")).toBe(true);
 });
 
-test("active tool is included when present", () => {
-	const lines = formatActiveSubagentWidget([makeRun({ result: { state: "running", activeTool: "bash" } })], NOW);
-	expect(lines?.[1]).toContain("bash");
+test("model, effort, context, cost, and turns are included when present", () => {
+	const lines = formatActiveSubagentWidget(
+		[makeRun({ result: {
+			state: "running",
+			model: "opencode-go/deepseek-v4.1-flash",
+			thinkingLevel: "minimal",
+			usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.0266, contextTokens: 10_000, turns: 31 },
+		} })],
+		NOW,
+		{ contextWindowForModel: () => 100_000 },
+	);
+	expect(lines?.[1]).toContain("(running 34s 31 turns)");
+	expect(lines?.[1]).toContain("opencode-go/deepseek-v4.1-flash (minimal)");
+	expect(lines?.[1]).toContain("· ctx:10% $0.0266");
 });
 
 test("long tasks are truncated with an ellipsis", () => {
 	const task = "a".repeat(120);
 	const lines = formatActiveSubagentWidget([makeRun({ task })], NOW);
-	const line = lines?.[1] ?? "";
+	const line = lines?.[2] ?? "";
 	expect(line).toContain("…");
 	expect(line.length).toBeLessThan(task.length);
+});
+
+test("the task line budget includes its border and run id", () => {
+	const lines = formatActiveSubagentWidget([
+		makeRun({ runId: "readable-run-id-with-a-long-tag", task: "task ".repeat(80) }),
+	], NOW);
+	const line = lines?.[2] ?? "";
+	expect(codePointLength(line)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	expect(line).toContain("…");
+});
+
+test("effort is shown even before a model is known", () => {
+	const lines = formatActiveSubagentWidget([
+		makeRun({ result: { state: "starting", thinkingLevel: "minimal" } }),
+	], NOW);
+	expect(lines?.[1]).toContain("· minimal");
 });
 
 test("elapsed renders minutes once a run passes a minute", () => {
@@ -171,15 +197,18 @@ test("elapsed renders minutes once a run passes a minute", () => {
 	expect(lines?.[1]).toContain("2m 5s");
 });
 
-test("short run ids preserve the distinctive tail for same-prefix ids", () => {
-	const first = "sa-abcdefghij-aaaaaaaa";
-	const second = "sa-abcdefghij-bbbbbbbb";
-	const firstLine = formatActiveSubagentWidget([makeRun({ runId: first })], NOW)?.[1] ?? "";
-	const secondLine = formatActiveSubagentWidget([makeRun({ runId: second })], NOW)?.[1] ?? "";
-	// A first-N-characters shortening would collapse both to the same text.
-	expect(firstLine).not.toBe(secondLine);
-	expect(firstLine).toContain("aaaaaaaa");
-	expect(secondLine).toContain("bbbbbbbb");
+test("readable run ids are shown on the task line", () => {
+	const line = formatActiveSubagentWidget([makeRun({ runId: "red-panda" })], NOW)?.[2] ?? "";
+	expect(line).toStartWith("│ [red-panda] · ");
+});
+
+test("title and supporting text can be styled without styling key fields", () => {
+	const lines = formatActiveSubagentWidget([makeRun({ runId: "red-panda" })], NOW, {
+		styles: { bold: (text) => `<b>${text}</b>`, italic: (text) => `<i>${text}</i>` },
+	});
+	expect(lines?.[0]).toBe("<b>󰚩 Subagents (1 active)</b>");
+	expect(lines?.[1]).toContain("<i>● </i>worker<i> (running 34s)</i>");
+	expect(lines?.[2]).toBe("<i>│ </i>[red-panda]<i> · Implement validation</i>");
 });
 
 test("long agent names and overall lines stay within the display budget", () => {
@@ -191,20 +220,21 @@ test("long agent names and overall lines stay within the display budget", () => 
 				result: {
 					state: "waiting-approval",
 					pendingApproval: { method: "confirm" },
-					activeTool: "some-extremely-long-tool-name-here",
 				},
 			}),
 		],
 		NOW,
 	);
-	const line = lines?.[1] ?? "";
-	expect(codePointLength(line)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
-	expect(line).toContain("…");
+	const metadata = lines?.[1] ?? "";
+	const task = lines?.[2] ?? "";
+	expect(codePointLength(metadata)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	expect(codePointLength(task)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	expect(metadata + task).toContain("…");
 });
 
 test("truncation does not split surrogate pairs", () => {
-	const lines = formatActiveSubagentWidget([makeRun({ task: "😀".repeat(80) })], NOW);
-	const line = lines?.[1] ?? "";
+	const lines = formatActiveSubagentWidget([makeRun({ task: "😀".repeat(180) })], NOW);
+	const line = lines?.[2] ?? "";
 	expect(line).toContain("…");
 	expect(hasLoneSurrogate(line)).toBe(false);
 });
@@ -215,14 +245,14 @@ test("widget content is truncated to the line limit with a hidden count", () => 
 	);
 	const lines = formatActiveSubagentWidget(runs, NOW);
 	expect(lines).toHaveLength(ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
-	expect(lines?.[0]).toBe("Subagents (20 active)");
-	expect(lines?.[lines.length - 1]).toBe("… 12 more");
+	expect(lines?.[0]).toBe("󰚩 Subagents (20 active)");
+	expect(lines?.[lines.length - 1]).toBe("… 16 more");
 });
 
 test("widget content stays within the limit exactly at capacity", () => {
-	const runs = Array.from({ length: 9 }, (_, index) => makeRun({ runId: `sa-${index}` }));
+	const runs = Array.from({ length: 4 }, (_, index) => makeRun({ runId: `sa-${index}` }));
 	const lines = formatActiveSubagentWidget(runs, NOW);
-	expect(lines).toHaveLength(ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
+	expect(lines).toHaveLength(ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1);
 	expect(lines?.[lines.length - 1]).not.toContain("more");
 });
 
@@ -246,7 +276,7 @@ test("registry refresh publishes the formatted widget", () => {
 	const { widget, published } = makePublished();
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(1);
-	expect(published[0]?.[0]).toBe("Subagents (1 active)");
+	expect(published[0]?.[0]).toBe("󰚩 Subagents (1 active)");
 });
 
 test("registry refresh suppresses identical content", () => {
@@ -278,7 +308,7 @@ test("reset forces a republish on the next refresh", () => {
 	widget.reset();
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(3);
-	expect(published[2]?.[0]).toBe("Subagents (1 active)");
+	expect(published[2]?.[0]).toBe("󰚩 Subagents (1 active)");
 });
 
 test("session_tree reset republishes an otherwise-identical active snapshot", () => {
@@ -290,7 +320,7 @@ test("session_tree reset republishes an otherwise-identical active snapshot", ()
 	widget.reset();
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(2);
-	expect(published[1]?.[0]).toBe("Subagents (1 active)");
+	expect(published[1]?.[0]).toBe("󰚩 Subagents (1 active)");
 });
 
 test("active runs start exactly one bounded refresh timer", () => {

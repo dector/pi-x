@@ -19,7 +19,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Restricted-agent gate**: Agent names matching a global pattern require one timed parent confirmation per dispatch
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
-- **Active widget**: While children run, a non-interactive list above the input editor shows each active subagent's state, elapsed time, active tool, and task preview
+- **Active widget**: While children run, a non-interactive two-line list above the input editor shows each active subagent's state, elapsed time, turns, model/effort, usage, readable id, and task preview
 - **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
 - **Run log**: `/px:agent:log` shows each run's original task prompt and final output, including detached runs after resume
 
@@ -404,22 +404,25 @@ Detached async children keep the widget visible until their dispatch settles.
 The widget is cleared when the last child finishes and on `session_shutdown`.
 
 ```text
-Subagents (2 active)
-● worker-fast sa-abc123 running · 34s  Implement validation
-◐ researcher-fast sa-def456 waiting approval · 12s  Check API behavior
+󰚩 Subagents (2 active)
+● worker-fast (running 34s 3 turns) · openai/gpt-5 (minimal) · ctx:10% $0.0266
+│ [red-panda-00k3w9fz2q] · Implement validation
+◐ researcher-fast (waiting approval 12s) · openai/gpt-5 (low)
+│ [calm-otter-01ab4cd9xy] · Check API behavior
 ```
 
-Each line shows a state icon, agent name, short run id, current state, elapsed
-time, the active tool when one is running, and a short task preview. The run id
-is shortened from the left so its distinctive tail (time/sequence/random
-suffix) survives; agent name, state, tool, and task are each capped, and the
-whole line is bounded to keep it compact. Truncation works on Unicode code
+The bold title uses the Nerd Font robot glyph. Each run uses two lines: the
+first shows its state icon, highlighted agent name, state, elapsed time, turns,
+model/effort, context percentage, and cost; the second continues a small
+`│` border with the readable run id and task preview. Supporting text is italic
+while the agent, model, effort, and id stay upright. Fields and both complete
+lines are capped to keep the widget compact. Truncation works on Unicode code
 points so it does not split a surrogate pair. Pi limits each widget to 10
-lines, so the formatter caps the list and appends a final `… N more` line when
-more agents are active than fit.
+lines, so the formatter shows at most four runs and appends a final `… N more`
+line when more agents are active than fit.
 
 The display refreshes on registry changes (start/complete) and on progress
-updates (state, waiting approval, active tool). While at least one run is
+updates (state, waiting approval, model, and usage). While at least one run is
 active the widget also owns one bounded one-second timer that re-renders
 elapsed time during silent periods; the timer stops when the last run settles
 and on `clear()`/`reset()`, so it cannot leak. `session_tree` resets the dedup
