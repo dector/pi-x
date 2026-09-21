@@ -43,12 +43,12 @@ import {
 	type StatusBarSetPayload,
 } from "./contract";
 import {
+	BORDER_CONTEXT_ICON,
 	chooseTopBorderSegments,
-	compactFrameLabel,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
 	composeSectionItems,
-	decorateBorderContextLabel,
+	decorateBorderContextCost,
 	decorateBorderGitStats,
 	decorateBorderPathBranch,
 	decorateBorderTotalUsage,
@@ -178,12 +178,20 @@ function formatCostTrailingPrecise(total: number): string {
 	return `${total.toFixed(3)}$`;
 }
 
-// Bottom-border context label: `15.9% 210k · 0.03$` (the frame adds spacing and border dashes).
+// Bottom-border context usage + cost, kept separate so a narrow frame can keep the
+// usage meter on the border and relocate only the cost to status line 2.
+interface FrameContextParts {
+	/** Context usage meter, e.g. `󰊚 15.9% 210k`. Always shown on the border. */
+	usage: string;
+	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 󰇁󰇁 0.034`. Relocated on narrow frames. */
+	cost: string;
+}
+
 // Colored with the same context-usage rules as the status-bar context items.
-function buildFrameContextLabel(
+function buildFrameContextParts(
 	ctx: ExtensionContext,
 	theme?: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
-): string {
+): FrameContextParts {
 	const usage = ctx.getContextUsage();
 
 	const rawPercent = usage?.percent;
@@ -203,19 +211,35 @@ function buildFrameContextLabel(
 			? `${formatCostTrailing(cost)} | ${formatCostTrailingPrecise(totalCost)}`
 			: formatCostTrailing(cost);
 
-	const label = decorateBorderContextLabel(`${percent} ${tokens} · ${costLabel}`);
-	if (!theme || percentValue === undefined) return label;
+	const usageLabel = `${BORDER_CONTEXT_ICON}${percent} ${tokens}`;
+	const costText = decorateBorderContextCost(costLabel);
+	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
 
-	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
+	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel);
+	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText);
+	return { usage: styledUsage, cost: styledCost };
 }
 
 type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefined;
 
+/**
+ * Border labels that no longer fit on a narrow editor frame. The editor clears
+ * them while the full label fits and fills them when it relocates the label to
+ * status line 2. The editor renders before the footer, so the footer reads the
+ * same-frame decision.
+ */
+interface RelocatedBorderLabels {
+	/** Raw `repo-stats` git dirty totals moved off the top-right border. */
+	gitStats?: string;
+	/** Cost label moved off the bottom-left border (the usage meter stays). */
+	contextLabel?: string;
+}
+
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
 	getDisplayMode: () => StatusBarDisplayMode;
-	/** Bottom-left corner label (context usage and cost). */
-	bottomLeft?: FrameStatusProvider;
+	/** Bottom-left context usage + cost, split so only the cost relocates on narrow frames. */
+	bottomLeft?: () => FrameContextParts | undefined;
 	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
 	bottomLeftStatus?: FrameStatusProvider;
 	/** Effective network token, rendered immediately after the safe-mode status. */
@@ -224,6 +248,8 @@ interface FrameStatusEditorOptions {
 	topLeft?: FrameStatusProvider;
 	/** Top-right corner label (git dirty totals). */
 	topRight?: FrameStatusProvider;
+	/** Sink for labels relocated off the border on narrow frames (status line 2). */
+	relocatedLabels?: RelocatedBorderLabels;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
 	/** Muted theme color used for zero-valued border git stats. */
@@ -280,11 +306,12 @@ function renderBorderLine(
  */
 class FrameStatusEditor extends CustomEditor {
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
-	private readonly bottomLeftProvider?: FrameStatusProvider;
+	private readonly bottomLeftProvider?: () => FrameContextParts | undefined;
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
+	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly mutedColor?: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
@@ -306,6 +333,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
 		this.topLeftProvider = options.topLeft;
 		this.topRightProvider = options.topRight;
+		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
 		this.mutedColor = options.mutedColor;
 		this.highlightColor = options.highlightColor;
@@ -424,19 +452,17 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Top-right corner label. Compact mode removes value spacing; the narrow
-	 * fallback (`omitLineCounts`) drops the changed-line group while keeping the
-	 * files group and modified-file count.
+	 * Top-right corner label: git dirty totals in the full split form. On a narrow
+	 * frame the totals no longer fit, so the editor drops them here and relocates
+	 * them to status line 2 (no compact/files-only fallback).
 	 */
-	private topRightSegment(options: { compact?: boolean; omitLineCounts?: boolean } = {}): string {
+	private topRightSegment(): string {
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return "";
 		const decorated = decorateBorderGitStats(sanitizeStatusText(label), {
 			mute: this.mutedColor,
-			includeLineCounts: !options.omitLineCounts,
 		});
-		const body = options.compact ? compactFrameLabel(decorated) : decorated;
-		return `${this.borderColor(FRAME_LABEL_OPEN)}${body}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
+		return `${this.borderColor(FRAME_LABEL_OPEN)}${decorated}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
 	}
 
 	/**
@@ -521,9 +547,10 @@ class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Keep the model whenever possible. Git totals degrade from the full split
-		// form, to the compact split form, to the files-only icon form; if no pair
-		// fits, the model wins.
+		// Keep the model whenever possible. Git totals render on the border only in
+		// their full split form; on a narrow frame that no longer fits, so the label is
+		// relocated to status line 2 (no compact/files-only fallback). If even the model
+		// alone does not fit, the model still wins and the totals relocate.
 		const fullModelLabel = this.topLeftLabel(false);
 		const compactModelLabel = this.topLeftLabel(true);
 		// Measure uncolored placeholders so only the selected model variant runs
@@ -534,17 +561,19 @@ class FrameStatusEditor extends CustomEditor {
 		const compactModelPlaceholder = compactModelLabel
 			? `${FRAME_LEFT_CORNER_OPEN}${compactModelLabel}${FRAME_LABEL_CLOSE}`
 			: "";
+		const fullRightSegment = this.topRightSegment();
 		const chosen = chooseTopBorderSegments({
 			width,
 			leftSegments: [fullModelPlaceholder, compactModelPlaceholder],
-			rightSegments: [
-				this.topRightSegment(),
-				this.topRightSegment({ compact: true }),
-				this.topRightSegment({ omitLineCounts: true, compact: true }),
-			],
+			rightSegments: [fullRightSegment],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
 		});
+		const rawGitLabel = this.topRightProvider?.();
+		if (this.relocatedLabels) {
+			this.relocatedLabels.gitStats =
+				hasVisibleText(chosen.right) || !hasVisibleText(rawGitLabel) ? undefined : rawGitLabel;
+		}
 		const selectedModelLabel =
 			chosen.left === fullModelPlaceholder
 				? fullModelLabel
@@ -575,12 +604,32 @@ class FrameStatusEditor extends CustomEditor {
 	renderBottomBorder(width: number, hiddenLineCount: number): string {
 		if (!this.isBorderMode() || width <= 0) return super.renderBottomBorder(width, hiddenLineCount);
 
-		const contextLabel = this.bottomLeftProvider?.();
+		const contextParts = this.bottomLeftProvider?.();
+		const usageLabel = contextParts?.usage;
+		const costLabel = contextParts?.cost;
 		const statusLabel = this.bottomLeftStatusProvider?.();
 		const networkLabel = this.bottomLeftNetworkProvider?.();
-		const leftSegment = this.bottomLeftSegment(contextLabel, statusLabel, networkLabel);
+		// Full border context is usage + cost; the usage meter always stays on the border.
+		const combinedContext =
+			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
+				? `${usageLabel} · ${costLabel}`
+				: usageLabel || costLabel;
+		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
+
+		// On a narrow frame the cost no longer fits. Keep the usage meter on the border
+		// and relocate only the prices to status line 2.
+		const costRelocated = hasVisibleText(costLabel) && visibleWidth(fullLeftSegment) >= width;
+		const leftSegment = this.bottomLeftSegment(
+			costRelocated ? usageLabel : combinedContext,
+			statusLabel,
+			networkLabel,
+		);
+		if (this.relocatedLabels) {
+			this.relocatedLabels.contextLabel = costRelocated ? costLabel : undefined;
+		}
+
 		if (!leftSegment) {
 			return renderBorderLine(width, "", scrollSegment, borderColor);
 		}
@@ -644,14 +693,21 @@ function readCost(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-// Subagents run with `--no-session`, so their cost is only durable inside the
-// parent's persisted tool results (`details.results[].usage.cost`). Children may
-// spawn their own subagents, so recurse through the child messages as well.
+// Subagents run with `--no-session`, so their cost is only durable in the parent
+// session. Blocking runs land as `toolResult` messages; async completions are
+// persisted as `custom_message` entries (`customType: "subagent-completion"`),
+// so both shapes must be read. Children may spawn their own subagents, so recurse
+// through the child messages as well.
 function collectSubagentCost(ctx: ExtensionContext): number {
 	let cost = 0;
 	for (const entry of ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>) {
-		if (entry.type !== "message") continue;
-		cost += collectSubagentCostFromMessage(entry.message);
+		if (entry.type === "message") {
+			cost += collectSubagentCostFromMessage(entry.message);
+			continue;
+		}
+		if (entry.type === "custom_message" && entry.customType === "subagent-completion") {
+			cost += collectSubagentCostFromDetails(entry.details);
+		}
 	}
 	return cost;
 }
@@ -1396,6 +1452,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let editorOwnerContext: ExtensionContext | undefined;
 	let requestEditorRender: (() => void) | undefined;
 	let frameEditor: FrameStatusEditor | undefined;
+	// Filled by the editor frame when a border label must move to status line 2 on
+	// a narrow frame; read by the footer in the same render pass.
+	const relocatedBorderLabels: RelocatedBorderLabels = {};
 	const ansiRgbCache = new Map<string, Rgb | undefined>();
 	const ansiRgb = (ansi: string): Rgb | undefined => {
 		if (ansiRgbCache.has(ansi)) return ansiRgbCache.get(ansi);
@@ -1557,11 +1616,34 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					let center = renderSection(layout.center, undefined, joinSeparator);
 					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
+					// On a narrow frame the editor frame relocates the cost label (usage stays on
+					// the border) and the git dirty totals to status line 2 (left and right).
+					// Merge them into the section content here so crowding accounts for them.
+					const relocatedContext = displayMode === "new" ? relocatedBorderLabels.contextLabel : undefined;
+					const relocatedGitRaw = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
+					const relocatedGit = hasVisibleText(relocatedGitRaw)
+						? decorateBorderGitStats(sanitizeStatusText(relocatedGitRaw), {
+								mute: (value) => theme.fg("muted", value),
+							})
+						: undefined;
+					const mergeRelocated = (
+						base: string | undefined,
+						extra: string | undefined,
+						separator: string,
+					): string | undefined => {
+						if (!hasVisibleText(extra)) return base;
+						return hasVisibleText(base) ? `${base}${separator}${extra}` : extra;
+					};
+					left = mergeRelocated(left, relocatedContext, joinSeparator);
+					right = mergeRelocated(right, relocatedGit, joinSeparator);
+
 					if (isCrowded(width, left, center, right)) {
 						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
 						left = renderLeft(joinSeparator);
 						center = renderSection(layout.center, undefined, joinSeparator);
 						right = renderSection(layout.right, contextOverrides, joinSeparator);
+						left = mergeRelocated(left, relocatedContext, joinSeparator);
+						right = mergeRelocated(right, relocatedGit, joinSeparator);
 					}
 
 					const hasThinkingSection = layout.left.includes(SWITCH_THINKING_ID);
@@ -1570,6 +1652,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					if (needCompactThinking) {
 						left = renderLeft(joinSeparator, new Map([[SWITCH_THINKING_ID, activeThinking]]));
+						left = mergeRelocated(left, relocatedContext, joinSeparator);
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
@@ -1596,7 +1679,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		const activeContext = () => lastContext ?? ctx;
 		const options: FrameStatusEditorOptions = {
 			getDisplayMode: () => displayMode,
-			bottomLeft: () => buildFrameContextLabel(activeContext(), activeContext().ui.theme),
+			bottomLeft: () => buildFrameContextParts(activeContext(), activeContext().ui.theme),
 			bottomLeftStatus: () => contentById.get(SAFE_MODE_ID),
 			bottomLeftNetwork: () => {
 				const resolution = resolveNetworkStatus({
@@ -1615,6 +1698,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					opts?.compact ?? false,
 				),
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
+			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
 			mutedColor: (text) => activeContext().ui.theme.fg("muted", text),
 			highlightColor: (text, depth) => {

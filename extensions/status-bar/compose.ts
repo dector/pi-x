@@ -149,6 +149,19 @@ export const BORDER_PRICE_ICON = "󰇁 ";
 export const BORDER_TOTAL_PRICE_ICON = "󰇁󰇁 ";
 
 /**
+ * Decorate a border-mode cost label with prefix icons.
+ *
+ *   `0.03$`          -> `󰇁 0.03`
+ *   `0.03$ | 0.034$` -> `󰇁 0.03 󰇁󰇁 0.034`
+ */
+export function decorateBorderContextCost(label: string): string {
+	const [current = "", total] = label.split(" | ");
+	const currentLabel = `${BORDER_PRICE_ICON}${current.replace(/\$$/, "")}`;
+	const totalLabel = total === undefined ? "" : ` ${BORDER_TOTAL_PRICE_ICON}${total.replace(/\$$/, "")}`;
+	return `${currentLabel}${totalLabel}`;
+}
+
+/**
  * Decorate a border-mode context/cost label with prefix icons.
  *
  *   `15.9% 210k · 0.03$`          -> `󰊚 15.9% 210k · 󰇁 0.03`
@@ -159,10 +172,8 @@ export function decorateBorderContextLabel(label: string): string {
 	const at = label.indexOf(separator);
 	if (at === -1) return `${BORDER_CONTEXT_ICON}${label}`;
 	const context = label.slice(0, at);
-	const [current = "", total] = label.slice(at + separator.length).split(" | ");
-	const currentLabel = `${BORDER_PRICE_ICON}${current.replace(/\$$/, "")}`;
-	const totalLabel = total === undefined ? "" : ` ${BORDER_TOTAL_PRICE_ICON}${total.replace(/\$$/, "")}`;
-	return `${BORDER_CONTEXT_ICON}${context}${separator}${currentLabel}${totalLabel}`;
+	const cost = label.slice(at + separator.length);
+	return `${BORDER_CONTEXT_ICON}${context}${separator}${decorateBorderContextCost(cost)}`;
 }
 
 export function stripAnsi(text: string): string {
