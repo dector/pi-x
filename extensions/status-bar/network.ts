@@ -43,9 +43,10 @@ export const NETWORK_STATUS_TOKENS = ["NET", "NET?", "NET+"] as const;
 
 export type NetworkStatusToken = (typeof NETWORK_STATUS_TOKENS)[number];
 
-// Theme color names ("muted" = gray, "text" = normal). Kept as strings so this
-// module stays free of the pi theme type and can be tested purely.
-export type NetworkStatusColor = "muted" | "text";
+// Theme color names ("muted" = gray, "userMessageText" = user-message text).
+// Kept as strings so this module stays free of the pi theme type and can be
+// tested purely.
+export type NetworkStatusColor = "muted" | "userMessageText";
 
 export const POLICY_TOKENS: Record<NetworkPolicy, NetworkStatusToken> = {
 	"deny-all": "NET",
@@ -58,9 +59,9 @@ export const POLICY_TOKENS: Record<NetworkPolicy, NetworkStatusToken> = {
 export const POLICY_COLORS: Record<NetworkPolicy, NetworkStatusColor> = {
 	"deny-all": "muted",
 	"ask-all": "muted",
-	"allow-trusted": "text",
-	"ask-untrusted": "text",
-	"allow-all": "text",
+	"allow-trusted": "userMessageText",
+	"ask-untrusted": "userMessageText",
+	"allow-all": "userMessageText",
 };
 
 export function tokenForPolicy(policy: NetworkPolicy): NetworkStatusToken {
@@ -203,7 +204,7 @@ export interface NetworkTheme {
 	fg: (token: NetworkStatusColor, text: string) => string;
 }
 
-/** Render the effective network token with its muted/normal theme color. */
+/** Render the effective network token with its muted/user-message theme color. */
 export function renderNetworkToken(policy: NetworkPolicy, theme: NetworkTheme): string {
 	return theme.fg(colorForPolicy(policy), tokenForPolicy(policy));
 }

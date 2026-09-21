@@ -9,9 +9,9 @@ const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "px:status-bar:first-line:clear";
 const FIRST_LINE_PRIORITY = 100;
 
 const ANSI_RESET = "\u001b[0m";
-const ANSI_GREEN = "\u001b[38;5;34m";
-const ANSI_BRIGHT_RED = "\u001b[38;5;196m";
-const ANSI_ORANGE = "\u001b[38;5;208m";
+const ANSI_GREEN = "\u001b[38;5;76m";
+const ANSI_RED = "\u001b[38;5;203m";
+const ANSI_ORANGE = "\u001b[38;5;209m";
 
 interface GitResult {
 	ok: boolean;
@@ -194,7 +194,7 @@ function renderFileChangeSummary(stats: RepoStats, ctx: ExtensionContext): strin
 	const filesModified = Number.isFinite(stats.filesModified) ? stats.filesModified : 0;
 	if (!ctx.hasUI) return `+${filesNew} -${filesRemoved} M${filesModified}`;
 	const plus = colorAnsi(ANSI_GREEN, `+${filesNew}`);
-	const minus = colorAnsi(ANSI_BRIGHT_RED, `-${filesRemoved}`);
+	const minus = colorAnsi(ANSI_RED, `-${filesRemoved}`);
 	const modified = colorAnsi(ANSI_ORANGE, `M${filesModified}`);
 	return `${plus} ${minus} ${modified}`;
 }
@@ -204,7 +204,7 @@ function renderLineChangeSummary(stats: RepoStats, ctx: ExtensionContext): strin
 	const removals = Number.isFinite(stats.removals) ? stats.removals : 0;
 	if (!ctx.hasUI) return `+${additions} -${removals}`;
 	const plus = colorAnsi(ANSI_GREEN, `+${additions}`);
-	const minus = colorAnsi(ANSI_BRIGHT_RED, `-${removals}`);
+	const minus = colorAnsi(ANSI_RED, `-${removals}`);
 	return `${plus} ${minus}`;
 }
 

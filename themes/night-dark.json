@@ -12,7 +12,7 @@
 		"dim": "#5c5c5c",
 		"green": "#3fb950",
 		"greenBg": "#1d2a20",
-		"red": "#f85149",
+		"red": "#e17872",
 		"redBg": "#2a1d1f",
 		"amber": "#d29922",
 		"amberBg": "#2b2413",
@@ -21,7 +21,7 @@
 		"borderBlue": "#5f87ff",
 		"borderCyan": "#00d7ff",
 		"borderGray": "#505050",
-		"purple": "#a78bfa",
+		"purple": "#8f7fb8",
 		"pendingBg": "#202020"
 	},
 	"colors": {

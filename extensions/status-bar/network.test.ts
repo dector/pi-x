@@ -73,13 +73,13 @@ describe("network token and color matrix", () => {
 		});
 	});
 
-	test("maps every policy to the documented muted/normal color", () => {
+	test("maps every policy to the documented muted/user-message color", () => {
 		expect(POLICY_COLORS).toEqual({
 			"deny-all": "muted",
 			"ask-all": "muted",
-			"allow-trusted": "text",
-			"ask-untrusted": "text",
-			"allow-all": "text",
+			"allow-trusted": "userMessageText",
+			"ask-untrusted": "userMessageText",
+			"allow-all": "userMessageText",
 		});
 	});
 
@@ -187,7 +187,7 @@ describe("surface resolution and display modes", () => {
 	test("new display mode owns the border surface", () => {
 		expect(networkSurfaceForDisplayMode("new")).toBe("border");
 		const resolution = resolveNetworkStatus({ displayMode: "new", state: state({ effective: "allow-all" }), theme });
-		expect(resolution).toEqual({ surface: "border", label: "<text>NET+</text>" });
+		expect(resolution).toEqual({ surface: "border", label: "<userMessageText>NET+</userMessageText>" });
 	});
 
 	test("legacy display mode owns the status-line surface", () => {
