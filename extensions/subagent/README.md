@@ -68,7 +68,7 @@ subagent/
 │   ├── researcher-strong.md # Strong research with citations (gpt-5.6-sol, high)
 │   ├── worker-fast.md   # General-purpose (flash, high)
 │   ├── worker-xfast.md  # Fast general-purpose (flash, minimal)
-│   └── worker-strong.md # Strong general-purpose (gpt-5.6-sol, medium)
+│   └── worker-strong-explicit.md # Strong general-purpose (gpt-5.6-sol, medium) — only on explicit request
 └── prompts/             # Workflow presets (prompt templates)
     ├── implement.md     # scout-fast -> planner-fast -> worker-fast
     ├── scout-and-plan.md    # scout-fast -> planner-fast (no implementation)
@@ -470,7 +470,7 @@ each renamed profile; newly added profiles have a blank Existing name.
 |  | `planner-ultra-explicit` | `openai-codex/gpt-5.6-sol` | high |
 | `worker` | `worker-fast` | `opencode-go/deepseek-v4.1-flash` | high |
 |  | `worker-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
-|  | `worker-strong` | `openai-codex/gpt-5.6-sol` | medium |
+|  | `worker-strong-explicit` | `openai-codex/gpt-5.6-sol` | medium |
 | `reviewer` | `reviewer-fast` | `opencode-go/deepseek-v4.1-flash` | high |
 |  | `reviewer-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
 |  | `reviewer-strong` | `openai-codex/gpt-5.6-sol` | high |
@@ -479,9 +479,10 @@ each renamed profile; newly added profiles have a blank Existing name.
 | `researcher` | `researcher-fast` | `opencode-go/deepseek-v4.1-flash` | high |
 |  | `researcher-strong` | `openai-codex/gpt-5.6-sol` | high |
 
-Explicit-only profiles (`planner-ultra-explicit`, `reviewer-ultra-explicit`, and
-`reviewer-xultra-explicit`) must never be auto-selected. Only route to them when
-the user's own words explicitly ask for an ultra plan or an ultra/xultra review.
+Explicit-only profiles (`worker-strong-explicit`, `planner-ultra-explicit`,
+`reviewer-ultra-explicit`, and `reviewer-xultra-explicit`) must never be
+auto-selected. Only route to them when the user's own words explicitly ask for a
+strong worker, an ultra plan, or an ultra/xultra review.
 Use `planner-fast`/`planner-strong` for ordinary plans and
 `reviewer-fast`/`reviewer-strong` for ordinary reviews.
 
