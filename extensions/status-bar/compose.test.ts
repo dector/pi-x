@@ -231,9 +231,9 @@ describe("decorateBorderContextLabel", () => {
 		expect(decorateBorderContextLabel("15.9% 210k · 0.03$")).toBe("󰊚 15.9% 210k · 󰇁 0.03");
 	});
 
-	test("replaces the `|` separator with a space and prefixes the total price", () => {
+	test("prefixes the total price with `Tot:` after the current price", () => {
 		expect(decorateBorderContextLabel("15.9% 210k · 0.03$ | 0.034$")).toBe(
-			"󰊚 15.9% 210k · 󰇁 0.03 󰇁󰇁 0.034",
+			"󰊚 15.9% 210k · 󰇁 0.03 Tot:󰇁 0.034",
 		);
 	});
 
