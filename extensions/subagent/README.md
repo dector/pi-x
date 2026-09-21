@@ -15,6 +15,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Abort support**: Ctrl+C aborts blocking children; detached children are aborted by the `action: "stop"` tool control, from `/px:agents`, or on session shutdown
 - **Model-driven controls**: the `subagent` tool accepts `action: "stop"` or `action: "steer"` addressed by dispatch id or run id, so the parent model can abort or redirect running children without shell-killing processes
 - **Inherited permissions**: Each dispatch snapshots the parent's safe mode and outer-access setting when it is prepared, before an async dispatch is accepted
+- **Restricted-agent gate**: Agent names matching a global pattern require one timed parent confirmation per dispatch
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
 - **Active widget**: While children run, a non-interactive list above the input editor shows each active subagent's state, elapsed time, active tool, and task preview
@@ -29,6 +30,9 @@ subagent/
 ├── index.ts             # The extension (entry point)
 ├── agents.ts            # Agent discovery logic
 ├── prepare.ts           # Validation, permission, and ID allocation before execution
+├── restricted-agent-policy.ts # Pure pattern matching, tier ranking, and config parsing
+├── restricted-agent-config.ts # Loads the global ~/.pi/agent/subagent.json policy
+├── restricted-agent-approval.ts # Timed parent confirm prompt for restricted dispatches
 ├── dispatch.ts          # Shared single/parallel/chain orchestration runner
 ├── lifecycle.ts         # Detached async dispatch ownership and exactly-once delivery
 ├── completion.ts        # Canonical acknowledgement/completion formatting and truncation
@@ -122,6 +126,33 @@ When running interactively, the tool prompts for confirmation before running pro
 Children use pi RPC mode. Project-agent approval happens before an async dispatch is accepted, so a denied request never starts detached work. Child safe-mode approvals appear in the parent UI with the agent name and stable run ID, and can appear while you are chatting with the parent. Dialogs are serialized globally, one at a time. In a non-interactive parent, requests fail closed instead of hanging. While a relayed approval/input dialog is open the parent declares a hub user wait, so the Herdr pane/tab reports `blocked` (needs attention) instead of `working`.
 
 Safe mode is captured when a dispatch is prepared, before an async dispatch is accepted. Parent changes only affect dispatches prepared later. Session-only approvals remain local to the child that received them; project-persistent approvals continue to use the repository allowlist.
+
+### Restricted agents
+
+Expensive or explicit-only profiles must not be auto-selected by the model. A name gate asks the parent user to confirm any dispatch that names a restricted agent. Defaults: every `*-strong` and `*-explicit` agent, with a 15-second prompt timeout.
+
+The policy is global user policy, read only from `~/.pi/agent/subagent.json` (the same agent directory used for global agents). Project-local config is never consulted, so a repository cannot loosen it. The file is optional:
+
+```json
+{
+  "restrictedAgentPatterns": ["*-strong", "*-explicit"],
+  "restrictedAgentPromptTimeoutSeconds": 15
+}
+```
+
+- `restrictedAgentPatterns` is a list of globs (`*` matches any run of characters including `-`, `?` matches exactly one).
+- `restrictedAgentPromptTimeoutSeconds` is the confirm-dialog timeout in seconds.
+
+A missing, unreadable, or invalid-JSON file uses the defaults. Invalid individual fields fall back to that field's default. An explicit `restrictedAgentPatterns: []` is valid and disables the gate entirely.
+
+Dispatch behavior:
+
+- One dialog covers the whole dispatch, whether single, parallel, or chain. Approval is for that dispatch only and is never remembered, so the next dispatch prompts again.
+- The dialog lists the requested restricted names, the matching patterns, and the allowed alternatives, preferring same-family names (cheapest tier first).
+- Denial, timeout, or a session without UI rejects the entire dispatch and returns the allowed alternatives. Nothing starts: no child, no run or dispatch id, no Herdr preflight, and no automatic substitution to an alternative.
+- The gate runs after project-agent approval and is independent of safe mode; `yolo` and other safe-mode settings do not bypass it.
+
+**Limitation:** this is a name-routing guard, not model or cost enforcement. It only restricts agent names that match a pattern; a custom agent with a cheap-looking name can still be configured to use an expensive model.
 
 ## Shared working tree
 
