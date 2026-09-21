@@ -2,16 +2,34 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
 	HERDR_BLOCKED_EVENT,
 	HUB_CHANNELS,
+	HUB_PROGRESS_CHANNELS,
 	HUB_USER_WAIT_CHANNELS,
 	type CapRequest,
 	type CapResult,
 	type HubAskPayload,
+	type HubProgressAckPayload,
 	type HubRegisterPayload,
 	type HubReplyPayload,
 	type HubUnregisterPayload,
 	type PermissionAction,
+	type ProgressChunkSnapshot,
+	type ProgressChunkState,
+	type ProgressOperation,
+	type ProgressSnapshot,
 } from "./contract";
 import { HerdrTabStatus, detectHerdrTabEnv, type HerdrTabStyle } from "./herdr-tab";
+import {
+	MAX_PROGRESS_CHUNKS,
+	ProgressRegistry,
+	parseProgressCreate,
+	parseProgressFinish,
+	parseProgressQuery,
+	parseProgressRemove,
+	parseProgressUpdate,
+	type ProgressChunkRecord,
+	type ProgressRegistryResult,
+	type ProgressTrackerRecord,
+} from "./progress";
 import {
 	UserWaitRegistry,
 	parseUserWaitClear,
@@ -32,6 +50,8 @@ import {
 const ACTION_RANK: Record<PermissionAction, number> = { allow: 0, confirm: 1, block: 2 };
 const PENDING_TTL_MS = 30 * 60_000;
 const WAIT_ID_DISPLAY_LENGTH = 8;
+/** `/px:progress` never lists more finished trackers than this in the summary. */
+const MAX_FINISHED_PROGRESS_DISPLAY = 10;
 
 /** Shorten a wait id for display only; the full id is never prompt content. */
 function shortWaitId(id: string): string {
@@ -56,6 +76,57 @@ function sanitizeDisplayText(value: string): string {
 /** Detached copy for `changed` observers, so they cannot mutate adapter state. */
 function copyWaitSnapshot(snapshot: UserWaitSnapshot): UserWaitSnapshot {
 	return { active: snapshot.active, count: snapshot.count, waits: snapshot.waits.map((wait) => ({ ...wait })) };
+}
+
+/** Detached copy for progress `changed` observers, matching the wait adapter. */
+function copyProgressSnapshot(snapshot: ProgressSnapshot): ProgressSnapshot {
+	return {
+		active: snapshot.active,
+		count: snapshot.count,
+		trackers: snapshot.trackers.map((tracker) => ({
+			trackerId: tracker.trackerId,
+			owner: tracker.owner,
+			title: tracker.title,
+			unit: tracker.unit,
+			updatedAt: tracker.updatedAt,
+			chunks: tracker.chunks.map((chunk) => {
+				const copy: ProgressChunkSnapshot = { index: chunk.index, state: chunk.state };
+				if (chunk.phase !== undefined) copy.phase = chunk.phase;
+				return copy;
+			}),
+		})),
+	};
+}
+
+/** Count chunks in one lifecycle state. */
+function countProgressChunks(record: ProgressTrackerRecord, state: ProgressChunkState): number {
+	return record.chunks.reduce((total, chunk) => (chunk.state === state ? total + 1 : total), 0);
+}
+
+/**
+ * One-line tracker summary, for example `Authentication [active] — 1/13 done`.
+ * The title is producer-supplied display text and is sanitized here.
+ */
+function formatProgressSummary(record: ProgressTrackerRecord): string {
+	const title = sanitizeDisplayText(record.title) || "(untitled)";
+	const status = record.outcome ?? "active";
+	const total = record.chunks.length;
+	const parts = [`${countProgressChunks(record, "done")}/${total} done`];
+
+	const failed = countProgressChunks(record, "failed");
+	if (failed > 0) parts.push(`${failed} failed`);
+	const skipped = countProgressChunks(record, "skipped");
+	if (skipped > 0) parts.push(`${skipped} skipped`);
+
+	return `${title} [${status}] — ${parts.join(", ")}`;
+}
+
+/** One chunk detail line, for example `1. [active/reviewing] Database schema`. */
+function formatProgressChunk(chunk: ProgressChunkRecord): string {
+	const label = sanitizeDisplayText(chunk.label ?? chunk.id) || "(unnamed)";
+	const state =
+		chunk.phase !== undefined && chunk.phase.length > 0 ? `${chunk.state}/${chunk.phase}` : chunk.state;
+	return `${chunk.index}. [${sanitizeDisplayText(state)}] ${label}`;
 }
 
 type PendingRequest = {
@@ -161,6 +232,11 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	const capsByProvider = new Map<string, Set<string>>();
 	const pending = new Map<string, PendingRequest>();
 	const userWaits = new UserWaitRegistry();
+	const progress = new ProgressRegistry();
+	// Progress mutations are accepted only inside a live session. Factory-time
+	// listener registration is unconditional, but a late child relay after
+	// shutdown must not repopulate the registry or receive an ack.
+	let progressSessionActive = false;
 
 	// Herdr keeps its own blocked counter, so only the aggregate zero/non-zero
 	// crossing may emit a Herdr boolean. A metadata update while N > 1, or a
@@ -178,6 +254,39 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		// mutate the snapshot the Herdr adapter reads its activation label from.
 		if (transition.changed) pi.events.emit(HUB_USER_WAIT_CHANNELS.changed, copyWaitSnapshot(transition.snapshot));
 		emitHerdrWaitTransition(transition);
+	};
+
+	// Semantic progress: producers own `owner + trackerId` incarnations. The
+	// registry parses at its boundary, so a malformed payload yields no result
+	// and is dropped without an acknowledgement. Ack precedes changed so a
+	// synchronous client can confirm support before observers react.
+	const applyProgressMutation = (
+		operation: ProgressOperation,
+		request: { requestId: string; trackerId: string; trackerToken: string; owner: string } | undefined,
+		run: () => ProgressRegistryResult | undefined,
+	): void => {
+		if (!progressSessionActive || !request) return;
+
+		const result = run();
+		if (!result) return;
+
+		const ack: HubProgressAckPayload = {
+			requestId: request.requestId,
+			trackerId: request.trackerId,
+			trackerToken: request.trackerToken,
+			owner: request.owner,
+			operation,
+			ok: result.ok,
+			changed: result.changed,
+		};
+		if (result.error !== undefined) ack.error = result.error;
+		pi.events.emit(HUB_PROGRESS_CHANNELS.ack, ack);
+
+		// Emit the observer snapshot only when the lightweight active view really
+		// changed; clearing finished history is a registry-only change.
+		if (result.snapshotChanged) {
+			pi.events.emit(HUB_PROGRESS_CHANNELS.changed, copyProgressSnapshot(result.snapshot));
+		}
 	};
 
 	// Herdr tab status: built once at load, started per session. Outside Herdr,
@@ -302,6 +411,39 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		applyUserWaitTransition(transition);
 	});
 
+	// Progress mutation relays. Parsing happens before any state change so a
+	// malformed event is ignored completely (no ack, no changed).
+	pi.events.on(HUB_PROGRESS_CHANNELS.create, (payload) => {
+		const parsed = parseProgressCreate(payload);
+		applyProgressMutation("create", parsed, () => progress.create(parsed));
+	});
+
+	pi.events.on(HUB_PROGRESS_CHANNELS.update, (payload) => {
+		const parsed = parseProgressUpdate(payload);
+		applyProgressMutation("update", parsed, () => progress.update(parsed));
+	});
+
+	pi.events.on(HUB_PROGRESS_CHANNELS.finish, (payload) => {
+		const parsed = parseProgressFinish(payload);
+		applyProgressMutation("finish", parsed, () => progress.finish(parsed));
+	});
+
+	pi.events.on(HUB_PROGRESS_CHANNELS.remove, (payload) => {
+		const parsed = parseProgressRemove(payload);
+		applyProgressMutation("remove", parsed, () => progress.remove(parsed));
+	});
+
+	// Query is a read, not a mutation, so it always answers with a detached
+	// snapshot (an empty one after shutdown).
+	pi.events.on(HUB_PROGRESS_CHANNELS.query, (payload) => {
+		const parsed = parseProgressQuery(payload);
+		if (!parsed) return;
+		pi.events.emit(HUB_PROGRESS_CHANNELS.snapshot, {
+			requestId: parsed.requestId,
+			snapshot: copyProgressSnapshot(progress.snapshot()),
+		});
+	});
+
 	pi.events.on(HUB_CHANNELS.reply, (payload) => {
 		const reply = parseReply(payload);
 		if (!reply) return;
@@ -331,11 +473,31 @@ export default function hubExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		// Progress lives for exactly one session; enable mutations before any
+		// other session-start work so the flag is independent of the Herdr path.
+		progressSessionActive = true;
+
 		if (!herdrTab || !isTuiContext(ctx)) return;
 		void herdrTab.start().catch(() => undefined);
 	});
 
+	// A session tree change is still the same live process, so progress stays
+	// active and is not reset. Registered unconditionally; the flag assignment is
+	// harmless even if an older harness never emits the event.
+	pi.on("session_tree", () => {
+		progressSessionActive = true;
+	});
+
 	pi.on("session_shutdown", async () => {
+		// Deactivate before resetting so a late child exit race cannot repopulate
+		// the registry after the final snapshot. Emit one empty changed snapshot
+		// only when observers actually held active trackers.
+		progressSessionActive = false;
+		const progressReset = progress.reset();
+		if (progressReset.snapshotChanged) {
+			pi.events.emit(HUB_PROGRESS_CHANNELS.changed, copyProgressSnapshot(progressReset.snapshot));
+		}
+
 		// Drop every registered wait and release Herdr if one was still open, so a
 		// shut-down session cannot leave the pane stuck as blocked.
 		applyUserWaitTransition(userWaits.reset());
@@ -374,6 +536,9 @@ export default function hubExtension(pi: ExtensionAPI): void {
 				return `- ${owner}/${shortWaitId(id) || "(unknown)"}: ${label || "(no label)"}`;
 			});
 
+			const progressActive = progress.activeCount();
+			const progressTotal = progressActive + progress.finishedCount();
+
 			const lines = [
 				`hub providers: ${capsByProvider.size}`,
 				...(providerLines.length > 0 ? providerLines : ["- (none)"]),
@@ -381,9 +546,78 @@ export default function hubExtension(pi: ExtensionAPI): void {
 				...pendingLines,
 				`active user waits: ${waitSnapshot.count}`,
 				...waitLines,
+				`progress trackers: ${progressTotal} (${progressActive} active)`,
 				`herdr tab: ${herdrTab?.describe() ?? "off"}`,
 			];
 
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("px:progress", {
+		description: "Show semantic progress trackers (/px:progress [owner/]trackerId)",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) return;
+
+			const records = progress.list();
+			if (records.length === 0) {
+				ctx.ui.notify("progress: no trackers", "info");
+				return;
+			}
+
+			const requested = (args ?? "").trim();
+			if (requested.length === 0) {
+				// Every active tracker, then at most the ten most recently finished
+				// (list is already ordered by updatedAt descending).
+				const active = records.filter((record) => record.outcome === undefined);
+				const finished = records
+					.filter((record) => record.outcome !== undefined)
+					.slice(0, MAX_FINISHED_PROGRESS_DISPLAY);
+
+				const lines = [`active trackers: ${active.length}`];
+				for (const record of active) lines.push(`- ${formatProgressSummary(record)}`);
+				if (finished.length > 0) {
+					lines.push(`recently finished: ${finished.length}`);
+					for (const record of finished) lines.push(`- ${formatProgressSummary(record)}`);
+				}
+
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+
+			// `owner/trackerId` disambiguates when two owners share a tracker ID.
+			const slash = requested.indexOf("/");
+			if (slash > 0 && slash < requested.length - 1) {
+				const owner = requested.slice(0, slash);
+				const trackerId = requested.slice(slash + 1);
+				const record = records.find((entry) => entry.owner === owner && entry.trackerId === trackerId);
+				if (!record) {
+					ctx.ui.notify(`progress tracker not found: ${sanitizeDisplayText(requested)}`, "warning");
+					return;
+				}
+				const lines = [formatProgressSummary(record)];
+				for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk));
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+
+			const matches = records.filter((entry) => entry.trackerId === requested);
+			if (matches.length === 0) {
+				ctx.ui.notify(`progress tracker not found: ${sanitizeDisplayText(requested)}`, "warning");
+				return;
+			}
+			if (matches.length > 1) {
+				const owners = matches.map((entry) => sanitizeDisplayText(entry.owner)).join(", ");
+				ctx.ui.notify(
+					`progress: multiple owners for ${sanitizeDisplayText(requested)} (${owners}); use /px:progress <owner>/<trackerId>`,
+					"warning",
+				);
+				return;
+			}
+
+			const record = matches[0] as ProgressTrackerRecord;
+			const lines = [formatProgressSummary(record)];
+			for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk));
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
