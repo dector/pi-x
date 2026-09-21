@@ -52,6 +52,7 @@ import {
 	applyProgressRelay,
 	PROGRESS_RELAY_DIAGNOSTIC,
 	PROGRESS_RELAY_STATUS_KEY,
+	withProgressGuidance,
 	withProgressTool,
 } from "./progress-relay.ts";
 import {
@@ -321,8 +322,9 @@ async function runSingleAgent(
 	// the backend (for example to recycle or retain a Herdr pane).
 	let wasAborted = false;
 	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+		const childSystemPrompt = withProgressGuidance(agent.systemPrompt, runtime.hasProgressTool);
+		if (childSystemPrompt.trim()) {
+			const tmp = await writePromptToTempFile(agent.name, childSystemPrompt);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
 			args.push("--append-system-prompt", tmpPromptPath);

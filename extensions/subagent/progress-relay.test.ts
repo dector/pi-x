@@ -20,6 +20,7 @@ import {
 	PROGRESS_RELAY_CHANNELS,
 	PROGRESS_RELAY_OWNER,
 	PROGRESS_RELAY_STATUS_KEY,
+	withProgressGuidance,
 	withProgressTool,
 	type ProgressRelayChannel,
 } from "./progress-relay.ts";
@@ -160,6 +161,29 @@ describe("withProgressTool", () => {
 		expect(withProgressTool(undefined, true)).toBeUndefined();
 		const empty: string[] = [];
 		expect(withProgressTool(empty, true)).toBe(empty);
+	});
+});
+
+describe("withProgressGuidance", () => {
+	test("appends delegated lifecycle rules when progress is available", () => {
+		const result = withProgressGuidance("You are a worker.\n", true);
+
+		expect(result).toStartWith("You are a worker.\n\n## Delegated progress reporting\n");
+		expect(result).toContain("`trackerId`, `trackerToken`, and `chunkId`");
+		expect(result).toContain("mark only that chunk `active`");
+		expect(result).toContain("Do not start, finish, or clear the parent tracker");
+		expect(result).toContain("best-effort");
+		expect(result).toContain("never claim that the parent accepted");
+		expect(result).toContain("If any of the three identifiers is absent");
+	});
+
+	test("leaves the prompt unchanged when progress is unavailable", () => {
+		const prompt = "You are a worker.\n";
+		expect(withProgressGuidance(prompt, false)).toBe(prompt);
+	});
+
+	test("provides guidance even when an agent has no custom prompt", () => {
+		expect(withProgressGuidance("", true)).toStartWith("## Delegated progress reporting\n");
 	});
 });
 

@@ -172,8 +172,14 @@ Re-read files before editing after a child may have touched them. Automatic work
 
 When the parent hub has the `progress` tool registered, a restricted-tool
 agent gets `progress` appended to its explicit `--tools` list, so a child can
-report semantic milestone progress even with a narrow tool set. Without the
-parent tool the original list is unchanged, and installing `subagent` does not
+report semantic milestone progress even with a narrow tool set. Every child
+also receives shared system-prompt guidance: only use progress when its task
+explicitly supplies `trackerId`, `trackerToken`, and an assigned `chunkId`;
+mark that chunk active and then terminal; never mutate another chunk or
+start/finish/clear the parent tracker; and describe relay delivery as
+best-effort rather than claiming parent acceptance. Without all three IDs the
+child does not report parent progress. Without the parent tool the original
+tool list and system prompt are unchanged, and installing `subagent` does not
 depend on hub.
 
 A child runs in a separate process, so its `progress` tool cannot reach the
