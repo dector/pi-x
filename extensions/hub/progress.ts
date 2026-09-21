@@ -302,7 +302,8 @@ function cloneChunk(chunk: ProgressChunkRecord): ProgressChunkRecord {
 
 function sameCreateDefinition(record: ProgressTrackerRecord, payload: ProgressCreatePayload): boolean {
 	if (record.title !== payload.title) return false;
-	if (record.unit !== (payload.unit ?? DEFAULT_PROGRESS_UNIT)) return false;
+	// An empty display noun is treated as absent (section 7.2), matching create.
+	if (record.unit !== (payload.unit || DEFAULT_PROGRESS_UNIT)) return false;
 	if (record.chunks.length !== payload.chunks.length) return false;
 
 	for (let i = 0; i < record.chunks.length; i++) {
@@ -362,7 +363,9 @@ export class ProgressRegistry {
 			trackerToken: parsed.trackerToken,
 			owner: parsed.owner,
 			title: parsed.title,
-			unit: parsed.unit ?? DEFAULT_PROGRESS_UNIT,
+			// Treat an empty unit as absent so the observer snapshot always carries
+			// the default display noun; the status-bar rejects an empty `unit`.
+			unit: parsed.unit || DEFAULT_PROGRESS_UNIT,
 			chunks: parsed.chunks.map((chunk, i) => {
 				const stored: ProgressChunkRecord = { id: chunk.id, index: i + 1, state: "pending", updatedAt: now };
 				if (chunk.label !== undefined) stored.label = chunk.label;

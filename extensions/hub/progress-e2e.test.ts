@@ -264,4 +264,31 @@ describe("hub progress end-to-end smoke", () => {
 		const gone = await runCommand(commands, "px:progress", "t1");
 		expect(gone[0]).toBe("progress: no trackers");
 	});
+
+	test("an empty unit still renders the status-bar row with the default noun", async () => {
+		const { bus, lifecycle } = setup();
+		await lifecycle.get("session_start")?.({}, {});
+
+		const observer = new ProgressObserver({
+			events: bus,
+			onChange: () => {},
+		});
+		observer.activate();
+
+		// The hub treats an empty display noun as absent and stores the default.
+		// Before the fix it published `unit: ""`, which the strict status-bar
+		// snapshot parser rejected wholesale, freezing the row.
+		bus.send(CH.create, { ...createPayload(), unit: "" });
+		relay(bus, "hub:progress:update", {
+			requestId: "relay-empty-unit",
+			trackerId: "t1",
+			trackerToken: "tok-1",
+			chunkId: "a",
+			state: "active",
+			phase: "reviewing",
+		});
+
+		expect(observer.content).toBe("Authentication · Item 1/3 (reviewing)");
+		observer.dispose();
+	});
 });
