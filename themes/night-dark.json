@@ -3,17 +3,17 @@
 	"name": "night-dark",
 	"vars": {
 		"bg": "#0d0d0d",
-		"card": "#161616",
-		"cardHi": "#1c1c1c",
+		"card": "#212121",
+		"cardHi": "#262626",
 		"edge": "#303030",
 		"edgeHi": "#4a4a4a",
 		"text": "#d8d8d8",
 		"muted": "#7d7d7d",
 		"dim": "#5c5c5c",
 		"green": "#3fb950",
-		"greenBg": "#0f1a12",
+		"greenBg": "#1d2a20",
 		"red": "#f85149",
-		"redBg": "#1e1012",
+		"redBg": "#2a1d1f",
 		"amber": "#d29922",
 		"amberBg": "#2b2413",
 		"selectedBg": "#1f2a20",
@@ -22,7 +22,7 @@
 		"borderCyan": "#00d7ff",
 		"borderGray": "#505050",
 		"purple": "#a78bfa",
-		"pendingBg": "#131313"
+		"pendingBg": "#202020"
 	},
 	"colors": {
 		"accent": "accentTeal",
