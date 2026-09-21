@@ -103,6 +103,7 @@ labels are rendered in the frame corners:
   Safe mode and the network token always share one label and keep the spaced
   ` · ` separator even when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
+- Pressing the configured interrupt key (Escape by default) while an agent operation is active opens a `y/n` confirmation instead of aborting immediately. Declining (or pressing Escape again) keeps the operation running, and idle Escape behavior is unchanged.
 - **top-right** — git dirty totals from `repo-stats`, rendered as two icon groups,
   files first then changed lines, separated by ` · `:
   `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The

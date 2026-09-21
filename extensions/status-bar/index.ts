@@ -59,6 +59,7 @@ import {
 	hasVisibleText,
 	sanitizeStatusText,
 } from "./compose";
+import { createProtectedInterrupt, InterruptConfirmationGuard } from "./interrupt-confirmation";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
 
 const SECTION_DELIMITER = "  ";
@@ -268,6 +269,8 @@ interface FrameStatusEditorOptions {
 	relocatedLabels?: RelocatedBorderLabels;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
+	/** Confirmation guard used before an active agent operation is interrupted. */
+	interruptConfirmation: InterruptConfirmationGuard;
 	/** Muted theme color used for zero-valued border git stats. */
 	mutedColor?: (text: string) => string;
 	/**
@@ -345,6 +348,7 @@ class FrameStatusEditor extends CustomEditor {
 	private working = false;
 	private workingTick = 0;
 	private workingTimer?: ReturnType<typeof setInterval>;
+	private readonly interruptConfirmation: InterruptConfirmationGuard;
 	/** Active glitch cells keyed by character index, with ticks left to live. */
 	private readonly glitchCells = new Map<number, { glyph: string; remaining: number }>();
 	/** Length of the model label from the last render, used to place glitch cells. */
@@ -361,8 +365,15 @@ class FrameStatusEditor extends CustomEditor {
 		this.topRightProvider = options.topRight;
 		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
+		this.interruptConfirmation = options.interruptConfirmation;
 		this.mutedColor = options.mutedColor;
 		this.highlightColor = options.highlightColor;
+	}
+
+	/** Wrap pi's dynamic interrupt callback after the editor has been installed. */
+	protectInterrupt(): void {
+		if (!this.onEscape) throw new Error("status-bar: pi did not wire the editor interrupt handler");
+		this.onEscape = createProtectedInterrupt(this.onEscape, this.interruptConfirmation);
 	}
 
 	/** Track streaming state and drive the model-label animation. */
@@ -1740,6 +1751,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
+			interruptConfirmation: new InterruptConfirmationGuard({
+				getOperationToken: () => activeContext().signal,
+				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),
+			}),
 			mutedColor: (text) => activeContext().ui.theme.fg("muted", text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
@@ -1762,6 +1777,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			frameEditor = new FrameStatusEditor(tui, editorTheme, keybindings, options);
 			return frameEditor;
 		});
+		if (!frameEditor) throw new Error("status-bar: pi did not create the editor synchronously");
+		frameEditor.protectInterrupt();
 
 		editorOwnerContext = ctx;
 	};
