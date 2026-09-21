@@ -192,8 +192,8 @@ describe("hub progress end-to-end smoke", () => {
 			state: "active",
 			phase: "reviewing",
 		});
-		expect(observer.content).toBe("Authentication · Stage 1/3 (reviewing)");
-		expect(formatProgressRow(changedSnapshots.at(-1))).toBe("Authentication · Stage 1/3 (reviewing)");
+		expect(observer.content).toBe("□□□ Authentication · Stage 1/3 (reviewing)");
+		expect(formatProgressRow(changedSnapshots.at(-1))).toBe("□□□ Authentication · Stage 1/3 (reviewing)");
 
 		// 4. Parallel work: a done, b and c active -> aggregate row.
 		relay(bus, "hub:progress:update", {
@@ -218,8 +218,8 @@ describe("hub progress end-to-end smoke", () => {
 			state: "active",
 		});
 
-		expect(observer.content).toBe("Authentication · 1/3 done · 2 active");
-		expect(formatProgressRow(changedSnapshots.at(-1))).toBe("Authentication · 1/3 done · 2 active");
+		expect(observer.content).toBe("■□□ Authentication · 1/3 done · 2 active");
+		expect(formatProgressRow(changedSnapshots.at(-1))).toBe("■□□ Authentication · 1/3 done · 2 active");
 
 		// 5. Settle every chunk and finish the tracker: the active row disappears.
 		relay(bus, "hub:progress:update", {
@@ -288,7 +288,7 @@ describe("hub progress end-to-end smoke", () => {
 			phase: "reviewing",
 		});
 
-		expect(observer.content).toBe("Authentication · Item 1/3 (reviewing)");
+		expect(observer.content).toBe("□□□ Authentication · Item 1/3 (reviewing)");
 		observer.dispose();
 	});
 });

@@ -276,6 +276,25 @@ function safeText(value: string | undefined): string {
 	return value === undefined ? "" : sanitizeUntrustedProgressText(value);
 }
 
+/** Wider bars crowd narrow footers, so longer trackers scale down to this. */
+export const MAX_PROGRESS_BAR_CELLS = 10;
+const PROGRESS_BAR_FILLED = "■";
+const PROGRESS_BAR_EMPTY = "□";
+
+/**
+ * `■■□□□`-style bar for one tracker. One cell per chunk when the tracker fits
+ * within `maxCells`; longer trackers scale proportionally. `settled` counts
+ * successful terminals (`done` + `skipped`); failures stay empty.
+ */
+export function formatProgressBar(settled: number, total: number, maxCells = MAX_PROGRESS_BAR_CELLS): string {
+	if (!Number.isFinite(total) || total <= 0) return "";
+	const cells = Math.min(total, Math.max(1, Math.floor(maxCells)));
+	const boundedSettled = Math.min(Math.max(settled, 0), total);
+	const filled =
+		boundedSettled <= 0 ? 0 : boundedSettled >= total ? cells : Math.round((boundedSettled / total) * cells);
+	return PROGRESS_BAR_FILLED.repeat(filled) + PROGRESS_BAR_EMPTY.repeat(cells - filled);
+}
+
 /**
  * Render the single footer line for a snapshot, or `undefined` when there is
  * nothing active to show. Every text field is sanitized first. Chunk labels are
@@ -296,7 +315,8 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 	const activeCount = counts.active;
 	const blockedCount = counts.blocked;
 	const inFlight = activeCount + blockedCount;
-	const terminal = counts.done + counts.failed + counts.skipped;
+	const settled = counts.done + counts.skipped;
+	const terminal = settled + counts.failed;
 
 	let base: string;
 	if (inFlight === 1) {
@@ -324,7 +344,9 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 
 	const extraTrackers = snapshot.trackers.length - 1;
 	if (extraTrackers > 0) base += ` · +${extraTrackers} trackers`;
-	return base;
+
+	const bar = formatProgressBar(settled, total);
+	return bar.length > 0 ? `${bar} ${base}` : base;
 }
 
 // ---------------------------------------------------------------------------

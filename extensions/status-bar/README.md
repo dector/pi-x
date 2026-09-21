@@ -89,15 +89,19 @@ It subscribes to `hub:progress:changed` and, on `session_start` and
   and all C0/C1 controls by `sanitizeUntrustedProgressText` before rendering.
   The existing per-line truncation to terminal width is the final bound.
 - Chunk labels are not part of the observer snapshot and are not rendered.
-- Formats:
-  - one active/blocked chunk: `Authentication · Stage 1/13 (reviewing)`
+- A `■`/`□` bar is prefixed before the text: one cell per chunk when the
+  tracker has at most 10 chunks, otherwise 10 cells scaled proportionally.
+  `■` counts successful terminals (`done` + `skipped`); `failed`, `pending`,
+  `active`, and `blocked` stay `□`.
+- Formats (bar shown before each):
+  - one active/blocked chunk: `□□□□□□□□□□ Authentication · Stage 1/13 (reviewing)`
     (active fallback `working`; blocked always `(blocked)`);
-  - several active/blocked: `Authentication · 4/13 done · 2 active · 1 blocked`
+  - several active/blocked: `■■■□□□□□□□ Authentication · 4/13 done · 2 active · 1 blocked`
     (optional `blocked`/`failed`/`skipped` counts only when non-zero);
   - none active/blocked but pending remains:
     `Authentication · 4/13 done · 9 pending`;
   - all chunks terminal but unfinished:
-    `Authentication · 13/13 settled · awaiting finish`.
+    `■■■■■■■■■■ Authentication · 13/13 settled · awaiting finish`.
 - With several active trackers, the most recently updated tracker is rendered
   and ` · +N trackers` is appended.
 - State is cleared on `session_shutdown`; late `changed` events are ignored so a

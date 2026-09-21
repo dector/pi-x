@@ -6,6 +6,7 @@ import {
 	ProgressObserver,
 	applyProgressRow,
 	countChunkStates,
+	formatProgressBar,
 	formatProgressRow,
 	parseProgressSnapshot,
 	parseProgressSnapshotResponse,
@@ -104,23 +105,57 @@ describe("sanitizeUntrustedProgressText", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Progress bar
+// ---------------------------------------------------------------------------
+
+describe("formatProgressBar", () => {
+	test("renders one cell per chunk for short trackers", () => {
+		expect(formatProgressBar(0, 3)).toBe("□□□");
+		expect(formatProgressBar(1, 3)).toBe("■□□");
+		expect(formatProgressBar(3, 3)).toBe("■■■");
+	});
+
+	test("scales down to the cell cap for long trackers", () => {
+		expect(formatProgressBar(13, 13)).toBe("■■■■■■■■■■");
+		expect(formatProgressBar(1, 13)).toBe("■□□□□□□□□□");
+		expect(formatProgressBar(0, 13)).toBe("□□□□□□□□□□");
+	});
+
+	test("counts done and skipped as filled but not failed", () => {
+		const settled = 2 + 1; // 2 done + 1 skipped
+		expect(formatProgressBar(settled, 4)).toBe("■■■□");
+		expect(formatProgressBar(1, 4)).toBe("■□□□");
+	});
+
+	test("returns an empty string for a non-positive total", () => {
+		expect(formatProgressBar(0, 0)).toBe("");
+		expect(formatProgressBar(1, -1)).toBe("");
+	});
+
+	test("a tracker with a skipped chunk fills the corresponding cell", () => {
+		const snapshot = makeSnapshot([thirteen({ 1: "done", 2: "skipped", 3: "active" })]);
+		expect(formatProgressRow(snapshot)?.startsWith("■■")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Focused form
 // ---------------------------------------------------------------------------
 
 describe("focused progress format", () => {
 	test("one active chunk without a phase falls back to working", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "active" })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13 (working)");
+		expect(formatProgressRow(snapshot)).toBe("□□□□□□□□□□ Authentication · Stage 1/13 (working)");
 	});
 
 	test("one active chunk renders its sanitized phase", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "active" }, "reviewing")]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13 (reviewing)");
+		expect(formatProgressRow(snapshot)).toBe("□□□□□□□□□□ Authentication · Stage 1/13 (reviewing)");
 	});
 
 	test("one blocked chunk always renders blocked even with a phase", () => {
 		const tracker = makeTracker({ states: ["blocked"], phases: ["reviewing"] });
-		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Authentication · Stage 1/1 (blocked)");
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("□ Authentication · Stage 1/1 (blocked)");
 	});
 
 	test("sanitizes title, unit, and phase before rendering", () => {
@@ -130,7 +165,7 @@ describe("focused progress format", () => {
 			states: ["active"],
 			phases: ["\u001b]0;x\u0007reviewing"],
 		});
-		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Auth · Stage 1/1 (reviewing)");
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("□ Auth · Stage 1/1 (reviewing)");
 	});
 });
 
@@ -141,12 +176,12 @@ describe("focused progress format", () => {
 describe("aggregate and remaining progress formats", () => {
 	test("several active/blocked chunks render aggregate counts", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "done", 2: "done", 3: "done", 4: "done", 5: "active", 6: "active", 7: "blocked" })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · 4/13 done · 2 active · 1 blocked");
+		expect(formatProgressRow(snapshot)).toBe("■■■□□□□□□□ Authentication · 4/13 done · 2 active · 1 blocked");
 	});
 
 	test("pending-only tracker renders the pending count", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "done", 2: "done", 3: "done", 4: "done" })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · 4/13 done · 9 pending");
+		expect(formatProgressRow(snapshot)).toBe("■■■□□□□□□□ Authentication · 4/13 done · 9 pending");
 	});
 
 	test("failed and skipped counts appear only when non-zero", () => {
@@ -163,19 +198,19 @@ describe("aggregate and remaining progress formats", () => {
 		expect(skippedRow).not.toContain("failed");
 
 		const plain = makeSnapshot([thirteen({ 1: "done", 2: "active", 3: "active" })]);
-		expect(formatProgressRow(plain)).toBe("Authentication · 1/13 done · 2 active");
+		expect(formatProgressRow(plain)).toBe("■□□□□□□□□□ Authentication · 1/13 done · 2 active");
 	});
 
 	test("pending-only includes non-zero failed/skipped counts", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "done", 2: "failed", 3: "skipped" })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · 1/13 done · 10 pending · 1 failed · 1 skipped");
+		expect(formatProgressRow(snapshot)).toBe("■■□□□□□□□□ Authentication · 1/13 done · 10 pending · 1 failed · 1 skipped");
 	});
 
 	test("all-terminal unfinished tracker renders awaiting finish", () => {
 		const states: ProgressChunkState[] = Array.from({ length: 13 }, () => "done");
 		states[12] = "skipped";
 		const snapshot = makeSnapshot([makeTracker({ states })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · 13/13 settled · awaiting finish");
+		expect(formatProgressRow(snapshot)).toBe("■■■■■■■■■■ Authentication · 13/13 settled · awaiting finish");
 	});
 
 	test("empty or inactive snapshots hide the row", () => {
@@ -193,7 +228,7 @@ describe("tracker selection", () => {
 		const older = makeTracker({ trackerId: "old", title: "Older", states: ["active"], updatedAt: 1 });
 		const newer = makeTracker({ trackerId: "new", title: "Newer", states: ["active"], updatedAt: 2 });
 		expect(selectMostRecentTracker([older, newer])?.trackerId).toBe("new");
-		expect(formatProgressRow(makeSnapshot([older, newer]))).toBe("Newer · Stage 1/1 (working) · +1 trackers");
+		expect(formatProgressRow(makeSnapshot([older, newer]))).toBe("□ Newer · Stage 1/1 (working) · +1 trackers");
 	});
 
 	test("breaks updatedAt ties by owner then trackerId", () => {
@@ -291,8 +326,8 @@ describe("ProgressObserver", () => {
 		await store.refresh({ timeoutMs: 50 });
 
 		expect(store.current).toEqual(expected);
-		expect(store.content).toBe("Authentication · Stage 1/1 (reviewing)");
-		expect(rows.get(HUB_PROGRESS_ROW_ID)?.content).toBe("Authentication · Stage 1/1 (reviewing)");
+		expect(store.content).toBe("□ Authentication · Stage 1/1 (reviewing)");
+		expect(rows.get(HUB_PROGRESS_ROW_ID)?.content).toBe("□ Authentication · Stage 1/1 (reviewing)");
 		store.dispose();
 	});
 
