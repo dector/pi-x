@@ -1712,11 +1712,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						let content = sanitizeStatusText(entry.content);
 						if (!hasVisibleText(content)) continue;
 						if (id === HUB_PROGRESS_ROW_ID) {
-							// The `■□` bar reads as pastel-accent progress while the descriptive
-							// text stays semi-muted behind it.
+							// Purple: a vivid bar in front of pastel, semi-muted text.
 							content = styleProgressRow(content, {
-								bar: (text) => theme.fg("accent", text),
-								text: (text) => theme.fg("muted", text),
+								bar: (text) => theme.fg("thinkingXhigh", text),
+								text: (text) => theme.fg("customMessageLabel", text),
 							});
 						}
 						lines.push(truncateToWidth(content, width, theme.fg("dim", "...")));

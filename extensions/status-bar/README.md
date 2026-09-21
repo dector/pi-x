@@ -88,8 +88,9 @@ It subscribes to `hub:progress:changed` and, on `session_start` and
 - Every text field (`title`, `unit`, `phase`) is stripped of ANSI/OSC escapes
   and all C0/C1 controls by `sanitizeUntrustedProgressText` before rendering.
   The existing per-line truncation to terminal width is the final bound.
-- At render time the `■`/`□` bar is colored `accent` (pastel, less muted) and
-  the descriptive text `muted` (semi-muted), using the active theme.
+- At render time the `■`/`□` bar is colored `thinkingXhigh` (vivid purple) and
+  the descriptive text `customMessageLabel` (pastel, semi-muted purple), using
+  the active theme.
 - Chunk labels are not part of the observer snapshot and are not rendered.
 - A `■`/`□` bar is prefixed before the text: one cell per chunk when the
   tracker has at most 10 chunks, otherwise 10 cells scaled proportionally.
