@@ -191,6 +191,9 @@ async function drainStateQueue(): Promise<void> {
 
 const MAX_BACKGROUND_ID_LENGTH = 128;
 
+/** Event other extensions emit to hold the pane `working` while they run work. */
+export const HERDR_BACKGROUND_EVENT = "herdr:background";
+
 export function parseBackgroundId(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 && value.length <= MAX_BACKGROUND_ID_LENGTH
     ? value
@@ -220,6 +223,28 @@ export function applyBackgroundEvent(background: Set<string>, data: unknown): bo
   return false;
 }
 
+export interface AgentStateInput {
+  blockedCount: number;
+  blockedMessage?: string;
+  agentActive: boolean;
+  /** Number of active `herdr:background` leases. */
+  backgroundCount: number;
+}
+
+/**
+ * Semantic state for one pane. A blocked user wait always wins over working;
+ * background work keeps the pane working after the accepting turn settles.
+ */
+export function desiredAgentState(input: AgentStateInput): { state: AgentState; message?: string } {
+  if (input.blockedCount > 0) {
+    return { state: "blocked", message: input.blockedMessage };
+  }
+  if (input.agentActive || input.backgroundCount > 0) {
+    return { state: "working", message: undefined };
+  }
+  return { state: "idle", message: undefined };
+}
+
 export default function (pi) {
   if (!enabled()) {
     return;
@@ -235,14 +260,8 @@ export default function (pi) {
   const background = new Set<string>();
 
   function desiredState() {
-    if (blockedCount > 0) {
-      return { state: "blocked" as const, message: blockedMessage };
-    }
     // FORK: background work keeps the pane working after a settled turn.
-    if (agentActive || background.size > 0) {
-      return { state: "working" as const, message: undefined };
-    }
-    return { state: "idle" as const, message: undefined };
+    return desiredAgentState({ blockedCount, blockedMessage, agentActive, backgroundCount: background.size });
   }
 
   function publishState(force = false) {
@@ -278,7 +297,7 @@ export default function (pi) {
   // when that work settles. Events that arrive before `session_start` are
   // buffered in the set and published once `rootSession` is set, so producer
   // and integration startup order does not matter.
-  pi.events.on("herdr:background", (data) => {
+  pi.events.on(HERDR_BACKGROUND_EVENT, (data) => {
     if (!applyBackgroundEvent(background, data)) {
       return;
     }

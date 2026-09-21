@@ -93,6 +93,7 @@ import {
 	type SubagentBackend,
 } from "./backend.ts";
 import { createHerdrBridgeLauncher, createSingleFlight, preflightHerdr } from "./herdr-preflight.ts";
+import { HERDR_BACKGROUND_EVENT, herdrBackgroundPayload } from "./herdr-background.ts";
 import {
 	cleanupStaleHerdrTabRecords,
 	createParentHerdrTab,
@@ -732,6 +733,19 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Advertise detached work to the Herdr integration so the parent pane stays
+	// `working` after the accepting turn settles. Per-dispatch ids compose with
+	// parallel and chained dispatches; the integration clears each on `false`.
+	// Child processes run in RPC mode and never own a Herdr pane, so they stay out.
+	const emitHerdrBackground = (dispatchId: string, active: boolean): void => {
+		if (process.env.PI_SUBAGENT_CHILD === "1") return;
+		try {
+			pi.events.emit(HERDR_BACKGROUND_EVENT, herdrBackgroundPayload(dispatchId, active));
+		} catch {
+			// The event bus must never break dispatch lifecycle.
+		}
+	};
+
 	// Parent-owned Herdr tab, created lazily by the first Herdr dispatch and
 	// reused for the session. Preflight validates the environment and prepares
 	// the tab before a dispatch is accepted; nothing is created unless the
@@ -1222,6 +1236,9 @@ export default function (pi: ExtensionAPI) {
 		// republishes (and clears a stale widget from an earlier session).
 		activeWidget.reset();
 		publishActiveSubagentWidget();
+		// Re-announce detached work: a reload replaces the Herdr integration, so
+		// its background lease starts empty.
+		for (const handle of asyncDispatches.handles) emitHerdrBackground(handle.dispatchId, true);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -1230,6 +1247,7 @@ export default function (pi: ExtensionAPI) {
 		// state and force a republish instead of skipping an identical snapshot.
 		activeWidget.reset();
 		publishActiveSubagentWidget();
+		for (const handle of asyncDispatches.handles) emitHerdrBackground(handle.dispatchId, true);
 	});
 
 	pi.on("session_shutdown", async (event) => {
@@ -1487,6 +1505,13 @@ export default function (pi: ExtensionAPI) {
 						{ aborted: true },
 					);
 				}
+				// Hold the Herdr pane `working` until this dispatch settles, so a
+				// detached child is not mistaken for a finished parent turn.
+				emitHerdrBackground(handle.dispatchId, true);
+				void handle.promise.then(
+					() => emitHerdrBackground(handle.dispatchId, false),
+					() => emitHerdrBackground(handle.dispatchId, false),
+				);
 				return buildAsyncStartResult(dispatch);
 			})();
 			inFlightDispatches.add(execution);

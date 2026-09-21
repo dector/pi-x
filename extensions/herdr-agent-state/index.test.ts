@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { applyBackgroundEvent, parseBackgroundId } from "./index.ts";
+import { HERDR_BACKGROUND_EVENT, applyBackgroundEvent, desiredAgentState, parseBackgroundId } from "./index.ts";
+
+describe("herdr background contract", () => {
+	test("is the event the subagent extension emits", () => {
+		expect(HERDR_BACKGROUND_EVENT).toBe("herdr:background");
+	});
+});
 
 describe("parseBackgroundId", () => {
 	test("accepts a bounded non-empty string", () => {
@@ -57,5 +63,36 @@ describe("applyBackgroundEvent", () => {
 			expect(applyBackgroundEvent(background, payload)).toBe(false);
 		}
 		expect(background.size).toBe(0);
+	});
+});
+
+describe("desiredAgentState", () => {
+	const base = { blockedCount: 0, agentActive: false, backgroundCount: 0 };
+
+	test("is idle with no activity", () => {
+		expect(desiredAgentState(base)).toEqual({ state: "idle", message: undefined });
+	});
+
+	test("is working while the agent runs", () => {
+		expect(desiredAgentState({ ...base, agentActive: true })).toEqual({ state: "working", message: undefined });
+	});
+
+	test("stays working after the turn settles while background work is active", () => {
+		expect(desiredAgentState({ ...base, backgroundCount: 1 })).toEqual({ state: "working", message: undefined });
+		expect(desiredAgentState({ ...base, agentActive: false, backgroundCount: 3 })).toEqual({
+			state: "working",
+			message: undefined,
+		});
+	});
+
+	test("blocked wins over working and background work", () => {
+		expect(desiredAgentState({ ...base, blockedCount: 1, blockedMessage: "approve?" })).toEqual({
+			state: "blocked",
+			message: "approve?",
+		});
+		expect(desiredAgentState({ ...base, blockedCount: 2, blockedMessage: "approve?", agentActive: true, backgroundCount: 2 })).toEqual({
+			state: "blocked",
+			message: "approve?",
+		});
 	});
 });

@@ -156,6 +156,11 @@ there is no automatic fallback and no config key.
 files, and it is rejected on `action: "stop"` / `action: "steer"` control
 calls because it describes a new dispatch rather than a control operation.
 
+Detached dispatches hold the parent Herdr pane in `working` until they settle,
+through the `herdr:background` lease consumed by the `herdr-agent-state` fork
+(see `extensions/subagent/herdr-background.ts`). The official Herdr Pi
+integration ignores that event, so the pane still looks done there.
+
 ### Retention
 
 | `herdr` | successful pane | failed / aborted pane |

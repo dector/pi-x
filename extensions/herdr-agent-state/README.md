@@ -39,9 +39,9 @@ pi.events.emit("herdr:background", { id: "px:subagent", active: false });
   integration startup order does not matter.
 - `session_shutdown` clears all ids.
 
-The producer side is **not** part of this extension yet. Something must emit
-`herdr:background` (planned: the `subagent` extension on async dispatch
-start/settle).
+The producer is the `subagent` extension: it emits one id per async dispatch on
+start/settle and re-announces active ids on `session_start` / `session_tree`
+(see `extensions/subagent/herdr-background.ts`).
 
 Marked hunks (search for `FORK: background`):
 
