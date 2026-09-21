@@ -259,7 +259,13 @@ function registerNetProvider(bus: Bus, id: string, action: string | null, delayM
 describe("http tools consume perm:net (Stage 3)", () => {
 	test("registers the three network tools and a perm:tool provider", async () => {
 		const { tools } = await createHarness();
-		expect([...tools.keys()]).toEqual(["http", "http_md", "web_search"]);
+		// The harness also loads hub, which registers its own `progress` tool; this
+		// assertion is about the network tools only.
+		expect([...tools.keys()].filter((name) => name !== "progress")).toEqual([
+			"http",
+			"http_md",
+			"web_search",
+		]);
 	});
 
 	test("trusted methods allow under smart (Auto = ask-untrusted)", async () => {

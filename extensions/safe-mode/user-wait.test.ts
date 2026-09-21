@@ -87,6 +87,7 @@ function createFakePi(bus: Bus) {
 		events: bus,
 		on(_event: string, _handler: PiHandler) {},
 		registerCommand() {},
+		registerTool() {},
 		registerFlag() {},
 		registerShortcut() {},
 		appendEntry() {},

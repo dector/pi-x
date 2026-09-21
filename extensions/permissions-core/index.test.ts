@@ -35,6 +35,7 @@ interface FakePi {
 	lifecycle: Map<string, BusHandler[]>;
 	on(event: string, handler: BusHandler): void;
 	registerCommand(name: string, options: unknown): void;
+	registerTool(): void;
 	appendEntry(customType: string, data: unknown): void;
 }
 
@@ -50,6 +51,7 @@ function createFakePi(bus: Bus): FakePi {
 			lifecycle.set(event, list);
 		},
 		registerCommand() {},
+		registerTool() {},
 		appendEntry(customType, data) {
 			pi.entries.push({ customType, data });
 		},

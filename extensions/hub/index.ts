@@ -30,6 +30,7 @@ import {
 	type ProgressRegistryResult,
 	type ProgressTrackerRecord,
 } from "./progress";
+import { registerProgressTool } from "./progress-tool";
 import {
 	UserWaitRegistry,
 	parseUserWaitClear,
@@ -507,6 +508,10 @@ export default function hubExtension(pi: ExtensionAPI): void {
 		// the shutdown handler from resolving before the label is restored.
 		await herdrTab.stop().catch(() => undefined);
 	});
+
+	// Model-facing progress tool. Registration is factory-time so the tool is
+	// available as soon as the extension loads, before the first session starts.
+	registerProgressTool(pi);
 
 	pi.registerCommand("px:hub", {
 		description: "Show hub providers and pending permission requests",
