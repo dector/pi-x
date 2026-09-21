@@ -3,8 +3,10 @@
 Tracks skills read during the current pi session and publishes a first-line status-bar item:
 
 ```text
-SKILLS: n/m
+󰐱 n/m
 ```
+
+The leading glyph (`󰐱`, Nerd Font `U+F0431`) is the skills icon.
 
 - `n` is the number of unique successfully-read `SKILL.md` files in the current session.
 - `m` is the number of loaded/known skills reported by pi for the current session and refreshed before each agent run.
@@ -18,7 +20,7 @@ Publishes:
 ```ts
 pi.events.emit("px:status-bar:first-line:set", {
   id: "skill-stats",
-  content: "SKILLS: 0/0",
+  content: "\u{F0431} 0/0",
   section: "right",
   priority: -100,
 });

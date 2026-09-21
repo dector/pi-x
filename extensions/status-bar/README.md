@@ -51,9 +51,13 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - item delimiter: ` · `
 - If no first-line producer exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
-- `new` display mode appends the context token breakdown (`↑<input>/↓<output>/<cacheRead>`,
-  no cost suffix) to the first-line right section, after the producer items
-  (that is, after the `SKILLS: n/m` counter when present).
+- In `new` display mode the git branch carries the border branch icon inside the
+  parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
+  mode keeps the plain `~/pi-x (trunk)` form.
+- `new` display mode appends the context token breakdown to the first-line right
+  section, after the producer items (that is, after the skills `󰐱 n/m` counter
+  when present). It is prefixed with the total-usage icon and omits the cost
+  suffix: `󰓡 ↑<input>/↓<output>/<cacheRead>`.
 
 ### Extra rows
 
@@ -77,9 +81,9 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-┏━━ cdx/5.6-sol (high) ━ +1 -2 M4 · +150 -200 ━━┓
-┃ ... input ...                                  ┃
-┗━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
+┏━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━┓
+┃ ... input ...                                     ┃
+┗━━ 󰕥 SMART · 󰅟  NET? ━━━ 󰊚 15.9% 210k · 󰇁 0.03 ━━━━━┛
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -92,53 +96,64 @@ labels are rendered in the frame corners:
   Safe mode and the network token always share one label and keep the spaced
   ` · ` separator even when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
-- **top-right** — git dirty totals from `repo-stats`, e.g.
-  `+1 -2 M4 · +150 -200 ━━`. Rendered only when the repo is dirty. The
-  producer's `[ ]` and `|` are not shown; the file/line groups are separated by
-  a `·` recolored to the frame border color. On narrow frames, compact full
-  totals are tried first. If that is still too wide, file-only variants are used
-  (for example `+1 -2 M4` or `+1-2M4`). The model label remains visible whenever
-  it fits. Labels sharing the top edge need only one heavy border dash between them. In `new` mode the totals are hidden from the first line to avoid
-  duplication; in `legacy` mode they stay on the first line.
+- **top-right** — git dirty totals from `repo-stats`, rendered as two icon groups,
+  files first then changed lines, separated by ` · `:
+  `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
+  producer's `[ ]`/`|` markers and `+`/`-`/`M` prefixes are replaced by Nerd Font
+  icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group also carries
+  the modified-file count. Zero values render in the muted theme color, non-zero
+  values keep the producer's colors. On narrow frames the compact split form drops
+  the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
+  files group (`󰐖1󰍵2󰦓4`). The model label remains visible whenever it fits. Labels
+  sharing the top edge need only one heavy border dash between them. In `new` mode
+  the totals are hidden from the first line to avoid duplication; in `legacy` mode
+  they stay on the first line.
 - **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
-  - Format: `━━ <safe-mode> · <NET> ━━━ <percent> <tokens> · <cost> `. The safe-mode
-    and network parts are omitted when their producer/core is absent.
+  - Format: `━━ 󰕥 <safe-mode> · 󰅟  <NET> ━━━ 󰊚 <percent> <tokens> · 󰇁 <cost> `. Each
+    part is prefixed with a Nerd Font icon that inherits the color of the text it
+    prefixes. The safe-mode and network parts are omitted when their producer/core is absent.
   - **network** — effective policy from `permissions-core`, shown only after safe
-    mode and joined with exactly ` · ` (the dot uses the frame border color).
-    Labels/colors are policy-specific: deny-all is gray `NET`, ask-all is gray
-    `NET?`, allow-trusted is white `NET`, ask-untrusted is white `NET?`, and
-    allow-all is white `NET+`. It reflects effective state only, so PARANOID always renders
-    gray `NET?`. In `legacy` mode the token moves to the status line instead (see
-    [Display mode](#display-mode)); exactly one surface renders it.
+    mode and joined with exactly ` · ` (the dot uses the frame border color). The
+    token is prefixed with the network icon plus two spaces (`󰅟  `), which inherits
+    the token's own color. Labels/colors are policy-specific: deny-all is gray
+    `NET`, ask-all is gray `NET?`, allow-trusted is white `NET`, ask-untrusted is
+    white `NET?`, and allow-all is white `NET+`. It reflects effective state only,
+    so PARANOID always renders gray `NET?`. In `legacy` mode the token moves to the
+    status line instead (see [Display mode](#display-mode)); exactly one surface
+    renders it.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
-  - `cost`: cumulative session cost with a trailing `$` (for example `0.03$`).
-    Zero/unavailable renders as `0.00$`; non-zero below half a cent renders as `<0.01$`.
-    When subagent usage changes the total, the label shows session | total:
-    `0.01$ | 0.013$`. The total renders with three decimals to keep small
-    subagent spend visible, and adds every subagent cost found in the branch,
-    nested subagents included. The suffix is omitted while the total rounds to
-    the same three-decimal value as the session cost.
+  - `cost`: cumulative session cost, prefixed with the price icon `󰇁 ` and with no
+    trailing `$` in border mode (for example `󰇁 0.03`). Zero/unavailable renders as
+    `󰇁 0.00`; non-zero below half a cent renders as `󰇁 <0.01`. When subagent usage
+    changes the total, the label shows session then total, each with its own icon:
+    `󰇁 0.01 󰇁󰇁 0.013`. The total renders with three decimals to keep small subagent
+    spend visible, and adds every subagent cost found in the branch, nested
+    subagents included. The total is omitted while it rounds to the same
+    three-decimal value as the session cost.
   - The frame label is independent of the second-line cost whitelist: it always shows
     accumulated `usage.cost.total` from the active branch.
   - The label uses the same context-usage color rules as the status-bar context items:
     `muted` up to 20%, `text` up to 30%, `warning` up to 50%, `error` above 50%.
     It stays uncolored when context percent is unknown.
-- **safe-mode** (bottom-left, before context) — `SMART`, `READER`, `YOLO`,
-  `PARANOID`, plus `+` when outer access is on. Rendered only while the
-  `safe-mode` producer has published content. `SMART` is colored with the frame
-  border color; other modes keep the producer's own color.
-- **top-left** — active provider + model + effort (`<provider>/<model> (<effort>)`, e.g.
-  `deepseek/deepseek-chat (high)`; id-only when provider is missing), rendered in the frame
-  border color. Hidden when no model is active. Both parts go through the exact-name
-  alias tables (see [Aliases](#aliases)), so the example above can render as
-  `cdx/5.6-sol` or `opencode/4.1-flash`.
+- **safe-mode** (bottom-left, before context) — the `󰕥 ` icon followed by
+  `SMART`, `READER`, `YOLO`, `PARANOID`, plus `+` when outer access is on.
+  Rendered only while the `safe-mode` producer has published content. `SMART` and
+  its icon are colored with the frame border color; other modes keep the producer's
+  own color on both the icon and the text.
+- **top-left** — the model icon `󰙴 ` followed by provider + model + thinking level
+  joined with ` · ` (`󰙴 <provider>/<model> · <thinking>`, e.g.
+  `󰙴 deepseek/deepseek-chat · high`; id-only when provider is missing), rendered in
+  the frame border color. Hidden when no model is active. Both parts go through the
+  exact-name alias tables (see [Aliases](#aliases)), so the example above can render
+  as `󰙴 cdx/5.6-sol · high` or `󰙴 opencode/4.1-flash · high`.
   - `effort`: 3-4 lowercase level symbol (`off` → `off`, `minimal` → `min`,
     `low` → `low`, `medium` → `med`, `high` → `high`, `xhigh` → `xhi`,
     `max` → `max`; unknown levels truncated to 4 lowercase chars). On narrow
     screens (e.g. a phone) the text is dropped and only the arrow indicator is
     shown: `off` → `✘`, `minimal` → `🡻🡻`, `low` → `🡻`, `medium` → `🡺`,
-    `high` → `🢁`, `xhigh` → `🢁🢁`, `max` → `🢁🢁🢁`.
+    `high` → `🢁`, `xhigh` → `🢁🢁`, `max` → `🢁🢁🢁` (for example
+    `󰙴 cdx/5.6-sol · 🡺`).
   - While streaming, the label runs one of two animations (no spinner is shown and
     the word `Working` never appears):
     - `comet` — a leading character is highlighted in the theme `text` color
@@ -167,11 +182,11 @@ labels are rendered in the frame corners:
 `displayMode` controls where context/model/safe-mode information lives:
 
 - `new` (default) — border priority.
-  - Editor frame shows the corner labels (top-left model + effort, top-right git totals, bottom-left safe-mode · network + context).
+  - Editor frame shows the corner labels (top-left model icon + model · thinking, top-right git totals, bottom-left safe-mode · network + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
-    producer items (after the `SKILLS: n/m` counter), and omits the cost suffix
-    because the border already shows cost.
+    producer items (after the skills counter), prefixed with the total-usage icon,
+    and omits the cost suffix because the border already shows cost.
   - `safe-mode`, the effective network token, `switch-thinking` (favorite thinking modes), model, and percent are hidden from the status line.
 - `legacy` — status-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).

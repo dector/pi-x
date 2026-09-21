@@ -48,7 +48,10 @@ import {
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
 	composeSectionItems,
-	filesOnlyFrameLabel,
+	decorateBorderContextLabel,
+	decorateBorderGitStats,
+	decorateBorderPathBranch,
+	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
@@ -98,6 +101,9 @@ type WorkingAnimation = (typeof WORKING_ANIMATIONS)[number];
 // Source-level default for the streaming animation. Override for a quick preview
 // with `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`.
 const WORKING_ANIMATION: WorkingAnimation = "comet";
+
+// Nerd Font glyph shown immediately before the model label in border mode.
+const MODEL_DISPLAY_GLYPH = "󰙴 ";
 
 // Heavy editor frame with square corners.
 const FRAME_BORDER = {
@@ -197,7 +203,7 @@ function buildFrameContextLabel(
 			? `${formatCostTrailing(cost)} | ${formatCostTrailingPrecise(totalCost)}`
 			: formatCostTrailing(cost);
 
-	const label = `${percent} ${tokens} · ${costLabel}`;
+	const label = decorateBorderContextLabel(`${percent} ${tokens} · ${costLabel}`);
 	if (!theme || percentValue === undefined) return label;
 
 	return styleContextLabel(theme, Number(percentValue.toFixed(1)), label);
@@ -220,6 +226,8 @@ interface FrameStatusEditorOptions {
 	topRight?: FrameStatusProvider;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
+	/** Muted theme color used for zero-valued border git stats. */
+	mutedColor?: (text: string) => string;
 	/**
 	 * Color for the working highlight. `depth` 0 is the leading character
 	 * (brightest); higher depths are the trailing fade behind the direction of motion.
@@ -265,9 +273,9 @@ function renderBorderLine(
  * (`┃ <input> ┃`):
  *
  * ```
- * ┏━━ cdx/5.6-sol (high) ━ +1 -2 M4 · +150 -200 ━━┓
+ * ┏━━ 󰙴 cdx/5.6-sol · high ━ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━┓
  * ┃ ... input ...                                  ┃
- * ┗━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
+ * ┗━━ SMART · 󰅟  NET? ━━━ 15.9% 210k · 0.03$ ━━━━━━━━━┛
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -278,6 +286,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
+	private readonly mutedColor?: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
 	private working = false;
@@ -298,6 +307,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.topLeftProvider = options.topLeft;
 		this.topRightProvider = options.topRight;
 		this.getWorkingAnimation = options.getWorkingAnimation;
+		this.mutedColor = options.mutedColor;
 		this.highlightColor = options.highlightColor;
 	}
 
@@ -414,15 +424,18 @@ class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Top-right corner label. Compact mode removes value spacing; files-only
-	 * mode drops the lower-priority line totals after the `·` separator.
+	 * Top-right corner label. Compact mode removes value spacing; the narrow
+	 * fallback (`omitLineCounts`) drops the changed-line group while keeping the
+	 * files group and modified-file count.
 	 */
-	private topRightSegment(options: { compact?: boolean; filesOnly?: boolean } = {}): string {
+	private topRightSegment(options: { compact?: boolean; omitLineCounts?: boolean } = {}): string {
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return "";
-		const selected = options.filesOnly ? filesOnlyFrameLabel(label) : sanitizeStatusText(label);
-		const colored = selected.split("·").join(this.borderColor("·"));
-		const body = options.compact ? compactFrameLabel(colored) : colored;
+		const decorated = decorateBorderGitStats(sanitizeStatusText(label), {
+			mute: this.mutedColor,
+			includeLineCounts: !options.omitLineCounts,
+		});
+		const body = options.compact ? compactFrameLabel(decorated) : decorated;
 		return `${this.borderColor(FRAME_LABEL_OPEN)}${body}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
 	}
 
@@ -508,8 +521,9 @@ class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Keep the model whenever possible. Git totals degrade from spaced, to
-		// compact, to file counts only; if no pair fits, the model wins.
+		// Keep the model whenever possible. Git totals degrade from the full split
+		// form, to the compact split form, to the files-only icon form; if no pair
+		// fits, the model wins.
 		const fullModelLabel = this.topLeftLabel(false);
 		const compactModelLabel = this.topLeftLabel(true);
 		// Measure uncolored placeholders so only the selected model variant runs
@@ -526,8 +540,7 @@ class FrameStatusEditor extends CustomEditor {
 			rightSegments: [
 				this.topRightSegment(),
 				this.topRightSegment({ compact: true }),
-				this.topRightSegment({ filesOnly: true }),
-				this.topRightSegment({ filesOnly: true, compact: true }),
+				this.topRightSegment({ omitLineCounts: true, compact: true }),
 			],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
@@ -692,8 +705,8 @@ function buildBorderModelLabel(
 	const modelLabel = modelAliases[model.id] ?? model.id;
 	const providerLabel = model.provider ? (providerAliases[model.provider] ?? model.provider) : undefined;
 	const base = providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
-	if (typeof thinkingLevel !== "string" || !thinkingLevel.trim()) return base;
-	return `${base} (${formatThinkingLevel(thinkingLevel, { compact: compactEffort })})`;
+	if (typeof thinkingLevel !== "string" || !thinkingLevel.trim()) return `${MODEL_DISPLAY_GLYPH}${base}`;
+	return `${MODEL_DISPLAY_GLYPH}${base} · ${formatThinkingLevel(thinkingLevel, { compact: compactEffort })}`;
 }
 
 function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
@@ -736,15 +749,20 @@ function getContextWatcherOverrides(
 }
 
 // First-line token breakdown (new display mode), colored like the status-bar context items.
-function buildFirstLineTokenLabel(
+// The icon is decorated before styling so it shares the label's themed color.
+export function buildFirstLineTokenLabel(
 	ctx: ExtensionContext,
 	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
 ): string {
 	const percent = ctx.getContextUsage()?.percent;
 	if (typeof percent !== "number" || !Number.isFinite(percent)) {
-		return buildContextTokenLabel(ctx, false);
+		return decorateBorderTotalUsage(buildContextTokenLabel(ctx, false));
 	}
-	return styleContextLabel(theme, Number(Math.max(0, percent).toFixed(1)), buildContextTokenLabel(ctx, false));
+	return styleContextLabel(
+		theme,
+		Number(Math.max(0, percent).toFixed(1)),
+		decorateBorderTotalUsage(buildContextTokenLabel(ctx, false)),
+	);
 }
 
 interface FirstLineEntry {
@@ -1477,7 +1495,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						pwd = `~${pwd.slice(home.length)}`;
 					}
 					const branch = footerData.getGitBranch();
-					if (branch) pwd = `${pwd} (${branch})`;
+					if (displayMode === "new") {
+						pwd = decorateBorderPathBranch({ path: pwd, branch });
+					} else if (branch) {
+						pwd = `${pwd} (${branch})`;
+					}
 					const sessionName = activeCtx.sessionManager.getSessionName();
 					if (sessionName) pwd = `${pwd} • ${sessionName}`;
 					const defaultFirstLine = theme.fg("dim", pwd);
@@ -1594,6 +1616,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				),
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
 			getWorkingAnimation: () => workingAnimation,
+			mutedColor: (text) => activeContext().ui.theme.fg("muted", text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));

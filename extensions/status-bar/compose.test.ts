@@ -7,7 +7,11 @@ import {
 	composeLegacyLeftSection,
 	composeSafeModeNetworkGroup,
 	composeSectionItems,
-	filesOnlyFrameLabel,
+	decorateBorderContextLabel,
+	decorateBorderGitStats,
+	decorateBorderPathBranch,
+	decorateBorderSafeModeLabel,
+	decorateBorderTotalUsage,
 	FRAME_LABEL_CLOSE,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
@@ -59,11 +63,6 @@ describe("pure text helpers", () => {
 		expect(compactFrameLabel(colored)).toBe("\u001b[32m+1\u001b[0m\u001b[31m-2\u001b[0mM4·+150-200");
 	});
 
-	test("filesOnlyFrameLabel drops line totals", () => {
-		expect(filesOnlyFrameLabel(" +1 -0 M1 · +93 -0 ")).toBe("+1 -0 M1");
-		expect(filesOnlyFrameLabel("+1 -0 M1")).toBe("+1 -0 M1");
-	});
-
 	test("frame labels use spaces instead of angle tacks", () => {
 		expect(FRAME_LABEL_OPEN).toBe(" ");
 		expect(FRAME_LABEL_CLOSE).toBe(" ");
@@ -76,34 +75,48 @@ describe("pure text helpers", () => {
 		expect(styleSafeModeLabel("SMART+", border)).toBe("«SMART+»");
 		expect(styleSafeModeLabel("PARANOID", border)).toBe("PARANOID");
 	});
+
+	test("decorateBorderSafeModeLabel colors the icon like the text it prefixes", () => {
+		expect(decorateBorderSafeModeLabel("SMART", border)).toBe("«󰕥 »«SMART»");
+		expect(decorateBorderSafeModeLabel("PARANOID", border)).toBe("󰕥 PARANOID");
+		expect(decorateBorderSafeModeLabel("\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m", border)).toBe(
+			"\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m",
+		);
+	});
 });
 
 describe("chooseTopBorderSegments", () => {
-	const fullModel = `${FRAME_LEFT_CORNER_OPEN}cdx/5.6-sol (med)${FRAME_LABEL_CLOSE}`;
-	const compactModel = `${FRAME_LEFT_CORNER_OPEN}cdx/5.6-sol (🡺)${FRAME_LABEL_CLOSE}`;
-	const fullGit = `${FRAME_LABEL_OPEN}+1 -0 M1 · +93 -0${FRAME_RIGHT_CORNER_CLOSE}`;
-	const compactGit = `${FRAME_LABEL_OPEN}+1-0M1·+93-0${FRAME_RIGHT_CORNER_CLOSE}`;
-	const filesGit = `${FRAME_LABEL_OPEN}+1 -0 M1${FRAME_RIGHT_CORNER_CLOSE}`;
-	const compactFilesGit = `${FRAME_LABEL_OPEN}+1-0M1${FRAME_RIGHT_CORNER_CLOSE}`;
+	const fullModel = `${FRAME_LEFT_CORNER_OPEN}󰙴 cdx/5.6-sol · med${FRAME_LABEL_CLOSE}`;
+	const compactModel = `${FRAME_LEFT_CORNER_OPEN}󰙴 cdx/5.6-sol · 🡺${FRAME_LABEL_CLOSE}`;
+	const fullGit = `${FRAME_LABEL_OPEN}󰐖 1 󰍵 0 󰦓 1 · 󰐖 93 󰍵 0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const compactGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰦓1·󰐖93󰍵0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const filesGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰦓1${FRAME_RIGHT_CORNER_CLOSE}`;
 	const choose = (width: number) =>
 		chooseTopBorderSegments({
 			width,
 			leftSegments: [fullModel, compactModel],
-			rightSegments: [fullGit, compactGit, filesGit, compactFilesGit],
+			rightSegments: [fullGit, compactGit, filesGit],
 			minimumGap: 1,
 			visibleWidth,
 		});
 
 	test("uses one border dash as the minimum gap", () => {
-		const chosen = choose(visibleWidth(fullModel) + visibleWidth(filesGit) + 1);
-		expect(chosen).toEqual({ left: fullModel, right: filesGit });
+		const chosen = choose(visibleWidth(fullModel) + visibleWidth(fullGit) + 1);
+		expect(chosen).toEqual({ left: fullModel, right: fullGit });
 	});
 
-	test("shortens git to file counts before dropping the model", () => {
-		const chosen = choose(34);
+	test("shortens git to the compact split form before dropping the line group", () => {
+		const chosen = choose(visibleWidth(fullModel) + visibleWidth(compactGit) + 1);
+		expect(chosen.left).toBe(fullModel);
+		expect(chosen.right).toBe(compactGit);
+	});
+
+	test("drops the changed-line group before dropping the model", () => {
+		const chosen = choose(visibleWidth(fullModel) + visibleWidth(compactGit));
 		expect(chosen.left).toBe(fullModel);
 		expect(chosen.right).toBe(filesGit);
-		expect(chosen.right).not.toContain("+93");
+		expect(chosen.right).not.toContain("·");
+		expect(chosen.right).not.toContain("93");
 	});
 
 	test("keeps the model alone when no git form fits", () => {
@@ -121,7 +134,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━━ »«SMART»« · »<muted>NET?</muted>« ━━━ »15.9% 210k · 0.03$« »");
+		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  <muted>NET?</muted>« ━━━ »15.9% 210k · 0.03$« »");
 		// Order: safe mode, then network, then context.
 		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("NET?"));
 		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("15.9%"));
@@ -135,18 +148,35 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			networkLabel: "NET+",
 			borderColor: border,
 		});
-		expect(out).toBe("«━━ »«SMART»« · »NET+« »");
+		expect(out).toBe("«━━ »«󰕥 »«SMART»« · »󰅟  NET+« »");
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET+"]);
 	});
 
 	test("keeps the network token with no safe-mode producer", () => {
 		const out = composeBorderBottomLeft({ networkLabel: "NET", borderColor: border });
-		expect(out).toBe("«━━ »NET« »");
+		expect(out).toBe("«━━ »󰅟  NET« »");
+		expect(out).not.toContain("«󰅟");
+	});
+
+	test("colors the network icon like the token's producer, not the border", () => {
+		const out = composeBorderBottomLeft({
+			networkLabel: "\u001b[1m\u001b[38;5;34mNET+\u001b[0m",
+			borderColor: border,
+		});
+		expect(out).toBe("«━━ »\u001b[1m\u001b[38;5;34m󰅟  \u001b[0m\u001b[1m\u001b[38;5;34mNET+\u001b[0m« »");
 	});
 
 	test("keeps safe mode when the core is absent", () => {
 		const out = composeBorderBottomLeft({ statusLabel: "PARANOID", borderColor: border });
-		expect(out).toBe("«━━ »PARANOID« »");
+		expect(out).toBe("«━━ »󰕥 PARANOID« »");
+	});
+
+	test("colors the safe-mode icon like the producer, not the border", () => {
+		const out = composeBorderBottomLeft({
+			statusLabel: "\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m",
+			borderColor: border,
+		});
+		expect(out).toBe("«━━ »\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m« »");
 	});
 
 	test("context-only output still renders", () => {
@@ -157,6 +187,79 @@ describe("composeBorderBottomLeft (editor border)", () => {
 	test("renders nothing when every part is empty", () => {
 		expect(composeBorderBottomLeft({ borderColor: border })).toBe("");
 		expect(composeBorderBottomLeft({ statusLabel: "  ", networkLabel: "", borderColor: border })).toBe("");
+	});
+});
+
+describe("decorateBorderGitStats", () => {
+	const stats =
+		"\u001b[32m+1\u001b[0m \u001b[31m-2\u001b[0m \u001b[38;5;208mM4\u001b[0m · \u001b[32m+150\u001b[0m \u001b[31m-200\u001b[0m";
+
+	test("splits the file and changed-line groups, files first", () => {
+		expect(decorateBorderGitStats(stats)).toBe(
+			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m · \u001b[32m󰐖 150\u001b[0m \u001b[31m󰍵 200\u001b[0m",
+		);
+	});
+
+	test("drops the changed-line group for narrow frames", () => {
+		expect(decorateBorderGitStats(stats, { includeLineCounts: false })).toBe(
+			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m",
+		);
+	});
+
+	test("mutes zero-valued items in both groups", () => {
+		const mute = (text: string) => `<mute>${text}</mute>`;
+		expect(decorateBorderGitStats("+1 -0 M7 · +353 -69", { mute })).toBe(
+			"󰐖 1 <mute>󰍵 0</mute> 󰦓 7 · 󰐖 353 󰍵 69",
+		);
+		expect(decorateBorderGitStats("+0 -0 M2 · +0 -0", { mute })).toBe(
+			"<mute>󰐖 0</mute> <mute>󰍵 0</mute> 󰦓 2 · <mute>󰐖 0</mute> <mute>󰍵 0</mute>",
+		);
+		expect(decorateBorderGitStats("+0 -5 M7 · +0 -69", { mute })).toBe(
+			"<mute>󰐖 0</mute> 󰍵 5 󰦓 7 · <mute>󰐖 0</mute> 󰍵 69",
+		);
+	});
+
+	test("treats a file-only label as just the files group", () => {
+		expect(decorateBorderGitStats("\u001b[32m+1\u001b[0m \u001b[31m-2\u001b[0m \u001b[38;5;208mM4\u001b[0m")).toBe(
+			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m",
+		);
+	});
+});
+
+describe("decorateBorderContextLabel", () => {
+	test("prefixes context and current price, dropping the price `$`", () => {
+		expect(decorateBorderContextLabel("15.9% 210k · 0.03$")).toBe("󰊚 15.9% 210k · 󰇁 0.03");
+	});
+
+	test("replaces the `|` separator with a space and prefixes the total price", () => {
+		expect(decorateBorderContextLabel("15.9% 210k · 0.03$ | 0.034$")).toBe(
+			"󰊚 15.9% 210k · 󰇁 0.03 󰇁󰇁 0.034",
+		);
+	});
+
+	test("handles the small-value placeholders without a price", () => {
+		expect(decorateBorderContextLabel("-- -- · <0.01$")).toBe("󰊚 -- -- · 󰇁 <0.01");
+	});
+
+	test("leaves a context-only label with just the context icon", () => {
+		expect(decorateBorderContextLabel("15.9% 210k")).toBe("󰊚 15.9% 210k");
+	});
+});
+
+describe("decorateBorderPathBranch", () => {
+	test("appends the branch with the spaced border branch icon", () => {
+		expect(decorateBorderPathBranch({ path: "~/pi-x", branch: "trunk" })).toBe("~/pi-x (\ueafe trunk)");
+	});
+
+	test("keeps the path alone when the branch is absent or blank", () => {
+		expect(decorateBorderPathBranch({ path: "~/pi-x" })).toBe("~/pi-x");
+		expect(decorateBorderPathBranch({ path: "~/pi-x", branch: "  " })).toBe("~/pi-x");
+	});
+});
+
+describe("decorateBorderTotalUsage", () => {
+	test("prefixes the token usage breakdown with the total-usage icon", () => {
+		expect(decorateBorderTotalUsage("↑0/↓0/0")).toBe("\u{000f04e1} ↑0/↓0/0");
 	});
 });
 

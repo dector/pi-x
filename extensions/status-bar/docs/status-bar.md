@@ -61,7 +61,7 @@ Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), no
 
 Footer lines:
 
-1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section. In `new` display mode the context token breakdown is appended to the right section after the producers.
+1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section. In `new` display mode the git branch carries the border branch icon (`~/pi-x ( trunk)`) and the context token breakdown, prefixed with the total-usage icon (`󰓡 ↑0/↓0/0`), is appended to the right section after the producers.
 2. status-bar line (left/center/right)
 
 ## Status-line rendering rules
@@ -120,9 +120,10 @@ context/model/safe-mode info:
 
 - `new` (border priority): editor frame shows the corner labels; status line 2 is
   omitted and the input/output/cache token breakdown moves to status line 1 (after
-  the producer items) with no cost suffix. `safe-mode`, `switch-thinking`,
-  `context-watcher-model`, and `context-watcher-percent` are hidden. The
-  `repo-stats` dirty totals also move from the first line to the frame top-right.
+  the producer items), prefixed with the total-usage icon and with no cost suffix.
+  `safe-mode`, `switch-thinking`, `context-watcher-model`, and
+  `context-watcher-percent` are hidden. The `repo-stats` dirty totals also move
+  from the first line to the frame top-right.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout with the
   effective network token inserted directly after `safe-mode`.
@@ -165,23 +166,37 @@ Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
 full frame (heavy `┃` sides + square `┏ ┓ ┗ ┛` corners), enables one column of
 horizontal editor padding (`paddingX: 1`), and renders:
 
-- top-left: active provider + model ID + effort (`<ctx.model.provider>/<ctx.model.id> (<effort>)`, id-only when provider is missing), with exact-name aliases applied, colored with the frame border color. The effort is the 3-4 lowercase level symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown. While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
-- top-right: `repo-stats` git dirty totals (`+1 -2 M4 · +150 -200 ━━`), rendered only when the repo is dirty. The producer's `[ ]`/`|` are stripped and the file/line groups are separated by a `·` recolored to the frame border color. On narrow frames, compact full totals (`+1-2M4·+150-200`) and then file-only variants (`+1 -2 M4` or `+1-2M4`) are tried. The model label remains visible whenever it fits, and labels sharing the top edge need only one heavy border dash between them. In `new` mode these totals are hidden from the first line; in `legacy` mode they stay there.
-- bottom-left: context usage and cumulative cost (`━━ 15.9% 210k · 0.03$ `),
-  colored with the same context-usage rules as the status-bar context items
-  (`muted` <=20%, `text` <=30%, `warning` <=50%, `error` >50%). When subagent
-  usage changes the total, cost renders as session | total (`0.01$ | 0.013$`),
-  the total with three decimals so small subagent spend stays visible. It
-  includes every subagent in the branch, nested ones included, and is omitted
-  while the total rounds to the same three-decimal value as the session cost.
+- top-left: the model icon `󰙴 ` then active provider + model ID and thinking level (`󰙴 <ctx.model.provider>/<ctx.model.id> · <thinking>`, id-only when provider is missing; e.g. `󰙴 cdx/5.6-sol · high`), with exact-name aliases applied, colored with the frame border color. The thinking level is the 3-4 lowercase symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown (`󰙴 cdx/5.6-sol · 🡺`). While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
+- top-right: `repo-stats` git dirty totals, rendered only when the repo is dirty.
+  They are split into two icon groups, files first then changed lines, separated by
+  ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The producer's `[ ]`/`|` and `+`/`-`/`M`
+  prefixes are replaced by Nerd Font icons (additions `󰐖`, removals `󰍵`, modified
+  `󰦓`); the files group also carries the modified-file count. Zero values render in
+  the muted theme color, non-zero values keep the producer's colors. On narrow
+  frames the compact split form drops the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the
+  changed-line group is dropped to keep the files group (`󰐖1󰍵2󰦓4`). The model label
+  remains visible whenever it fits, and labels sharing the top edge need only one
+  heavy border dash between them. In `new` mode these totals are hidden from the
+  first line; in `legacy` mode they stay there.
+- bottom-left: context usage and cumulative cost, prefixed with the context icon
+  `󰊚 ` and the price icon `󰇁 ` (`━━ 󰊚 15.9% 210k · 󰇁 0.03 `). The border form has no
+  trailing `$`. The label is colored with the same context-usage rules as the
+  status-bar context items (`muted` <=20%, `text` <=30%, `warning` <=50%, `error`
+  >50%). When subagent usage changes the total, cost renders as session then total,
+  each with its own icon (`󰇁 0.01 󰇁󰇁 0.013`), the total with three decimals so small
+  subagent spend stays visible. It includes every subagent in the branch, nested
+  ones included, and the total is omitted while it rounds to the same three-decimal
+  value as the session cost.
 - bottom-left, before context: `safe-mode` producer content (for example `SMART`)
   followed by the effective network token, joined to the context label by the
-  three-dash border bridge (`━━ SMART · NET? ━━━ 15.9% `). Safe mode and the
+  three-dash border bridge (`━━ 󰕥 SMART · 󰅟  NET? ━━━ 󰊚 15.9% `). Safe mode and the
   network token share one label joined by exactly ` · `, which is preserved under
-  crowding. `SMART` uses the frame border color; other modes keep the producer's
-  own color. The network token keeps its policy color (`muted` for deny-all and
-  ask-all; `text` for allow-trusted, ask-untrusted, and allow-all) and follows
-  effective state only (PARANOID -> gray `NET?`).
+  crowding. The safe-mode text is prefixed with `󰕥 `, which shares its color;
+  `SMART` uses the frame border color, other modes keep the producer's own color on
+  both icon and text. The network token is prefixed with `󰅟  ` (two spaces) and
+  keeps its policy color (`muted` for deny-all and ask-all; `text` for
+  allow-trusted, ask-untrusted, and allow-all); it follows effective state only
+  (PARANOID -> gray `NET?`).
 
 Border labels use spaces instead of angle tacks (`┏━━ left ━ right ━━┓`).
 Two bottom-left labels use three heavy border dashes (`┗━━ A ━━━ B ━━━┛`).

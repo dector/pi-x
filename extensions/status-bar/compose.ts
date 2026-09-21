@@ -19,6 +19,152 @@ export function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
 }
 
+// Border-only status icons (Nerd Font). Each keeps a trailing space so the
+// glyph reads as a prefix instead of touching its value. Legacy mode renders
+// the plain labels and is intentionally left unchanged.
+export const BORDER_SAFE_MODE_ICON = "󰕥 ";
+// The network icon keeps two spaces so the token stays clearly separated from
+// the glyph even when the token carries its own producer ANSI style.
+export const BORDER_NETWORK_ICON = "󰅟  ";
+
+const BORDER_GIT_MARKER_ICONS = {
+	additions: "󰐖",
+	removals: "󰍵",
+	modified: "󰦓",
+} as const;
+
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;]*m/g;
+
+function stripAnsiSequences(text: string): string {
+	return text.replace(ANSI_ESCAPE_PATTERN, "");
+}
+
+/** First ANSI SGR sequence in a chunk, used as the producer color for a value. */
+function firstAnsiSequence(text: string): string {
+	const match = text.match(/\u001b\[[0-9;]*m/);
+	return match ? match[0] : "";
+}
+
+/** Leading ANSI SGR sequences of a label, i.e. its producer style prefix. */
+function leadingAnsiSequences(text: string): string {
+	const match = text.match(/^(?:\u001b\[[0-9;]*m)+/);
+	return match ? match[0] : "";
+}
+
+/** Wrap text in an ANSI color and reset, or leave it untouched when unstyled. */
+function paintAnsi(color: string, text: string): string {
+	return color ? `${color}${text}\u001b[0m` : text;
+}
+
+/**
+ * Prefix the network token with its Nerd Font icon. The icon inherits the
+ * token's producer ANSI style so it reads as part of the token rather than the
+ * frame border; a plain token keeps a plain icon. Exactly two spaces sit
+ * between the icon and the token.
+ */
+function decorateBorderNetworkLabel(label: string): string {
+	const color = leadingAnsiSequences(label);
+	return `${color ? paintAnsi(color, BORDER_NETWORK_ICON) : BORDER_NETWORK_ICON}${label}`;
+}
+
+/** Read `+N`/`-N`/`MN` from a git stats chunk; `undefined` when it does not match. */
+function readGitCount(chunk: string | undefined, marker: string): number | undefined {
+	if (!chunk) return undefined;
+	const plain = stripAnsiSequences(chunk);
+	if (!plain.startsWith(marker)) return undefined;
+	const value = Number.parseInt(plain.slice(marker.length), 10);
+	return Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Restyle the repo-stats label for the editor border as two explicit groups,
+ * files first then changed lines, separated by ` · `:
+ *
+ *   `+1 -2 M4 · +150 -200` -> `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`
+ *
+ * Both groups reuse the addition/removal icons; the modified count only exists
+ * in the files group. Zero values render muted (via `mute`); nonzero values keep
+ * the producer's ANSI colors. `includeLineCounts: false` drops the line group
+ * for narrow frames.
+ */
+export function decorateBorderGitStats(
+	label: string,
+	options: { mute?: (text: string) => string; includeLineCounts?: boolean } = {},
+): string {
+	const mute = options.mute ?? ((text: string) => text);
+	const includeLineCounts = options.includeLineCounts ?? true;
+
+	const separatorIndex = label.indexOf("·");
+	const filePart = separatorIndex === -1 ? label : label.slice(0, separatorIndex);
+	const linePart = separatorIndex === -1 ? undefined : label.slice(separatorIndex + 1);
+	const fileChunks = filePart.trim().split(/\s+/).filter(Boolean);
+	const hasLineGroup = linePart !== undefined && linePart.trim().length > 0;
+	const lineChunks = hasLineGroup ? linePart.trim().split(/\s+/).filter(Boolean) : [];
+
+	const fileAdd = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("+"));
+	const fileRemove = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("-"));
+	const fileModified = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("M"));
+	const lineAdd = lineChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("+"));
+	const lineRemove = lineChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("-"));
+
+	const renderItem = (icon: string, count: number, color: string): string => {
+		const item = `${icon} ${count}`;
+		return count === 0 ? mute(item) : paintAnsi(color, item);
+	};
+
+	const filesGroup = [
+		renderItem(
+			BORDER_GIT_MARKER_ICONS.additions,
+			readGitCount(fileAdd, "+") ?? 0,
+			firstAnsiSequence(fileAdd ?? ""),
+		),
+		renderItem(
+			BORDER_GIT_MARKER_ICONS.removals,
+			readGitCount(fileRemove, "-") ?? 0,
+			firstAnsiSequence(fileRemove ?? ""),
+		),
+		renderItem(
+			BORDER_GIT_MARKER_ICONS.modified,
+			readGitCount(fileModified, "M") ?? 0,
+			firstAnsiSequence(fileModified ?? ""),
+		),
+	].join(" ");
+
+	if (!includeLineCounts || !hasLineGroup) return filesGroup;
+
+	const lineGroup = [
+		renderItem(BORDER_GIT_MARKER_ICONS.additions, readGitCount(lineAdd, "+") ?? 0, firstAnsiSequence(lineAdd ?? "")),
+		renderItem(BORDER_GIT_MARKER_ICONS.removals, readGitCount(lineRemove, "-") ?? 0, firstAnsiSequence(lineRemove ?? "")),
+	].join(" ");
+
+	return `${filesGroup} · ${lineGroup}`;
+}
+
+// Border-only context/cost icons (Nerd Font). Each keeps a trailing space so the
+// glyph reads as a prefix. The final/total price doubles the price icon to
+// distinguish it from the current/session price. Legacy mode keeps the `$`
+// suffixes and `|` separator and is intentionally left unchanged.
+export const BORDER_CONTEXT_ICON = "󰊚 ";
+export const BORDER_PRICE_ICON = "󰇁 ";
+export const BORDER_TOTAL_PRICE_ICON = "󰇁󰇁 ";
+
+/**
+ * Decorate a border-mode context/cost label with prefix icons.
+ *
+ *   `15.9% 210k · 0.03$`          -> `󰊚 15.9% 210k · 󰇁 0.03`
+ *   `15.9% 210k · 0.03$ | 0.034$` -> `󰊚 15.9% 210k · 󰇁 0.03 󰇁󰇁 0.034`
+ */
+export function decorateBorderContextLabel(label: string): string {
+	const separator = " · ";
+	const at = label.indexOf(separator);
+	if (at === -1) return `${BORDER_CONTEXT_ICON}${label}`;
+	const context = label.slice(0, at);
+	const [current = "", total] = label.slice(at + separator.length).split(" | ");
+	const currentLabel = `${BORDER_PRICE_ICON}${current.replace(/\$$/, "")}`;
+	const totalLabel = total === undefined ? "" : ` ${BORDER_TOTAL_PRICE_ICON}${total.replace(/\$$/, "")}`;
+	return `${BORDER_CONTEXT_ICON}${context}${separator}${currentLabel}${totalLabel}`;
+}
+
 export function stripAnsi(text: string): string {
 	return text.replace(/\u001B\[[0-9;]*m/g, "");
 }
@@ -28,20 +174,29 @@ export function hasVisibleText(value?: string): value is string {
 	return value.trim().length > 0;
 }
 
+// Border-only first-line icons (Nerd Font). Each keeps a trailing space so the
+// glyph reads as a prefix. Legacy mode keeps the plain cwd/branch and the
+// unadorned token breakdown.
+export const BORDER_BRANCH_ICON = "\ueafe ";
+export const BORDER_TOTAL_USAGE_ICON = "\u{000f04e1} ";
+
+/** Append the git branch to the cwd path with the border-mode branch icon. */
+export function decorateBorderPathBranch(args: { path: string; branch?: string }): string {
+	return hasVisibleText(args.branch) ? `${args.path} (${BORDER_BRANCH_ICON}${args.branch})` : args.path;
+}
+
+/** Prefix the first-line token usage breakdown with the total-usage icon. */
+export function decorateBorderTotalUsage(label: string): string {
+	return `${BORDER_TOTAL_USAGE_ICON}${label}`;
+}
+
 /**
  * Drop the decorative spaces from a border label so it fits narrow frames.
  * Only ASCII spaces are touched; ANSI color codes never contain one, so the
- * colored segments survive: `+1 -2 M4 · +150 -200` -> `+1-2M4·+150-200`.
+ * colored segments survive: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200` -> `󰐖1󰍵2󰦓4·󰐖150󰍵200`.
  */
 export function compactFrameLabel(label: string): string {
 	return label.replace(/ /g, "");
-}
-
-/** Keep only the file-count group before the git label's `·` separator. */
-export function filesOnlyFrameLabel(label: string): string {
-	const sanitized = sanitizeStatusText(label);
-	const separator = sanitized.indexOf("·");
-	return (separator === -1 ? sanitized : sanitized.slice(0, separator)).trim();
 }
 
 /**
@@ -84,6 +239,23 @@ export function styleSafeModeLabel(label: string, borderColor: (text: string) =>
 	return sanitizeStatusText(label);
 }
 
+/**
+ * Prefix the safe-mode token with its Nerd Font icon so the glyph carries the
+ * same color/style as the text it prefixes. `SMART`/`SMART+` are recolored to
+ * the frame border, so the icon matches; any other mode keeps the producer's
+ * ANSI style on both the icon and the text instead of reading as frame border.
+ */
+export function decorateBorderSafeModeLabel(
+	label: string,
+	borderColor: (text: string) => string,
+): string {
+	const plain = stripAnsi(sanitizeStatusText(label));
+	const icon = /^SMART\+?$/.test(plain)
+		? borderColor(BORDER_SAFE_MODE_ICON)
+		: paintAnsi(leadingAnsiSequences(label), BORDER_SAFE_MODE_ICON);
+	return `${icon}${styleSafeModeLabel(label, borderColor)}`;
+}
+
 export interface BorderBottomLeftArgs {
 	contextLabel?: string;
 	statusLabel?: string;
@@ -96,17 +268,19 @@ export interface BorderBottomLeftArgs {
  * share one label joined by exactly ` · ` (colored like the border); the context
  * label follows after the standard border bridge:
  *
- *   `━━ SMART · NET? ━━━ 15.9% 210k · 0.03$ `
+ *   `━━ 󰕥 SMART · 󰅟  NET? ━━━ 15.9% 210k · 0.03$ `
  *
  * Either producer part may be missing; both missing yields `""`.
  */
 export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const hasContext = hasVisibleText(args.contextLabel);
-	const statusGroup = joinSafeModeAndNetwork(
-		hasVisibleText(args.statusLabel) ? styleSafeModeLabel(args.statusLabel, args.borderColor) : undefined,
-		hasVisibleText(args.networkLabel) ? args.networkLabel : undefined,
-		args.borderColor,
-	);
+	const safeModeLabel = hasVisibleText(args.statusLabel)
+		? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
+		: undefined;
+	const networkLabel = hasVisibleText(args.networkLabel)
+		? decorateBorderNetworkLabel(args.networkLabel)
+		: undefined;
+	const statusGroup = joinSafeModeAndNetwork(safeModeLabel, networkLabel, args.borderColor);
 	if (!hasContext && !statusGroup) return "";
 
 	const open = args.borderColor(FRAME_LEFT_CORNER_OPEN);

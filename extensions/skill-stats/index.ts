@@ -50,7 +50,7 @@ export default function skillStatsExtension(pi: ExtensionAPI): void {
 	let activeSessionContext: ExtensionContext | undefined;
 
 	const content = (): string => {
-		const text = `SKILLS: ${readSkillPaths.size}/${loadedSkillCount}`;
+		const text = `\u{F0431} ${readSkillPaths.size}/${loadedSkillCount}`;
 		return activeSessionContext?.hasUI ? `${ANSI_GRAY}${text}${ANSI_RESET}` : text;
 	};
 
