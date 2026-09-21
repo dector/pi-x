@@ -10,9 +10,12 @@
 import { describe, expect, test } from "bun:test";
 import { HUB_PROGRESS_CHANNELS, type HubProgressAckPayload, type ProgressOperation } from "./contract.ts";
 import {
+	PROGRESS_RELAY_STATUS_KEY,
 	PROGRESS_TOOL_OWNER,
 	ProgressToolParams,
+	registerProgressTool,
 	runProgressAction,
+	runProgressRelay,
 	type ProgressToolEventBus,
 } from "./progress-tool.ts";
 
@@ -352,4 +355,101 @@ describe("progress tool validation", () => {
 			expect(bus.listenerCount(CH.ack)).toBe(0);
 		});
 	}
+});
+
+// ---------------------------------------------------------------------------
+// Child relay behavior
+// ---------------------------------------------------------------------------
+
+interface RelayCall {
+	key: string;
+	text: string | undefined;
+}
+
+function createRelayUi(): { calls: RelayCall[]; ui: { setStatus(key: string, text: string | undefined): void } } {
+	const calls: RelayCall[] = [];
+	return { calls, ui: { setStatus: (key, text) => calls.push({ key, text }) } };
+}
+
+interface RelayEnvelopeShape {
+	version: number;
+	channel: string;
+	payload: Record<string, unknown>;
+}
+
+function parseRelayCall(call: RelayCall): RelayEnvelopeShape {
+	expect(call.key).toBe(PROGRESS_RELAY_STATUS_KEY);
+	expect(typeof call.text).toBe("string");
+	return JSON.parse(call.text as string) as RelayEnvelopeShape;
+}
+
+describe("progress tool child relay", () => {
+	const cases: Array<{ name: string; params: Record<string, unknown>; channel: string; operation: ProgressOperation }> = [
+		{ name: "start", params: startParams(), channel: CH.create, operation: "create" },
+		{ name: "update", params: updateParams(), channel: CH.update, operation: "update" },
+		{ name: "finish", params: finishParams(), channel: CH.finish, operation: "finish" },
+		{ name: "clear", params: clearParams(), channel: CH.remove, operation: "remove" },
+	];
+
+	for (const testCase of cases) {
+		test(`${testCase.name} sends one versioned envelope and never mutates the local bus`, () => {
+			const relay = createRelayUi();
+			const result = runProgressRelay(relay.ui, testCase.params);
+
+			expect(relay.calls).toHaveLength(1);
+			const envelope = parseRelayCall(relay.calls[0]!);
+			expect(envelope.version).toBe(1);
+			expect(envelope.channel).toBe(testCase.channel);
+			expect(envelope.payload.owner).toBe(PROGRESS_TOOL_OWNER);
+			expect(typeof envelope.payload.requestId).toBe("string");
+			expect(result.details.operation).toBe(testCase.operation);
+		});
+	}
+
+	test("child result text reports best-effort delivery without claiming acceptance", () => {
+		const relay = createRelayUi();
+		const result = runProgressRelay(relay.ui, updateParams());
+		const text = result.content[0]?.text ?? "";
+
+		expect(text).toContain("sent to parent");
+		expect(text).toContain("best-effort");
+		expect(text).toContain("not confirmed");
+		expect(text).not.toContain("accepted");
+	});
+
+	test("invalid child arguments throw before any envelope is sent", () => {
+		const relay = createRelayUi();
+		expect(() => runProgressRelay(relay.ui, { action: "update" })).toThrow();
+		expect(relay.calls).toHaveLength(0);
+	});
+
+	test("the registered tool relays in child mode and emits nothing locally", async () => {
+		const bus = createFakeBus();
+		let registered: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+		const pi = {
+			events: bus,
+			registerTool: (tool: { execute: (...args: unknown[]) => Promise<unknown> }) => {
+				registered = tool;
+			},
+		};
+		registerProgressTool(pi as never);
+		expect(registered).toBeDefined();
+
+		const relay = createRelayUi();
+		const previous = process.env.PI_SUBAGENT_CHILD;
+		process.env.PI_SUBAGENT_CHILD = "1";
+		try {
+			const result = (await registered!.execute("call", updateParams(), undefined, undefined, {
+				ui: relay.ui,
+			})) as { content: Array<{ text: string }> };
+
+			expect(relay.calls).toHaveLength(1);
+			expect(parseRelayCall(relay.calls[0]!).channel).toBe(CH.update);
+			expect(bus.emitted).toHaveLength(0);
+			expect(result.content[0]?.text).toContain("sent to parent");
+		} finally {
+			if (previous === undefined) delete process.env.PI_SUBAGENT_CHILD;
+			else process.env.PI_SUBAGENT_CHILD = previous;
+		}
+	});
 });

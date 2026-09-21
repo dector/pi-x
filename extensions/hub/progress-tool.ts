@@ -13,8 +13,10 @@
  *
  * `owner` and `requestId` are hidden from the model. `trackerId` and
  * `trackerToken` are returned because later calls (and delegated children) need
- * them. Stage 5 will branch on `PI_SUBAGENT_CHILD` to relay instead of mutating
- * the local hub; this file intentionally keeps the direct path only.
+ * them. When `PI_SUBAGENT_CHILD === "1"` the tool is running in a subagent
+ * process whose local hub is not the parent UI: it then serializes one
+ * `hub:progress:*` envelope into an extension UI `setStatus` relay instead of
+ * mutating anything locally. See `extensions/hub/idea-progress.md` section 9.
  */
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
@@ -44,6 +46,21 @@ export const PROGRESS_TOOL_NAME = "progress";
 
 /** Fixed owner for every tracker the model-facing tool creates or mutates. */
 export const PROGRESS_TOOL_OWNER = "progress-tool";
+
+/**
+ * Child-to-parent relay status key.
+ *
+ * Mirrors the wire constant in `extensions/subagent/progress-relay.ts`;
+ * protocol: `extensions/hub/idea-progress.md` section 9 (subagent relay
+ * protocol). The hub and subagent extensions must not import each other's
+ * runtime modules, so this small constant is copied on both sides.
+ */
+export const PROGRESS_RELAY_STATUS_KEY = "px:hub-progress-relay";
+
+/** Minimal `ctx.ui` slice the child relay sender needs. */
+export interface ProgressChildRelayUi {
+	setStatus(key: string, text: string | undefined): void;
+}
 
 // ---------------------------------------------------------------------------
 // Input / output shapes
@@ -418,6 +435,46 @@ export async function runProgressAction(
 }
 
 // ---------------------------------------------------------------------------
+// Child relay sender
+// ---------------------------------------------------------------------------
+
+interface ProgressChildRelayEnvelope {
+	version: 1;
+	channel: string;
+	payload: Record<string, unknown>;
+}
+
+/**
+ * Child side of the relay. Validates the same arguments as the direct client,
+ * then hands one serialized envelope to the parent over `setStatus`. The local
+ * hub is never touched.
+ *
+ * `setStatus` is fire-and-forget, so the returned text says only that the
+ * update was sent: the parent may still reject the transition.
+ */
+export function runProgressRelay(ui: ProgressChildRelayUi, params: unknown): ProgressToolResult {
+	const requestId = generateProgressRequestId();
+	const mutation = prepareProgressMutation(params, requestId);
+
+	const envelope: ProgressChildRelayEnvelope = {
+		version: 1,
+		channel: mutation.channel,
+		payload: mutation.payload as unknown as Record<string, unknown>,
+	};
+	ui.setStatus(PROGRESS_RELAY_STATUS_KEY, JSON.stringify(envelope));
+
+	return {
+		content: [
+			{
+				type: "text",
+				text: `${mutation.visible}\nsent to parent (best-effort relay; acceptance not confirmed)`,
+			},
+		],
+		details: mutation.details,
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -447,8 +504,11 @@ export function registerProgressTool(pi: ExtensionAPI): void {
 		renderCall(args, theme) {
 			return renderProgressCall(args as ProgressToolInput, theme);
 		},
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (process.env.PI_SUBAGENT_CHILD === "1") {
+				return runProgressRelay(ctx.ui, params);
+			}
 			return await runProgressAction(pi.events, params);
-		},
+		}
 	});
 }
