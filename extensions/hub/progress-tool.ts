@@ -121,8 +121,13 @@ export const ProgressToolParams = Type.Object({
 		description:
 			"start creates a tracker; update reports one chunk; finish sets a terminal outcome; clear removes the tracker.",
 	}),
-	title: Type.Optional(Type.String({ description: "start: tracker title, for example the milestone name." })),
-	unit: Type.Optional(Type.String({ description: "start: singular display noun for root nodes, preferably Milestone." })),
+	title: Type.Optional(Type.String({ description: "start: tracker title, for example the task name." })),
+	unit: Type.Optional(
+		Type.String({
+			description:
+				"start: singular display noun for root nodes; match the work size (Milestone for a large multi-session feature, Phase for a normal multi-step task, Step for smaller steps).",
+		}),
+	),
 	trackerId: Type.Optional(
 		Type.String({ description: "start: optional stable id; update/finish/clear: required id from start." }),
 	),
@@ -163,7 +168,7 @@ export const PROGRESS_TOOL_DESCRIPTION = [
 	"4. Update leaves only; container nodes aggregate their descendant leaves automatically.",
 	"5. Mark each leaf terminal (`done`, `failed`, or `skipped`) when its work settles.",
 	"6. Call `finish` once the whole tracker has an outcome; `completed` requires every leaf done or skipped.",
-	"7. Prefer Milestone for root `unit` and Stage for a milestone's `childUnit`; deeper nesting is supported.",
+	"7. Match the noun to the work size: Milestone > Stage for a large feature spanning sessions, Phase > Step for a multi-step task in one session; deeper nesting is supported.",
 	"8. Pass `trackerId`, `trackerToken`, and a leaf `chunkId` in a subagent task when that subagent owns the leaf.",
 ].join("\n");
 

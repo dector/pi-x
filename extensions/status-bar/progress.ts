@@ -20,18 +20,6 @@ export const HUB_PROGRESS_CHANNELS = {
 	snapshot: "hub:progress:snapshot",
 } as const;
 
-/**
- * Pure renderer for the progress line placed directly above the input frame.
- * The caller supplies the theme color; `undefined` means no active tracker.
- */
-export function formatProgressEditorLine(
-	row: string | undefined,
-	color: (text: string) => string,
-): string | undefined {
-	if (row === undefined || row.length === 0) return undefined;
-	return color(row);
-}
-
 export const PROGRESS_CHUNK_STATES = [
 	"pending",
 	"active",
@@ -309,19 +297,47 @@ function safeText(value: string | undefined): string {
 }
 
 /**
+ * Short display nouns used when the full progress text does not fit on narrow
+ * screens (for example a phone). Unknown nouns are kept as-is.
+ */
+const PROGRESS_UNIT_ABBREVIATIONS: Record<string, string> = {
+	milestone: "M",
+	stage: "S",
+	phase: "P",
+	step: "St",
+	task: "T",
+	item: "I",
+};
+
+function unitText(unit: string | undefined, compact: boolean): string {
+	const name = safeText(unit) || "Item";
+	if (!compact) return name;
+	return PROGRESS_UNIT_ABBREVIATIONS[name.toLowerCase()] ?? name;
+}
+
+export interface FormatProgressOptions {
+	/** Abbreviate long unit nouns (`Milestone` -> `M`) for narrow screens. */
+	compact?: boolean;
+}
+
+/**
  * Render the single footer line for a snapshot, or `undefined` when there is
  * nothing active to show. Every producer-supplied text field is sanitized first.
  */
-export function formatProgressRow(snapshot: ProgressSnapshot | undefined): string | undefined {
+export function formatProgressRow(
+	snapshot: ProgressSnapshot | undefined,
+	options: FormatProgressOptions = {},
+): string | undefined {
 	if (!snapshot || !snapshot.active || snapshot.count === 0 || snapshot.trackers.length === 0) {
 		return undefined;
 	}
 
+	const compact = options.compact ?? false;
 	const tracker = selectMostRecentTracker(snapshot.trackers);
 	if (!tracker) return undefined;
 
 	const title = safeText(tracker.title) || safeText(tracker.trackerId) || "Progress";
-	const unit = safeText(tracker.unit) || "Item";
+	const unit = unitText(tracker.unit, compact);
 	const total = tracker.chunks.length;
 	const counts = countChunkStates(tracker.chunks);
 	const activeCount = counts.active;
@@ -338,7 +354,7 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 		if (chunk.path) {
 			const segments = chunk.path.map((segment) => {
 				const label = safeText(segment.label);
-				return `${safeText(segment.unit) || "Item"} ${segment.index}/${segment.total}${label ? `: ${label}` : ""}`;
+				return `${unitText(segment.unit, compact)} ${segment.index}/${segment.total}${label ? `: ${label}` : ""}`;
 			});
 			base = [...segments, ...(phase ? [phase] : [])].join(" · ");
 		} else {

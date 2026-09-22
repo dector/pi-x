@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
 	HUB_PROGRESS_CHANNELS,
-	formatProgressEditorLine,
 	ProgressObserver,
 	countChunkStates,
 	formatProgressRow,
@@ -147,6 +146,20 @@ describe("focused progress format", () => {
 		];
 		expect(formatProgressRow(makeSnapshot([tracker]))).toBe(
 			"Milestone 1/3 · Stage 2/4: Authentication · reviewing",
+		);
+	});
+
+	test("compact mode abbreviates known unit nouns", () => {
+		const flat = makeTracker({ states: ["active"], unit: "Milestone" });
+		expect(formatProgressRow(makeSnapshot([flat]), { compact: true })).toBe("Authentication · M 1/1");
+
+		const hierarchical = makeTracker({ states: ["active"] });
+		hierarchical.chunks[0]!.path = [
+			{ index: 1, total: 3, unit: "Phase" },
+			{ index: 2, total: 4, unit: "Step", label: "Authentication" },
+		];
+		expect(formatProgressRow(makeSnapshot([hierarchical]), { compact: true })).toBe(
+			"P 1/3 · St 2/4: Authentication",
 		);
 	});
 });
@@ -485,22 +498,5 @@ describe("queryProgressSnapshot", () => {
 		expect(parseProgressSnapshotResponse({ requestId: "", snapshot })).toBeUndefined();
 		expect(parseProgressSnapshotResponse({ requestId: "r", snapshot: { nope: true } })).toBeUndefined();
 		expect(parseProgressSnapshotResponse(null)).toBeUndefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Editor line
-// ---------------------------------------------------------------------------
-
-describe("formatProgressEditorLine", () => {
-	test("colors the row with the supplied theme color", () => {
-		expect(formatProgressEditorLine("Authentication · Stage 1/1 (working)", (text) => `<c>${text}</c>`)).toBe(
-			"<c>Authentication · Stage 1/1 (working)</c>",
-		);
-	});
-
-	test("returns undefined when there is no active row", () => {
-		expect(formatProgressEditorLine(undefined, (text) => text)).toBeUndefined();
-		expect(formatProgressEditorLine("", (text) => text)).toBeUndefined();
 	});
 });

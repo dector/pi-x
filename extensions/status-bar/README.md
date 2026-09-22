@@ -80,20 +80,26 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 
 ### Progress row
 
-`status-bar` observes the hub semantic-progress protocol and renders one line
-at the top of the editor frame, directly above the input and below any
-above-editor widgets (for example the active-subagents widget). It subscribes
-to `hub:progress:changed` and, on `session_start` and `session_tree`, issues a
-correlated `hub:progress:query` after installing its `hub:progress:snapshot`
-listener. The line is hidden while no tracker is active.
+`status-bar` observes the hub semantic-progress protocol and renders the active
+progress text near the status bar. It subscribes to `hub:progress:changed` and,
+on `session_start` and `session_tree`, issues a correlated
+`hub:progress:query` after installing its `hub:progress:snapshot` listener. The
+text is hidden while no tracker is active.
 
 - Contract mirror: `status-bar` does not import hub runtime files; channels and
   snapshot types are mirrored locally in `progress.ts`.
 - Every text field (`title`, `unit`, `label`, `phase`) is stripped of ANSI/OSC
   escapes and all C0/C1 controls by `sanitizeUntrustedProgressText` before
-  rendering. The line is truncated, then centered across the full editor width
-  without trailing padding.
-- The line uses the editor frame's thinking-level border color (purple in the default style).
+  rendering.
+- Placement, in priority order:
+  1. appended to the first line of the status bar when it fits;
+  2. otherwise rendered as a leading footer line between the input and the
+     status bar;
+  3. on very narrow screens (for example a phone) the text is shortened
+     (`Milestone` -> `M`, `Phase` -> `P`, `Step` -> `St`, ...) and wrapped to at
+     most three lines, with a trailing `...` when it still does not fit.
+- The text uses the editor frame's thinking-level border color (purple in the
+  default style).
 - Formats:
   - one flat active/blocked leaf:
     `Authentication · Stage 1/13: Database schema · reviewing`;
@@ -291,9 +297,9 @@ in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
 
 `status-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
 
-The footer renders two lines:
+The footer renders two core lines (plus optional leading progress lines and extra rows):
 
-1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section
+1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section; the progress text is appended here when it fits
 2. status-bar line with true left/center/right alignment
 
 ## Alignment and width behavior

@@ -103,7 +103,9 @@ Start a tracker, mark one chunk active with a phase, then done:
 ### Hierarchical example
 
 Parents must occur before children. `unit` names roots and `childUnit` names a
-branch's direct children (recommended: Milestone > Stage):
+branch's direct children. Match the noun to the work size: Milestone > Stage for
+a large feature spanning sessions, Phase > Step for a multi-step task in one
+session (both default to `Item`):
 
 ```json
 { "action": "start", "title": "Release", "unit": "Milestone",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createProtectedInterrupt, InterruptConfirmationGuard } from "./interrupt-confirmation";
+import { createProtectedInterrupt, InterruptConfirmationGuard, resolveInterruptConfirmationInput } from "./interrupt-confirmation";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -130,6 +130,24 @@ describe("InterruptConfirmationGuard", () => {
 		await flush();
 		expect(guard.request(() => {})).toBe(true);
 		expect(confirms).toBe(2);
+	});
+});
+
+describe("resolveInterruptConfirmationInput", () => {
+	test("confirms on y and n only", () => {
+		expect(resolveInterruptConfirmationInput("y")).toBe(true);
+		expect(resolveInterruptConfirmationInput("Y")).toBe(true);
+		expect(resolveInterruptConfirmationInput("n")).toBe(false);
+		expect(resolveInterruptConfirmationInput("N")).toBe(false);
+	});
+
+	test("declines on escape", () => {
+		expect(resolveInterruptConfirmationInput("\u001b")).toBe(false);
+	});
+
+	test("ignores enter so work cannot be stopped by a stray keypress", () => {
+		expect(resolveInterruptConfirmationInput("\r")).toBeUndefined();
+		expect(resolveInterruptConfirmationInput("\n")).toBeUndefined();
 	});
 });
 

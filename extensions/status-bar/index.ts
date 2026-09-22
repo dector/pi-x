@@ -21,6 +21,7 @@ import {
 	truncateToWidth,
 	type TUI,
 	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
 	BORDER_PRIORITY_STATUS_BAR_LAYOUT,
@@ -64,10 +65,10 @@ import {
 	hasVisibleText,
 	sanitizeStatusText,
 } from "./compose";
-import { createProtectedInterrupt, InterruptConfirmationGuard } from "./interrupt-confirmation";
+import { createProtectedInterrupt, InterruptConfirmationGuard, showInterruptConfirmation } from "./interrupt-confirmation";
 import { deepseekImageTokens, findImagePaths, parseImageDimensions } from "./image-tokens";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
-import { formatProgressEditorLine, ProgressObserver } from "./progress";
+import { formatProgressRow, ProgressObserver } from "./progress";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -291,10 +292,6 @@ interface FrameStatusEditorOptions {
 	relocatedLabels?: RelocatedBorderLabels;
 	/** Streaming animation style for the top-left model label. */
 	getWorkingAnimation: () => WorkingAnimation;
-	/** Progress line rendered directly above the input frame, below any widgets. */
-	progressRow?: () => string | undefined;
-	/** Theme color for the progress line. */
-	progressColor?: (text: string) => string;
 	/** Confirmation guard used before an active agent operation is interrupted. */
 	interruptConfirmation: InterruptConfirmationGuard;
 	/** Subdued accent color used for the border's default-color indicators. */
@@ -343,11 +340,55 @@ function renderBorderLine(
 	return `${leftSegment}${borderColor(filler)}${rightSegment}`;
 }
 
-/** Truncate an ANSI-styled progress line, then center it without trailing padding. */
-export function centerProgressLine(line: string, width: number): string {
-	const truncated = truncateToWidth(line, width, "");
-	const padding = Math.max(0, Math.floor((width - visibleWidth(truncated)) / 2));
-	return `${" ".repeat(padding)}${truncated}`;
+/** Maximum number of lines the fallback progress block may occupy. */
+export const PROGRESS_MAX_LINES = 3;
+
+/**
+ * Wrap plain progress text to at most `maxLines` lines. When the text needs
+ * more lines, the final line is truncated and suffixed with `...`.
+ */
+export function wrapProgressText(text: string, width: number, maxLines: number): string[] {
+	if (width <= 0 || maxLines <= 0) return [];
+	const wrapped = wrapTextWithAnsi(text, width).filter((line) => line.length > 0);
+	if (wrapped.length <= maxLines) return wrapped;
+	const head = wrapped.slice(0, maxLines - 1);
+	const tail = `${truncateToWidth(wrapped[maxLines - 1] ?? "", Math.max(0, width - 3), "")}...`;
+	return [...head, tail];
+}
+
+/**
+ * Decide where the progress text goes and, when it does not fit inline,
+ * prepare the leading footer lines that render between the input and the
+ * status bar.
+ *
+ * The text is appended to the status bar's first line when the space left
+ * between the line's left and right sections can hold it. Otherwise the full
+ * text is preferred, then the compact form, then a wrap of at most
+ * {@link PROGRESS_MAX_LINES} lines with a trailing `...`.
+ */
+export function placeProgress(args: {
+	width: number;
+	leftWidth: number;
+	rightWidth: number;
+	hasCenter: boolean;
+	separatorWidth: number;
+	full: string;
+	compact?: string;
+}): { inline: boolean; before: string[] } {
+	const base = args.leftWidth + (args.rightWidth > 0 ? args.separatorWidth + args.rightWidth : 0);
+	const inline =
+		!args.hasCenter &&
+		args.width > 0 &&
+		base + args.separatorWidth + visibleWidth(args.full) <= args.width;
+	if (inline) return { inline: true, before: [] };
+
+	if (args.width <= 0) return { inline: false, before: [] };
+	if (visibleWidth(args.full) <= args.width) return { inline: false, before: [args.full] };
+
+	const shortened = args.compact && args.compact.length > 0 ? args.compact : args.full;
+	if (visibleWidth(shortened) <= args.width) return { inline: false, before: [shortened] };
+
+	return { inline: false, before: wrapProgressText(shortened, args.width, PROGRESS_MAX_LINES) };
 }
 
 /**
@@ -377,8 +418,6 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly bottomRightProvider?: (text: string) => string | undefined;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
-	private readonly progressRowProvider?: () => string | undefined;
-	private readonly progressColor?: (text: string) => string;
 	private readonly subduedColor?: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
@@ -404,8 +443,6 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomRightProvider = options.bottomRight;
 		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
-		this.progressRowProvider = options.progressRow;
-		this.progressColor = options.progressColor;
 		this.interruptConfirmation = options.interruptConfirmation;
 		this.subduedColor = options.subduedColor;
 		this.highlightColor = options.highlightColor;
@@ -551,10 +588,8 @@ class FrameStatusEditor extends CustomEditor {
 	 * outside the frame.
 	 */
 	render(width: number): string[] {
-		const progress = this.renderProgressLine(width);
 		if (!this.isBorderMode() || width < 3) {
-			const base = super.render(width);
-			return progress ? [progress, ...base] : base;
+			return super.render(width);
 		}
 
 		const innerWidth = width - 2;
@@ -585,14 +620,7 @@ class FrameStatusEditor extends CustomEditor {
 			}
 		}
 
-		return progress ? [progress, ...out] : out;
-	}
-
-	/** Progress line placed above the input frame, below any above-editor widgets. */
-	private renderProgressLine(width: number): string | undefined {
-		const styled = formatProgressEditorLine(this.progressRowProvider?.(), this.progressColor ?? ((text) => text));
-		if (styled === undefined || !hasVisibleText(styled)) return undefined;
-		return centerProgressLine(styled, width);
+		return out;
 	}
 
 	private getRenderedAutocompleteHeight(): number {
@@ -1771,9 +1799,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	// Live cache of the hub aggregate progress snapshot. The observer sanitizes
 	// and formats untrusted text in progress.ts; here we only apply the resulting
-	// footer row and request a render after an effective change.
-	// Rendered at the top of the editor frame rather than in the footer, so it
-	// sits after the active-subagents widget and directly above the input.
+	// row and request a render after an effective change. The footer prefers to
+	// append it to the status bar's first line and otherwise renders it as leading
+	// footer lines, between the input and the status bar.
 	let progressRow: string | undefined;
 	const progressStore = new ProgressObserver({
 		events: pi.events,
@@ -1821,6 +1849,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const firstLineTokenLabel = displayMode === "new" ? buildFirstLineTokenLabel(activeCtx, theme) : undefined;
 
 					let line1: string;
+					let line1Left: string | undefined;
+					let line1Center: string | undefined;
+					let line1Right: string | undefined;
 					if (hasFirstLineContent()) {
 						const firstLineJoinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
 						const hasAttensionCore = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content);
@@ -1850,11 +1881,45 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 								? `${producerRight}${firstLineJoinSeparator}${firstLineTokenLabel}`
 								: firstLineTokenLabel
 							: producerRight;
+						line1Left = left;
+						line1Center = center;
+						line1Right = right;
 						line1 = renderThreeSectionLine(width, left, center, right);
 					} else if (firstLineTokenLabel) {
+						line1Left = defaultFirstLine;
+						line1Right = firstLineTokenLabel;
 						line1 = renderThreeSectionLine(width, defaultFirstLine, undefined, firstLineTokenLabel);
 					} else {
+						line1Left = defaultFirstLine;
 						line1 = truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
+					}
+
+					// Progress: prefer the first status line; when it does not fit, render
+					// leading footer lines between the input and the status bar. The color
+					// matches the editor frame border (purple in the default style).
+					let progressBefore: string[] = [];
+					if (hasVisibleText(progressRow)) {
+						const progressColor = activeCtx.ui.theme.getThinkingBorderColor(pi.getThinkingLevel());
+						const separator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
+						const placement = placeProgress({
+							width,
+							leftWidth: visibleWidth(line1Left ?? ""),
+							rightWidth: hasVisibleText(line1Right) ? visibleWidth(line1Right) : 0,
+							hasCenter: hasVisibleText(line1Center),
+							separatorWidth: visibleWidth(STATUS_BAR_JOIN_SEPARATOR),
+							full: progressRow,
+							compact: formatProgressRow(progressStore.current, { compact: true }),
+						});
+						if (placement.inline) {
+							line1 = renderThreeSectionLine(
+								width,
+								hasVisibleText(line1Right) ? line1Left : `${line1Left ?? ""}${line1Left ? separator : ""}${progressColor(progressRow)}`,
+								undefined,
+								hasVisibleText(line1Right) ? `${line1Right}${separator}${progressColor(progressRow)}` : undefined,
+							);
+						} else {
+							progressBefore = placement.before.map(progressColor);
+						}
 					}
 
 					const layout = activeLayout();
@@ -1931,7 +1996,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
-					const lines = line2.length > 0 ? [line1, line2] : [line1];
+					const lines = [...progressBefore, ...(line2.length > 0 ? [line1, line2] : [line1])];
 					for (const entry of [...rowById.values()].sort((a, b) => a.order - b.order)) {
 						const content = sanitizeStatusText(entry.content);
 						if (!hasVisibleText(content)) continue;
@@ -1979,11 +2044,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				buildMessageSizeLabel(text, activeContext().ui.theme, collectImageTokens(text, activeContext().cwd)),
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
-			progressRow: () => progressRow,
-			progressColor: (text) => activeContext().ui.theme.getThinkingBorderColor(pi.getThinkingLevel())(text),
 			interruptConfirmation: new InterruptConfirmationGuard({
 				getOperationToken: () => activeContext().signal,
-				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),
+				confirm: () => showInterruptConfirmation(activeContext()),
 			}),
 			subduedColor: (text) => styleDarkAccent(activeContext().ui.theme, text),
 			highlightColor: (text, depth) => {
