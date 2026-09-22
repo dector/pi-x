@@ -31,15 +31,18 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 
 Current dialog items:
 
-- `s - prompt stash...` (opens a stash submenu)
-- `a - subagents` (opens the `/px:agents` batch list)
-- `Ctrl+r - rewire agents (toggle)`
-- `Ctrl+R - rewire agents (menu)`
-- `r - toggle reader mode`
-- `+ - toggle outer mode`
-- `! - YOLO+ mode`
-- `p - prompt history` (opens the tabbed history dialog)
-- `n/N - new note / list notes` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
+- **Prompts & Notes**
+  - `s - prompt stash…` (opens a stash submenu)
+  - `p - prompt history…` (opens the tabbed history dialog)
+  - `n/N - new note / browse notes…` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
+- **Agents**
+  - `a - subagents…` (opens the `/px:agents` batch list)
+  - `Ctrl+R - agents rewiring…` (opens the rewiring menu)
+  - `Ctrl+r - rewire agents` (toggle)
+- **Access & Safety**
+  - `r - toggle reader mode`
+  - `+ - toggle outer mode`
+  - `! - YOLO+ mode`
 - `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
 - `Enter - run selected action`
@@ -49,8 +52,8 @@ Current dialog items:
 Behavior details:
 
 - The dialog uses the status-bar frame language: purple heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
-- Terminal-background filling spans the full overlay width around the centered frame, with one empty row above and below. Shortcuts align on the right, `→` marks actions that open menus, and `●`/`○` show toggle state.
-- The selected row uses the same purple as the frame.
+- Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **Prompts & Notes**, **Agents**, and **Access & Safety** headings. Shortcuts and indicators are right-aligned in one column, with a four-space gutter after the widest action name; `→` and an ellipsis mark actions that open another screen, and `●`/`○` show toggle state.
+- The selected row uses the same purple as the frame. Arrow navigation skips group headings.
 - Pressing `Esc` or `Backspace` in the main dialog closes it with no side effects.
 - Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
@@ -65,8 +68,8 @@ Behavior details:
   - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
-- Pressing `Ctrl+r` emits event `px:subagent:rewire:toggle` and closes the dialog.
-- Pressing `Ctrl+R` emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
+- Pressing `Ctrl+r` runs **Rewire agents**, emits event `px:subagent:rewire:toggle`, and closes the dialog.
+- Pressing `Ctrl+R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` (or `R`) emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
@@ -88,7 +91,7 @@ Behavior details:
 - Agent rewiring mirrors the subagent extension's published rewire status.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `prompt-stash` or `safe-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
-- The main overlay spans the available terminal width; its frame remains centered at roughly `62%` width with a responsive narrow-terminal fallback.
+- The main overlay spans the available terminal width; its compact frame remains centered and is capped at 38 columns, with a responsive narrow-terminal fallback.
 - Prompt-history dialog uses the full available overlay width (`width: 100%`, `minWidth: 40`) and the quick-actions frame language.
 
 Integration contract (important):

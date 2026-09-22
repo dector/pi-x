@@ -733,11 +733,13 @@ async function showHiDialog(
 					closeDialog();
 				}
 				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
+				type DialogGroup = "PROMPTS & NOTES" | "AGENTS" | "ACCESS & SAFETY";
 				type DialogAction = {
 					hotkey: string;
 					hotkeyAliases?: string[];
 					hotkeyLabel?: string;
 					label: string;
+					group?: DialogGroup;
 					toggleSeverity?: "none" | "warning" | "danger";
 					showStatusBadge?: boolean;
 					opensMenu?: boolean;
@@ -798,11 +800,13 @@ async function showHiDialog(
 					tui.requestRender();
 				};
 
+				const dialogGroupOrder: DialogGroup[] = ["PROMPTS & NOTES", "AGENTS", "ACCESS & SAFETY"];
 				const mainActions: DialogAction[] = [
 					{
 						hotkey: "s",
 						hotkeyAliases: ["S"],
 						label: "Prompt stash…",
+						group: "PROMPTS & NOTES",
 						showStatusBadge: false,
 						opensMenu: true,
 						isEnabled: () => true,
@@ -812,7 +816,8 @@ async function showHiDialog(
 					{
 						hotkey: "a",
 						hotkeyAliases: ["A"],
-						label: "Subagents",
+						label: "Subagents…",
+						group: "AGENTS",
 						showStatusBadge: false,
 						opensMenu: true,
 						isEnabled: () => true,
@@ -822,7 +827,8 @@ async function showHiDialog(
 					{
 						hotkey: Key.ctrlShift("r"),
 						hotkeyLabel: "Ctrl+R",
-						label: "Rewire agents",
+						label: "Agents rewiring…",
+						group: "AGENTS",
 						showStatusBadge: false,
 						opensMenu: true,
 						isEnabled: () => true,
@@ -832,7 +838,8 @@ async function showHiDialog(
 					{
 						hotkey: Key.ctrl("r"),
 						hotkeyLabel: "Ctrl+r",
-						label: "Agent rewiring",
+						label: "Rewire agents",
+						group: "AGENTS",
 						toggleSeverity: "danger",
 						isEnabled: () => isAgentsRewireEnabled(),
 						closeAfterRun: false,
@@ -842,6 +849,7 @@ async function showHiDialog(
 						hotkey: "r",
 						hotkeyAliases: ["R"],
 						label: "Reader mode",
+						group: "ACCESS & SAFETY",
 						toggleSeverity: "none",
 						isEnabled: (state) => state.readerOn,
 						run: onToggleReader,
@@ -849,6 +857,7 @@ async function showHiDialog(
 					{
 						hotkey: "+",
 						label: "Outer access",
+						group: "ACCESS & SAFETY",
 						toggleSeverity: "warning",
 						isEnabled: (state) => state.outerOn,
 						run: onToggleOuter,
@@ -856,6 +865,7 @@ async function showHiDialog(
 					{
 						hotkey: "!",
 						label: "YOLO+",
+						group: "ACCESS & SAFETY",
 						toggleSeverity: "danger",
 						isEnabled: (state) => state.yoloPlusOn,
 						run: onSetYoloPlus,
@@ -863,8 +873,10 @@ async function showHiDialog(
 					{
 						hotkey: "p",
 						hotkeyAliases: ["P"],
-						label: "Prompt history",
+						label: "Prompt history…",
+						group: "PROMPTS & NOTES",
 						showStatusBadge: false,
+						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: async () => {
@@ -877,14 +889,19 @@ async function showHiDialog(
 						hotkey: "n",
 						hotkeyAliases: ["N"],
 						hotkeyLabel: "n/N",
-						label: "New note / browse notes",
+						label: "New note / browse notes…",
+						group: "PROMPTS & NOTES",
 						showStatusBadge: false,
+						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(() => void onOpenNote()),
 						runWithKey: (key) => runAfterClose(() => void (key === "N" ? onListNotes() : onOpenNote())),
 					},
 				];
+				mainActions.sort(
+					(left, right) => dialogGroupOrder.indexOf(left.group!) - dialogGroupOrder.indexOf(right.group!),
+				);
 
 				const stashActions: DialogAction[] = [
 					{
@@ -908,8 +925,9 @@ async function showHiDialog(
 					{
 						hotkey: "l",
 						hotkeyAliases: ["L"],
-						label: "List and restore stashes",
+						label: "List and restore stashes…",
 						showStatusBadge: false,
+						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(onPromptStashList),
@@ -940,8 +958,8 @@ async function showHiDialog(
 					...mainActions.flatMap((action): SearchAction[] =>
 						action.hotkeyLabel === "n/N"
 							? [
-									{ action, menu: "main", label: "New note", hotkeyLabel: "n", executeKey: "n" },
-									{ action, menu: "main", label: "Browse notes", hotkeyLabel: "N", executeKey: "N" },
+									{ action, menu: "main", label: "New note…", hotkeyLabel: "n", executeKey: "n" },
+									{ action, menu: "main", label: "Browse notes…", hotkeyLabel: "N", executeKey: "N" },
 								]
 							: [{ action, menu: "main" }],
 					),
@@ -1012,9 +1030,10 @@ async function showHiDialog(
 				return {
 					render(width: number) {
 						if (width <= 6) return [];
-						// The overlay spans the terminal, while the dialog stays centered at its
-						// original responsive width. The surrounding cells use terminal background.
-						const frameWidth = Math.min(Math.max(1, width - 2), Math.max(40, Math.floor(width * 0.62)));
+						// The overlay spans the terminal, while the compact dialog stays centered.
+						// The surrounding cells use terminal background.
+						const maxFrameWidth = activeMenu === "main" && !searchMode ? 38 : 37;
+						const frameWidth = Math.min(Math.max(1, width - 2), maxFrameWidth);
 						const contentWidth = Math.max(1, frameWidth - 2);
 						const outerWidth = Math.max(0, width - frameWidth);
 						const outerLeft = " ".repeat(Math.floor(outerWidth / 2));
@@ -1092,14 +1111,22 @@ async function showHiDialog(
 								),
 							);
 						} else {
-							lines.push(...getActions().map((action, index) => frame(actionLine(action, index === selectedIndex))));
+							let previousGroup: DialogGroup | undefined;
+							getActions().forEach((action, index) => {
+								if (action.group && action.group !== previousGroup) {
+									if (previousGroup) lines.push(frame(""));
+									lines.push(frame(theme.fg("dim", `  ${action.group}`)));
+									previousGroup = action.group;
+								}
+								lines.push(frame(actionLine(action, index === selectedIndex)));
+							});
 						}
 						lines.push(frame(""));
 						const footer = searchMode
-							? `${searchActions.length} result${searchActions.length === 1 ? "" : "s"} · ↑/↓ move · Enter run · Esc cancel`
+							? `${searchActions.length} result${searchActions.length === 1 ? "" : "s"} · ↑/↓ · Enter · Esc`
 							: activeMenu === "stash"
-								? "← back · ↑/↓ move · Enter run · / search · Esc close"
-								: "↑/↓ move · Enter run · / search · Esc close";
+								? "← · ↑/↓ · Enter · / · Esc"
+								: "↑/↓ · Enter · / search · Esc";
 						lines.push(frame(theme.fg("dim", ` ${footer}`)));
 						lines.push(border(`╰${"━".repeat(contentWidth)}╯`));
 						return [outerLine, ...lines.map((line) => `${outerLeft}${line}${outerRight}`), outerLine];
