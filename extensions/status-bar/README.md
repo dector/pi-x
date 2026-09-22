@@ -91,13 +91,12 @@ text is hidden while no tracker is active.
 - Every text field (`title`, `unit`, `label`, `phase`) is stripped of ANSI/OSC
   escapes and all C0/C1 controls by `sanitizeUntrustedProgressText` before
   rendering.
-- Placement, in priority order:
-  1. appended to the first line of the status bar when it fits;
-  2. otherwise rendered as a leading footer line between the input and the
-     status bar;
-  3. on very narrow screens (for example a phone) the text is shortened
-     (`Milestone` -> `M`, `Phase` -> `P`, `Step` -> `St`, ...) and wrapped to at
-     most three lines, with a trailing `...` when it still does not fit.
+- Placement: the text renders on its own line(s) directly above the status
+  bar's first line (line `-1`), between the input and the status bar. The first
+  status line is left untouched.
+- The text is shortened on very narrow screens (for example a phone):
+  `Milestone` -> `M`, `Phase` -> `P`, `Step` -> `St`, and wrapped to at most
+  three lines, with a trailing `...` when it still does not fit.
 - The text uses the editor frame's thinking-level border color (purple in the
   default style).
 - Formats:
@@ -299,7 +298,7 @@ in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
 
 The footer renders two core lines (plus optional leading progress lines and extra rows):
 
-1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section; the progress text is appended here when it fits
+1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section
 2. status-bar line with true left/center/right alignment
 
 ## Alignment and width behavior
