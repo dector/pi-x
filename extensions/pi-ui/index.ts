@@ -19,6 +19,8 @@ const PROMPT_STASH_LIST_EVENT = "px:prompt-stash:list";
 const PROMPT_STASH_CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
 const NOTES_OPEN_EVENT = "px:notes:open";
 const NOTES_LIST_EVENT = "px:notes:list";
+const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
+const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
@@ -562,6 +564,8 @@ async function showHiDialog(
 		onPromptStashClearAll: () => void;
 		onOpenNote: () => Promise<void>;
 		onListNotes: () => Promise<void>;
+		onToggleAgentsRewire: () => void;
+		onOpenAgentsRewire: () => void;
 	},
 	dialogLifecycle: {
 		isShown: () => boolean;
@@ -597,6 +601,8 @@ async function showHiDialog(
 					onPromptStashClearAll,
 					onOpenNote,
 					onListNotes,
+					onToggleAgentsRewire,
+					onOpenAgentsRewire,
 				} = handlers;
 				let selectedIndex = 0;
 				let closed = false;
@@ -669,6 +675,24 @@ async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => setMenu("stash"),
+					},
+					{
+						hotkey: Key.ctrl("r"),
+						hotkeyLabel: "Ctrl+r",
+						label: "Rewire agents (toggle)",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onToggleAgentsRewire),
+					},
+					{
+						hotkey: Key.ctrlShift("r"),
+						hotkeyLabel: "Ctrl+R",
+						label: "Rewire agents (menu)",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onOpenAgentsRewire),
 					},
 					{
 						hotkey: "r",
@@ -1116,6 +1140,12 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onListNotes: async () => {
 						pi.events.emit(NOTES_LIST_EVENT, { ctx });
+					},
+					onToggleAgentsRewire: () => {
+						pi.events.emit(SUBAGENT_REWIRE_TOGGLE_EVENT, { ctx });
+					},
+					onOpenAgentsRewire: () => {
+						pi.events.emit(SUBAGENT_REWIRE_MENU_EVENT, { ctx });
 					},
 				},
 				{

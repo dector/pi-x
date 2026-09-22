@@ -175,6 +175,8 @@ const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
+const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
+const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1432,37 +1434,57 @@ export default function (pi: ExtensionAPI) {
 			}
 		};
 
+		const toggleRewire = async (ctx: ExtensionContext): Promise<void> => {
+			rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
+			if (!rewireConfig) {
+				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
+				return;
+			}
+			setRewireConfig(ctx, { ...rewireConfig, enabled: !rewireConfig.enabled });
+		};
+
+		const openRewireMenu = async (ctx: ExtensionContext): Promise<void> => {
+			if (!ctx.hasUI) return;
+			rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
+			while (true) {
+				const rewireBadge = rewireConfig?.enabled
+					? ctx.ui.theme.fg("error", "[ON]")
+					: ctx.ui.theme.fg("muted", "[OFF]");
+				const rewireChoice = `Rewire   ${rewireBadge}`;
+				const rewireTarget = rewireConfig?.enabled
+					? ctx.ui.theme.fg("muted", `Rewiring to ${formatRewirePreset(rewireConfig)}`)
+					: undefined;
+				const choice = await ctx.ui.select("Subagent rewiring", [
+					rewireChoice,
+					"\ue615  Configuration",
+					...(rewireTarget ? [rewireTarget] : []),
+				]);
+				if (!choice) return;
+				if (choice === rewireTarget) continue;
+				if (choice === rewireChoice) {
+					await toggleRewire(ctx);
+					continue;
+				}
+				await configureRewire(ctx);
+			}
+		};
+
+		const eventContext = (payload: unknown): ExtensionContext | undefined => {
+			if (!payload || typeof payload !== "object") return undefined;
+			return (payload as { ctx?: ExtensionContext }).ctx;
+		};
+		pi.events.on(SUBAGENT_REWIRE_TOGGLE_EVENT, (payload) => {
+			const ctx = eventContext(payload);
+			if (ctx) void toggleRewire(ctx);
+		});
+		pi.events.on(SUBAGENT_REWIRE_MENU_EVENT, (payload) => {
+			const ctx = eventContext(payload);
+			if (ctx) void openRewireMenu(ctx);
+		});
+
 		pi.registerCommand("px:agents:rewire", {
 			description: "Override the model and effort for every subagent in this session",
-			handler: async (_args, ctx) => {
-				if (!ctx.hasUI) return;
-				rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
-				while (true) {
-					const rewireBadge = rewireConfig?.enabled
-						? ctx.ui.theme.fg("error", "[ON]")
-						: ctx.ui.theme.fg("muted", "[OFF]");
-					const rewireChoice = `Rewire   ${rewireBadge}`;
-					const rewireTarget = rewireConfig?.enabled
-						? ctx.ui.theme.fg("muted", `Rewiring to ${formatRewirePreset(rewireConfig)}`)
-						: undefined;
-					const choice = await ctx.ui.select("Subagent rewiring", [
-						rewireChoice,
-						"\ue615  Configuration",
-						...(rewireTarget ? [rewireTarget] : []),
-					]);
-					if (!choice) return;
-					if (choice === rewireTarget) continue;
-					if (choice === rewireChoice) {
-						if (!rewireConfig) {
-							ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
-							continue;
-						}
-						setRewireConfig(ctx, { ...rewireConfig, enabled: !rewireConfig.enabled });
-						continue;
-					}
-					await configureRewire(ctx);
-				}
-			},
+			handler: async (_args, ctx) => openRewireMenu(ctx),
 		});
 
 		pi.registerCommand("px:agents", {

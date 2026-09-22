@@ -32,6 +32,8 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 Current dialog items:
 
 - `s - prompt stash...` (opens a stash submenu)
+- `Ctrl+r - rewire agents (toggle)`
+- `Ctrl+R - rewire agents (menu)`
 - `r - toggle reader mode`
 - `+ - toggle outer mode`
 - `! - YOLO+ mode`
@@ -54,6 +56,8 @@ Behavior details:
   - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
+- Pressing `Ctrl+r` emits event `px:subagent:rewire:toggle` and closes the dialog.
+- Pressing `Ctrl+R` emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` (or `R`) emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
@@ -83,8 +87,11 @@ Integration contract (important):
   - `px:safe-mode:set-yolo-plus`
   - `px:notes:open`
   - `px:notes:list`
+  - `px:subagent:rewire:toggle`
+  - `px:subagent:rewire:menu`
 - Expected prompt-stash listener behavior (implemented in `prompt-stash`): save, pop, list/restore, or clear prompt stashes for the active context.
 - Expected notes listener behavior (implemented in `notes`): open the `/px:notes` editor for `px:notes:open`, and the `/px:notes:list` browser for `px:notes:list`.
+- Expected subagent listener behavior (implemented in `subagent`): toggle the current session rewire for `px:subagent:rewire:toggle`, and open `/px:agents:rewire` for `px:subagent:rewire:menu`.
 - Expected safe-mode listener behavior (implemented in `safe-mode`):
   - if mode is not `reader`: switch to `reader` and remember previous mode
   - if mode is `reader` and previous mode exists: restore previous mode
@@ -126,6 +133,8 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
     - `l` — request prompt-stash list/restore via `px:prompt-stash:list`
     - `x` — request prompt-stash clear-all via `px:prompt-stash:clear-all`
     - `<-` / `Backspace` — return to main action dialog
+  - `Ctrl+r` — request a subagent rewire toggle via `px:subagent:rewire:toggle`
+  - `Ctrl+R` — request the subagent rewire menu via `px:subagent:rewire:menu`
   - `r` — request safe-mode reader toggle via `px:safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `px:safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `px:safe-mode:set-yolo-plus`
