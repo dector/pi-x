@@ -122,9 +122,14 @@ This dialog is intentionally minimal now, but should be treated as the primary p
 
 ### 4) Transcript selection, toggle, and navigation (Alt+J, Alt+K, Alt+O)
 
-`Alt+J` / `Alt+K` move a transcript selection one entry down / up and scroll that entry to the top of the viewport. Every entry counts, collapsed or not: user messages, assistant messages, tool calls, `!` bash runs, custom messages and entries, summaries, and skill invocations.
+`Alt+J` / `Alt+K` move a transcript selection one entry down / up and scroll that entry to the top of the viewport. Every visible entry counts, collapsed or not: user messages, assistant messages, tool calls, `!` bash runs, custom messages and entries, summaries, and skill invocations.
 
-A short chip is drawn over the selected entry (inverse video, e.g. ` 480/482 tool `) and disappears after 1.5 s. The chip sits at the entry's own screen row, so it marks the concrete message rather than a corner of the screen.
+Entries with nothing to show are skipped, so navigation follows what you actually see:
+
+- zero-height entries (for example an assistant message with no rendered content)
+- assistant messages that only request tools while thinking is hidden — pi renders those as a `Thinking...` placeholder plus padding
+
+A short chip is drawn over the selected entry, e.g. `▌ 310/312 tool`, styled with the same purple as pi-ui's dialog frames and the editor frame border (`thinkingHigh`, bold). It disappears after 1.5 s. The chip sits at the entry's own screen row, so it marks the concrete message rather than a corner of the screen.
 
 `Alt+O` toggles **the selected entry** — nothing else, and it never falls back to "the latest entry". It behaves like clicking that entry's result area:
 
@@ -140,7 +145,7 @@ Implementation notes:
 
 - Everything is read-only on pi's side. Entries are found by walking the transcript's layout tree from the primary `ScrollView` and matching known entry component class names; no component prototypes are patched and nothing is registered ahead of time, so session restore and `/reload` need no special handling.
 - Entry line offsets come from the child heights recorded during the last render (`mouseLayout`); navigation then calls `scrollTo(line)`.
-- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus.
+- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. The purple comes from the theme captured via `ctx.ui.theme` (`thinkingHigh`); without a captured theme it falls back to inverse video, like pi's own flash messages.
 - The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
 - Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 

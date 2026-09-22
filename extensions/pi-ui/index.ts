@@ -32,7 +32,9 @@ const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
 const SELECTION_KEY = "__pi_ui_selection_v1";
 const CHIP_STATE_KEY = "__pi_ui_chip_state_v1";
 const TUI_REFERENCE_KEY = "__pi_ui_tui_reference_v1";
+const THEME_REFERENCE_KEY = "__pi_ui_theme_reference_v1";
 const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
+// Fallback styling when no theme was captured yet (reverse video, like pi's flash).
 const CHIP_REVERSE = "\x1b[7m";
 const CHIP_REVERSE_OFF = "\x1b[27m";
 const CHIP_DURATION_MS = 1500;
@@ -352,6 +354,12 @@ interface ChipState {
 	timer?: NodeJS.Timeout;
 }
 
+/** The slice of the pi theme used to style the chip. */
+interface ChipTheme {
+	fg(color: string, text: string): string;
+	bold(text: string): string;
+}
+
 function componentClassName(component: object): string | undefined {
 	return (component as { constructor?: { name?: string } }).constructor?.name;
 }
@@ -400,12 +408,18 @@ export function getTuiReference(): unknown {
 	return (globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY];
 }
 
+/** Theme captured alongside the TUI reference. */
+export function getThemeReference(): unknown {
+	return (globalThis as Record<string, unknown>)[THEME_REFERENCE_KEY];
+}
+
 /**
  * Capture the live TUI instance through `setWidget`, whose factory receives it.
  * The widget renders nothing; it only exists to obtain the reference.
  */
 export function captureTuiReference(ctx: ExtensionContext): unknown {
 	if (ctx.hasUI) {
+		(globalThis as Record<string, unknown>)[THEME_REFERENCE_KEY] = ctx.ui.theme;
 		ctx.ui.setWidget(TUI_CAPTURE_WIDGET_KEY, (tui) => {
 			(globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY] = tui;
 			return { render: () => [], invalidate: () => {} };
@@ -524,6 +538,38 @@ export function findPreviousEntryTop(
 	return previous;
 }
 
+/**
+ * pi renders an assistant message that only requests tools as its hidden-thinking
+ * placeholder (plus blank padding) while `hideThinkingBlock` is on, so the entry
+ * has nothing the user can see or act on.
+ */
+function hasNavigableContent(entry: TrackedEntry): boolean {
+	const internals = entry as unknown as {
+		hideThinkingBlock?: boolean;
+		lastMessage?: { content?: Array<{ type?: string; text?: string }> };
+	};
+	if (internals.hideThinkingBlock !== true) return true;
+	const content = internals.lastMessage?.content;
+	if (!Array.isArray(content)) return true;
+	return content.some(
+		(block) => block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0,
+	);
+}
+
+/** Entries the user can actually see: zero-height and placeholder-only ones are skipped. */
+export function navigablePositions(positions: readonly EntryPosition[]): EntryPosition[] {
+	return positions.filter((position) => position.height > 0 && hasNavigableContent(position.component));
+}
+
+function chipLine(text: string): string {
+	const theme = getThemeReference() as ChipTheme | undefined;
+	if (!theme || typeof theme.fg !== "function") return `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
+	const marker = `▌ ${text}`;
+	const styled = typeof theme.bold === "function" ? theme.bold(marker) : marker;
+	// Same purple as pi-ui's dialog frames and the editor frame border.
+	return `${theme.fg("thinkingHigh", styled)} `;
+}
+
 function hideEntryChip(): void {
 	const globalAny = globalThis as Record<string, unknown>;
 	const state = globalAny[CHIP_STATE_KEY] as ChipState | undefined;
@@ -545,7 +591,7 @@ export function showEntryChip(tui: unknown, row: number, text: string, durationM
 		| undefined;
 	if (typeof candidate?.showOverlay !== "function") return false;
 
-	const line = `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
+	const line = chipLine(text);
 	const width = Math.max(1, visibleWidth(line));
 	const handle = candidate.showOverlay(
 		{ render: () => [line], invalidate: () => {} },
@@ -572,7 +618,8 @@ function selectionIndex(positions: readonly EntryPosition[]): number {
 export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): NavigationOutcome {
 	const scrollView = getTranscriptScrollView(tui);
 	if (!scrollView || !scrollView.child) return { status: "unavailable" };
-	const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	const all = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	const positions = navigablePositions(all);
 	if (positions.length === 0) return { status: "empty" };
 
 	const selectedIndex = selectionIndex(positions);
@@ -622,7 +669,7 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 
 	const scrollView = getTranscriptScrollView(tui);
 	if (!scrollView || !scrollView.child) return { status: "unavailable" };
-	const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	const positions = navigablePositions(computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui)));
 	const index = selectionIndex(positions);
 	if (index < 0) return { status: "no-selection" };
 
@@ -1860,11 +1907,18 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 				notify(ctx, `pi-ui nav: no transcript scroll view (tui ${tui ? "ok" : "missing"})`);
 				return;
 			}
-			const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+			const all = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+			const positions = navigablePositions(all);
 			const selected = getSelectedEntry();
 			const index = selected ? positions.findIndex((position) => position.component === selected) : -1;
-			const selection = index >= 0 ? ` · selected ${index + 1}/${positions.length} ${describeEntry(positions[index]?.component)}` : " · nothing selected";
-			notify(ctx, `pi-ui nav: ${positions.length} entries · top ${Math.round(scrollView.scrollTop)}${selection}`);
+			const selection =
+				index >= 0
+					? ` · selected ${index + 1}/${positions.length} ${describeEntry(positions[index]?.component)}`
+					: " · nothing selected";
+			notify(
+				ctx,
+				`pi-ui nav: ${positions.length} visible of ${all.length} entries · top ${Math.round(scrollView.scrollTop)}${selection}`,
+			);
 		},
 	});
 

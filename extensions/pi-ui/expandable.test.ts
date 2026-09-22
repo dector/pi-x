@@ -10,6 +10,7 @@ import {
 	captureTuiReference,
 	isExpandableEntry,
 	isTrackedEntry,
+	navigablePositions,
 	selectAdjacentEntry,
 	setSelectedEntry,
 	showEntryChip,
@@ -42,7 +43,11 @@ class CustomMessageComponent extends FakeEntry {
 	}
 }
 
-class AssistantMessageComponent extends FakeEntry {}
+class AssistantMessageComponent extends FakeEntry {
+	hideThinkingBlock = false;
+	lastMessage: { content?: Array<{ type?: string; text?: string }> } | undefined;
+}
+
 class UserMessageComponent extends FakeEntry {}
 
 /** Has setExpanded() but is not a transcript entry (e.g. the startup header). */
@@ -94,8 +99,7 @@ function createScrollView(content: Container, scrollTop = 0): FakeScrollView {
 	};
 }
 
-function createTui(scrollView: ScrollViewLike | undefined): FakeTui {
-	const tui: FakeTui = {
+function createTui(scrollView: ScrollViewLike | undefined): FakeTui {	const tui: FakeTui = {
 		terminal: { columns: 80 },
 		overlayCalls: [],
 		hidden: 0,
@@ -263,7 +267,15 @@ describe("tui capture", () => {
 });
 
 describe("entry chip", () => {
+	function captureWithTheme(theme: unknown): void {
+		captureTuiReference({
+			hasUI: true,
+			ui: { theme, setWidget: (_key: string, factory: (tui: unknown) => unknown) => factory(createTui(undefined)) },
+		} as never);
+	}
+
 	test("draws a non-capturing overlay at the given row", () => {
+		captureWithTheme(undefined);
 		const tui = createTui(undefined);
 
 		expect(showEntryChip(tui, 7, "12/379 tool")).toBe(true);
@@ -272,7 +284,21 @@ describe("entry chip", () => {
 		const call = tui.overlayCalls[0];
 		expect(call?.options).toMatchObject({ row: 7, col: 0, nonCapturing: true });
 		expect(call?.options.width).toBe(" 12/379 tool ".length);
-		expect(call?.component.render(80)[0]).toContain("12/379 tool");
+		expect(call?.component.render(80)[0]).toBe("\x1b[7m 12/379 tool \x1b[27m");
+	});
+
+	test("styles the chip with the captured theme purple", () => {
+		const theme = {
+			fg: (color: string, text: string) => `<${color}>${text}`,
+			bold: (text: string) => `*${text}*`,
+		};
+		captureWithTheme(theme);
+		const tui = createTui(undefined);
+
+		showEntryChip(tui, 0, "480/482 tool");
+
+		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
+		expect(line).toContain("<thinkingHigh>*▌ 480/482 tool*");
 	});
 
 	test("replaces the previous chip and hides it", () => {
@@ -292,6 +318,47 @@ describe("entry chip", () => {
 });
 
 describe("selection navigation", () => {
+	test("skips zero-height entries and hidden placeholder messages", () => {
+		const chat = new Container();
+		const user = new UserMessageComponent(2);
+		const placeholder = new AssistantMessageComponent(2);
+		placeholder.hideThinkingBlock = true;
+		placeholder.lastMessage = { content: [{ type: "thinking" }, { type: "toolCall" }] };
+		const tool = new ToolExecutionComponent(3);
+		const withText = new AssistantMessageComponent(2);
+		withText.hideThinkingBlock = true;
+		withText.lastMessage = { content: [{ type: "thinking" }, { type: "text", text: "visible" }] };
+		const invisible = new AssistantMessageComponent(0);
+		invisible.lastMessage = { content: [{ type: "text", text: "scrolled into nothing" }] };
+
+		chat.addChild(user);
+		chat.addChild(placeholder);
+		chat.addChild(tool);
+		chat.addChild(withText);
+		chat.addChild(invisible);
+		chat.mouseLayout = {
+			width: 80,
+			children: [user, placeholder, tool, withText, invisible].map((component, index) => ({
+				component,
+				height: index === 4 ? 0 : [2, 2, 3, 2, 0][index] ?? 1,
+			})),
+		};
+
+		const positions = computeEntryPositions(chat, 80);
+		expect(positions).toHaveLength(5);
+		expect(navigablePositions(positions).map((position) => describeEntry(position.component))).toEqual([
+			"user",
+			"tool",
+			"assistant",
+		]);
+
+		// Visible assistant messages stay navigable when thinking is shown.
+		const shown = new AssistantMessageComponent(2);
+		shown.hideThinkingBlock = false;
+		shown.lastMessage = { content: [{ type: "thinking" }] };
+		expect(navigablePositions([{ component: shown, top: 0, height: 2 }])).toHaveLength(1);
+	});
+
 	test("selects the entry below the current scroll offset first", () => {
 		const chat = createChat();
 		const scrollView = createScrollView(chat);
