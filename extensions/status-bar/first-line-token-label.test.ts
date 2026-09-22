@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BORDER_TOTAL_USAGE_ICON } from "./compose.ts";
-import { buildFirstLineTokenLabel } from "./index.ts";
+import { buildFirstLineTokenLabel, buildFrameContextParts } from "./index.ts";
 
 type Ctx = Parameters<typeof buildFirstLineTokenLabel>[0];
 type Theme = Parameters<typeof buildFirstLineTokenLabel>[1];
@@ -24,6 +24,20 @@ const theme: Theme = {
 };
 
 const TOKENS = "↑100/↓50/0";
+
+describe("buildFrameContextParts", () => {
+	test("uses purple for the first context-usage bucket", () => {
+		const ctx = {
+			getContextUsage: () => ({ percent: 15.9, tokens: 210_000 }),
+			sessionManager: { getBranch: () => [] },
+		} as unknown as Parameters<typeof buildFrameContextParts>[0];
+
+		expect(buildFrameContextParts(ctx, theme)).toEqual({
+			usage: "<thinkingOff>󰊚 15.9% 210k</thinkingOff>",
+			cost: "<thinkingOff>󰇁 0.00</thinkingOff>",
+		});
+	});
+});
 
 describe("buildFirstLineTokenLabel", () => {
 	test("styles the total-usage icon together with the token text", () => {

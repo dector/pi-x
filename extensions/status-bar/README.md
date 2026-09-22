@@ -176,14 +176,14 @@ labels are rendered in the frame corners:
     trailing `$` in border mode (for example `󰇁 0.03`). Zero/unavailable renders as
     `󰇁 0.00`; non-zero below half a cent renders as `󰇁 <0.01`. When subagent usage
     changes the total, the label shows session then total, each with its own icon:
-    `󰇁 0.01 󰇁󰇁 0.013`. The total renders with three decimals to keep small subagent
+    `󰇁 0.01 Tot󰇁 0.013`. The total renders with three decimals to keep small subagent
     spend visible, and adds every subagent cost found in the branch, nested
     subagents included. The total is omitted while it rounds to the same
     three-decimal value as the session cost.
   - The frame label is independent of the second-line cost whitelist: it always shows
     accumulated `usage.cost.total` from the active branch.
-  - The label uses the same context-usage color rules as the status-bar context items:
-    `muted` up to 20%, `text` up to 30%, `warning` up to 50%, `error` above 50%.
+  - The label uses purple (`thinkingOff`) up to 20%, `text` up to 30%,
+    `warning` up to 50%, and `error` above 50%.
     It stays uncolored when context percent is unknown.
 - **safe-mode** (bottom-left, before context) — the `󰕥 ` icon followed by
   `SMART`, `READER`, `YOLO`, `PARANOID`, plus `+` when outer access is on.

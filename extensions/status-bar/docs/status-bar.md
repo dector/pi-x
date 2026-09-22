@@ -182,10 +182,10 @@ horizontal editor padding (`paddingX: 1`), and renders:
   first line; in `legacy` mode they stay there.
 - bottom-left: context usage and cumulative cost, prefixed with the context icon
   `󰊚 ` and the price icon `󰇁 ` (`━━ 󰊚 15.9% 210k · 󰇁 0.03 `). The border form has no
-  trailing `$`. The label is colored with the same context-usage rules as the
-  status-bar context items (`muted` <=20%, `text` <=30%, `warning` <=50%, `error`
-  >50%). When subagent usage changes the total, cost renders as session then total,
-  each with its own icon (`󰇁 0.01 󰇁󰇁 0.013`), the total with three decimals so small
+  trailing `$`. The label is colored purple (`thinkingOff`) <=20%, `text` <=30%,
+  `warning` <=50%, and `error` >50%. When subagent usage changes the total, cost
+  renders as session then total, each with its own icon
+  (`󰇁 0.01 Tot󰇁 0.013`), the total with three decimals so small
   subagent spend stays visible. It includes every subagent in the branch, nested
   ones included, and the total is omitted while it rounds to the same three-decimal
   value as the session cost.

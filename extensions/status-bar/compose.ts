@@ -172,12 +172,12 @@ export const BORDER_PRICE_ICON = "󰇁 ";
  * Decorate a border-mode cost label with prefix icons.
  *
  *   `0.03$`          -> `󰇁 0.03`
- *   `0.03$ | 0.034$` -> `󰇁 0.03 Tot:󰇁 0.034`
+ *   `0.03$ | 0.034$` -> `󰇁 0.03 Tot󰇁 0.034`
  */
 export function decorateBorderContextCost(label: string): string {
 	const [current = "", total] = label.split(" | ");
 	const currentLabel = `${BORDER_PRICE_ICON}${current.replace(/\$$/, "")}`;
-	const totalLabel = total === undefined ? "" : ` Tot:${BORDER_PRICE_ICON}${total.replace(/\$$/, "")}`;
+	const totalLabel = total === undefined ? "" : ` Tot${BORDER_PRICE_ICON}${total.replace(/\$$/, "")}`;
 	return `${currentLabel}${totalLabel}`;
 }
 
@@ -185,7 +185,7 @@ export function decorateBorderContextCost(label: string): string {
  * Decorate a border-mode context/cost label with prefix icons.
  *
  *   `15.9% 210k · 0.03$`          -> `󰊚 15.9% 210k · 󰇁 0.03`
- *   `15.9% 210k · 0.03$ | 0.034$` -> `󰊚 15.9% 210k · 󰇁 0.03 Tot:󰇁 0.034`
+ *   `15.9% 210k · 0.03$ | 0.034$` -> `󰊚 15.9% 210k · 󰇁 0.03 Tot󰇁 0.034`
  */
 export function decorateBorderContextLabel(label: string): string {
 	const separator = " · ";

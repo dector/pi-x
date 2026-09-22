@@ -207,14 +207,14 @@ function formatCostTrailingPrecise(total: number): string {
 interface FrameContextParts {
 	/** Context usage meter, e.g. `󰊚 15.9% 210k`. Always shown on the border. */
 	usage: string;
-	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 Tot:󰇁 0.034`. Relocated on narrow frames. */
+	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 Tot󰇁 0.034`. Relocated on narrow frames. */
 	cost: string;
 }
 
-// Colored with the same context-usage rules as the status-bar context items.
-function buildFrameContextParts(
+// Uses purple for the first bucket; higher usage follows the status-bar context colors.
+export function buildFrameContextParts(
 	ctx: ExtensionContext,
-	theme?: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	theme?: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
 ): FrameContextParts {
 	const usage = ctx.getContextUsage();
 
@@ -239,8 +239,8 @@ function buildFrameContextParts(
 	const costText = decorateBorderContextCost(costLabel);
 	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
 
-	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel);
-	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText);
+	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, "thinkingOff");
+	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, "thinkingOff");
 	return { usage: styledUsage, cost: styledCost };
 }
 
@@ -820,11 +820,12 @@ function collectSubagentCostFromMessages(messages: unknown): number {
 }
 
 function styleContextLabel(
-	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
 	percent: number,
 	label: string,
+	firstBucket: "muted" | "thinkingOff" = "muted",
 ): string {
-	if (percent <= 20) return theme.fg("muted", label);
+	if (percent <= 20) return theme.fg(firstBucket, label);
 	if (percent <= 30) return theme.fg("text", label);
 	if (percent <= 50) return theme.fg("warning", label);
 	return theme.fg("error", label);
@@ -861,7 +862,7 @@ function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): st
 
 function getContextWatcherOverrides(
 	ctx: ExtensionContext,
-	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
 	modelAliases: StatusBarAliasMap = {},
 ): Map<string, string | undefined> {
 	const overrides = new Map<string, string | undefined>([
@@ -892,7 +893,7 @@ function getContextWatcherOverrides(
 // The icon is decorated before styling so it shares the label's themed color.
 export function buildFirstLineTokenLabel(
 	ctx: ExtensionContext,
-	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
 ): string {
 	const percent = ctx.getContextUsage()?.percent;
 	if (typeof percent !== "number" || !Number.isFinite(percent)) {
