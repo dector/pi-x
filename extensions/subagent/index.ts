@@ -2466,12 +2466,14 @@ export default function (pi: ExtensionAPI) {
 					const preview = renderCollapsedSingle(displayItems, runningText);
 					if (preview.text) text += `\n${preview.text}`;
 					const finalOutputLines = isActive ? [] : finalOutput.trim().split(/\r?\n/);
-					const finalOutputPreview = finalOutputLines
+					const finalOutputTruncated = finalOutputLines.length > COLLAPSED_FINAL_OUTPUT_LINE_COUNT;
+					const finalOutputPreviewLines = finalOutputLines
 						.slice(0, COLLAPSED_FINAL_OUTPUT_LINE_COUNT)
-						.map((line) => theme.fg("muted", "│ ") + theme.fg("toolOutput", line))
-						.join("\n");
+						.map((line) => theme.fg("muted", "│ ") + theme.fg("toolOutput", line));
+					if (finalOutputTruncated) finalOutputPreviewLines.push(theme.fg("muted", "│ ..."));
+					const finalOutputPreview = finalOutputPreviewLines.join("\n");
 					if (finalOutputPreview) text += `\n${finalOutputPreview}`;
-					if (preview.truncated || finalOutputLines.length > COLLAPSED_FINAL_OUTPUT_LINE_COUNT) {
+					if (preview.truncated || finalOutputTruncated) {
 						text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 					}
 				}
