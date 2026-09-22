@@ -54,8 +54,10 @@ const CHIP_FOREGROUND_RESET = "\x1b[39m";
 const CHIP_BACKGROUND_RESET = "\x1b[49m";
 const CHIP_SEPARATOR = " · ";
 const CHIP_DURATION_MS = 1500;
-// The pill chip is kept but not shown; the selected entry is framed with corner marks instead.
-const SHOW_ENTRY_CHIP = false;
+// The pill chip is the active selection marker.
+const SHOW_ENTRY_CHIP = true;
+// Corner marks stamped inside the selected entry (kept, currently switched off).
+const SHOW_CORNER_MARKS = false;
 // Corner marks stamped inside the selected entry: top-left, top-right, bottom-left, bottom-right.
 const CORNER_MARKS = ["\u231c", "\u231d", "\u231e", "\u231f"] as const;
 const DECORATED_ENTRY_KEY = "__pi_ui_decorated_entry_v1";
@@ -748,8 +750,10 @@ function selectPosition(
 	if (!target) return { status: "empty" };
 	scrollView.scrollTo(target.top);
 	setSelectedEntry(target.component);
-	decorateEntry(target.component);
-	requestTuiRender(tui);
+	if (SHOW_CORNER_MARKS) {
+		decorateEntry(target.component);
+		requestTuiRender(tui);
+	}
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
@@ -828,8 +832,10 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 	const expanded = !isEntryExpanded(entry);
 	entry.setExpanded?.(expanded);
 	entry.invalidate?.();
-	decorateEntry(entry);
-	requestTuiRender(tui);
+	if (SHOW_CORNER_MARKS) {
+		decorateEntry(entry);
+		requestTuiRender(tui);
+	}
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = position.top - scrollTop;

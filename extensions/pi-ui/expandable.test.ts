@@ -144,6 +144,7 @@ function createChat(offsets?: Array<{ component: Container["children"][number]; 
 
 beforeEach(() => {
 	setSelectedEntry(undefined);
+	undecorateEntry();
 });
 
 describe("entry classification", () => {
@@ -466,9 +467,9 @@ describe("selection navigation", () => {
 		});
 		expect(getSelectedEntry()).toBe(chat.children[1]);
 		expect(scrollView.scrollCalls).toEqual([2]);
-		// The pill chip is currently disabled; the entry is framed with corner marks instead.
-		expect(tui.overlayCalls).toHaveLength(0);
-		expect(getDecoratedEntry()).toBe(chat.children[1]);
+		expect(tui.overlayCalls[0]?.options.row).toBe(0);
+		// Corner marks are currently switched off.
+		expect(getDecoratedEntry()).toBeUndefined();
 	});
 
 	test("steps strictly through entries once something is selected", () => {
@@ -511,7 +512,9 @@ describe("selection navigation", () => {
 		const first = selectEdgeEntry(tui, "first");
 		expect(first.status === "moved" && first.result).toMatchObject({ index: 0, label: "user", atStart: true });
 		expect(getSelectedEntry()).toBe(chat.children[0]);
-		expect(getDecoratedEntry()).toBe(chat.children[0]);
+		const firstChip = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
+		expect(firstChip).toContain("user");
+		expect(firstChip).toContain("· 1/3");
 	});
 
 	test("reports empty and unavailable transcripts", () => {
@@ -541,10 +544,9 @@ describe("selection toggle", () => {
 		expect(first.status).toBe("toggled");
 		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
 		expect(tool.expanded).toBe(true);
-		// One invalidation from the toggle, one from framing the entry.
 		expect(tool.invalidations).toBeGreaterThanOrEqual(1);
-		expect(tui.overlayCalls).toHaveLength(0);
-		expect(getDecoratedEntry()).toBe(tool);
+		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("· 2/3 · expanded");
+		expect(getDecoratedEntry()).toBeUndefined();
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);
