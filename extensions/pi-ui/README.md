@@ -134,7 +134,7 @@ Toggleable entries are the transcript components pi renders with an expanded/col
 
 Plain user and assistant text messages have no collapsed state in pi, so they are skipped: `Alt+O` always targets the newest toggleable entry above the editor. An entry can be toggled either way (expanded ⇄ collapsed), and a notification is shown only when no toggleable entry exists yet.
 
-Implementation note: pi only exposes a single global expand flag to extensions, so `pi-ui` tracks collapsible entries by wrapping `Container.addChild`/`removeChild`/`clear` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. If pi renames those components, the shortcut stops finding entries (use `/px:pi-ui-expandable` to inspect what is tracked).
+Implementation note: pi only exposes a single global expand flag to extensions, so `pi-ui` tracks collapsible entries by wrapping `Container.addChild`/`removeChild`/`clear`/`render` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. Rendering backfills entries that already existed when the extension loaded (startup, session restore, `/reload`). If pi renames those components, the shortcut stops finding entries (use `/px:pi-ui-expandable` to inspect what is tracked).
 
 ## Configuration
 

@@ -17,6 +17,9 @@ class ToolExecutionComponent {
 	invalidate(): void {
 		this.invalidations += 1;
 	}
+	render(): string[] {
+		return [];
+	}
 }
 
 class CustomMessageComponent {
@@ -24,12 +27,18 @@ class CustomMessageComponent {
 	setExpanded(expanded: boolean): void {
 		this._expanded = expanded;
 	}
+	render(): string[] {
+		return [];
+	}
 }
 
 class BashExecutionComponent {
 	expanded = false;
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
+	}
+	render(): string[] {
+		return [];
 	}
 }
 
@@ -39,9 +48,16 @@ class ExpandableText {
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 	}
+	render(): string[] {
+		return [];
+	}
 }
 
-class PlainText {}
+class PlainText {
+	render(): string[] {
+		return [];
+	}
+}
 
 installExpandableTracking();
 
@@ -161,5 +177,44 @@ describe("expandable tracking", () => {
 		container.addChild(new ToolExecutionComponent());
 
 		expect(listTrackedExpandables()).toEqual(["ToolExecutionComponent"]);
+	});
+
+	test("backfills entries that existed before tracking started", () => {
+		const container = new Container();
+		container.addChild(new ToolExecutionComponent());
+		container.addChild(new BashExecutionComponent());
+
+		// Simulates `/reload`: the transcript is already rendered, nothing is re-added.
+		resetExpandableTracking();
+		expect(listTrackedExpandables()).toEqual([]);
+
+		container.render(80);
+
+		expect(listTrackedExpandables()).toEqual(["ToolExecutionComponent", "BashExecutionComponent"]);
+		expect(toggleNewestExpandable()?.name).toBe("BashExecutionComponent");
+	});
+
+	test("backfills in display order and keeps it on later renders", () => {
+		const container = new Container();
+		const first = new ToolExecutionComponent();
+		container.addChild(first);
+		container.render(80);
+
+		const second = new BashExecutionComponent();
+		container.addChild(second);
+		container.render(80);
+		container.render(80);
+
+		expect(listTrackedExpandables()).toEqual(["ToolExecutionComponent", "BashExecutionComponent"]);
+		expect(toggleNewestExpandable()?.name).toBe("BashExecutionComponent");
+	});
+
+	test("rendering without expandable children is a no-op", () => {
+		const container = new Container();
+		container.addChild(new PlainText());
+		container.addChild(new ExpandableText());
+		container.render(80);
+
+		expect(listTrackedExpandables()).toEqual([]);
 	});
 });

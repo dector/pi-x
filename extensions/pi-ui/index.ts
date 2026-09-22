@@ -27,8 +27,8 @@ const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 const TOGGLE_NEWEST_SHORTCUT = Key.alt("o");
 
-const EXPANDABLE_TRACKING_FLAG = "__pi_ui_expandable_tracking_v1";
 const EXPANDABLE_REGISTRY_KEY = "__pi_ui_expandable_registry_v1";
+const EXPANDABLE_PATCHED_METHODS_KEY = "__pi_ui_expandable_patched_methods_v1";
 const MAX_TRACKED_EXPANDABLES = 1000;
 
 /**
@@ -309,6 +309,10 @@ function registerExpandable(component: unknown): void {
 	if (overflow > 0) registry.entries.splice(0, overflow);
 }
 
+function registerExpandables(components: readonly unknown[]): void {
+	for (const component of components) registerExpandable(component);
+}
+
 function unregisterExpandables(components: readonly unknown[]): void {
 	const registry = getExpandableRegistry();
 	if (registry.entries.length === 0) return;
@@ -325,42 +329,65 @@ export function resetExpandableTracking(): void {
 }
 
 /**
- * Track transcript entries pi can collapse/expand, in append order.
+ * Track transcript entries pi can collapse/expand, in display order.
  *
  * pi keeps expansion state per entry but only exposes a single global toggle to
- * extensions, so entries are observed as containers add and drop their children.
+ * extensions, so entries are observed as containers add, drop, and render their
+ * children. Rendering is what backfills entries that already existed when this
+ * extension loaded (startup, session restore, `/reload`).
  */
 export function installExpandableTracking(): void {
 	const globalAny = globalThis as Record<string, unknown>;
-	if (globalAny[EXPANDABLE_TRACKING_FLAG]) return;
-	globalAny[EXPANDABLE_TRACKING_FLAG] = true;
+	const installedRaw = globalAny[EXPANDABLE_PATCHED_METHODS_KEY];
+	const installed = installedRaw instanceof Set ? (installedRaw as Set<string>) : new Set<string>();
+	globalAny[EXPANDABLE_PATCHED_METHODS_KEY] = installed;
 
 	type PatchableContainer = {
 		addChild(component: unknown): void;
 		removeChild(component: unknown): void;
 		clear(): void;
+		render(width: number): string[];
 	};
 
 	const prototype = Container.prototype as unknown as PatchableContainer;
-	const originalAddChild = prototype.addChild;
-	const originalRemoveChild = prototype.removeChild;
-	const originalClear = prototype.clear;
 
-	prototype.addChild = function patchedAddChild(this: unknown, component: unknown) {
-		registerExpandable(component);
-		return originalAddChild.call(this, component);
-	};
+	if (!installed.has("addChild")) {
+		const originalAddChild = prototype.addChild;
+		prototype.addChild = function patchedAddChild(this: unknown, component: unknown) {
+			registerExpandable(component);
+			return originalAddChild.call(this, component);
+		};
+		installed.add("addChild");
+	}
 
-	prototype.removeChild = function patchedRemoveChild(this: unknown, component: unknown) {
-		unregisterExpandables([component]);
-		return originalRemoveChild.call(this, component);
-	};
+	if (!installed.has("removeChild")) {
+		const originalRemoveChild = prototype.removeChild;
+		prototype.removeChild = function patchedRemoveChild(this: unknown, component: unknown) {
+			unregisterExpandables([component]);
+			return originalRemoveChild.call(this, component);
+		};
+		installed.add("removeChild");
+	}
 
-	prototype.clear = function patchedClear(this: unknown) {
-		const children = (this as { children?: unknown[] }).children;
-		if (Array.isArray(children) && children.length > 0) unregisterExpandables(children);
-		return originalClear.call(this);
-	};
+	if (!installed.has("clear")) {
+		const originalClear = prototype.clear;
+		prototype.clear = function patchedClear(this: unknown) {
+			const children = (this as { children?: unknown[] }).children;
+			if (Array.isArray(children) && children.length > 0) unregisterExpandables(children);
+			return originalClear.call(this);
+		};
+		installed.add("clear");
+	}
+
+	if (!installed.has("render")) {
+		const originalRender = prototype.render;
+		prototype.render = function patchedRender(this: unknown, width: number) {
+			const children = (this as { children?: unknown[] }).children;
+			if (Array.isArray(children) && children.length > 0) registerExpandables(children);
+			return originalRender.call(this, width);
+		};
+		installed.add("render");
+	}
 }
 
 function isEntryExpanded(entry: ExpandableEntry): boolean {
