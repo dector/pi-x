@@ -39,6 +39,7 @@ Current dialog items:
 - `! - YOLO+ mode`
 - `p - preview prompts` (opens a second dialog)
 - `n/N - new note / list notes` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
+- `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
 - `Enter - run selected action`
 - `Esc - close`
@@ -46,9 +47,16 @@ Current dialog items:
 
 Behavior details:
 
+- The dialog uses the status-bar frame language: purple heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
+- Terminal-background filling spans the full overlay width around the centered frame, with one empty row above and below. Shortcuts align on the right, `→` marks actions that open menus, and `●`/`○` show toggle state.
+- The selected row uses the same purple as the frame.
 - Pressing `Esc` or `Backspace` in the main dialog closes it with no side effects.
 - Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
+- Pressing `/` enters search. Search covers both main and prompt-stash actions, shows up to eight matches at a time, and does not change any direct hotkeys.
+  - Type to filter by action label or shortcut.
+  - `↑/↓` moves through results and `Enter` runs the selected result.
+  - `Esc` cancels search and returns to the previous menu; `Backspace` does the same when the query is empty.
 - Pressing `Enter` executes the currently selected action and closes the dialog, unless the action opens a submenu.
 - Pressing `s` (or `S`) opens the prompt-stash submenu:
   - `s` — emits event `px:prompt-stash:stash` and closes the dialog.
@@ -68,11 +76,15 @@ Behavior details:
 - Pressing `n` emits event `px:notes:open` and closes the dialog; `notes` then opens its editor.
 - Pressing `N` emits event `px:notes:list` and closes the dialog; `notes` then opens its list browser.
 - Both notes actions are shown as a single row (`n/N`); pressing `Enter` on it defaults to `n` (editor).
-- Safe-mode rows show live status badges (`[ON]`/`[OFF]`) from current `safe-mode` state.
-  - `YOLO+` uses warning-colored `[ON]`; non-risk actions use success-colored `[ON]`.
+- Toggle dots use severity colors whether on (`●`) or off (`○`):
+  - Reader mode: normal/success (green).
+  - Outer access: warning (orange/amber from the active theme).
+  - YOLO+ and agent rewiring: danger (red).
+- Safe-mode rows read live state from the current `safe-mode` session data.
+- Agent rewiring mirrors the subagent extension's published rewire status.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `prompt-stash` or `safe-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
-- Main action dialog sizing is responsive (`~62%` width, `minWidth: 40`, centered).
+- The main overlay spans the available terminal width; its frame remains centered at roughly `62%` width with a responsive narrow-terminal fallback.
 - Prompt preview dialog uses centered max-width overlay (`width: 100%`, `minWidth: 40`).
 
 Integration contract (important):
@@ -127,6 +139,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
+  - `/` — enter global action search (`Esc` cancels search)
   - `s` — open prompt-stash submenu
     - `s` — request prompt-stash stash via `px:prompt-stash:stash`
     - `o` — request prompt-stash pop via `px:prompt-stash:pop`

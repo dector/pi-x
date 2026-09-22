@@ -21,6 +21,8 @@ const NOTES_OPEN_EVENT = "px:notes:open";
 const NOTES_LIST_EVENT = "px:notes:list";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
+const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
+const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
@@ -566,6 +568,7 @@ async function showHiDialog(
 		onListNotes: () => Promise<void>;
 		onToggleAgentsRewire: () => void;
 		onOpenAgentsRewire: () => void;
+		isAgentsRewireEnabled: () => boolean;
 	},
 	dialogLifecycle: {
 		isShown: () => boolean;
@@ -589,7 +592,7 @@ async function showHiDialog(
 
 	try {
 		await ctx.ui.custom<void>(
-			(tui, _theme, _kb, done) => {
+			(tui, theme, _kb, done) => {
 				const {
 					onToggleReader,
 					onToggleOuter,
@@ -603,6 +606,7 @@ async function showHiDialog(
 					onListNotes,
 					onToggleAgentsRewire,
 					onOpenAgentsRewire,
+					isAgentsRewireEnabled,
 				} = handlers;
 				let selectedIndex = 0;
 				let closed = false;
@@ -621,13 +625,24 @@ async function showHiDialog(
 					hotkeyAliases?: string[];
 					hotkeyLabel?: string;
 					label: string;
-					risk?: boolean;
+					toggleSeverity?: "none" | "warning" | "danger";
 					showStatusBadge?: boolean;
+					opensMenu?: boolean;
+					searchable?: boolean;
 					isEnabled: (state: DialogState) => boolean;
 					run: () => void | Promise<void>;
 					runWithKey?: (key: string) => void | Promise<void>;
 					closeAfterRun?: boolean;
 				};
+				type DialogMenu = "main" | "stash";
+				type SearchAction = {
+					action: DialogAction;
+					menu: DialogMenu;
+					label?: string;
+					hotkeyLabel?: string;
+					executeKey?: string;
+				};
+
 				const getSafeModeUiState = (): DialogState => {
 					type MaybeSafeModeEntry = {
 						type?: string;
@@ -652,8 +667,10 @@ async function showHiDialog(
 					};
 				};
 
-				type DialogMenu = "main" | "stash";
 				let activeMenu: DialogMenu = "main";
+				let searchMode = false;
+				let searchQuery = "";
+				let searchReturnIndex = 0;
 
 				const runAfterClose = (fn: () => void): void => {
 					closeDialog();
@@ -662,6 +679,8 @@ async function showHiDialog(
 
 				const setMenu = (menu: DialogMenu): void => {
 					activeMenu = menu;
+					searchMode = false;
+					searchQuery = "";
 					selectedIndex = 0;
 					tui.requestRender();
 				};
@@ -670,47 +689,51 @@ async function showHiDialog(
 					{
 						hotkey: "s",
 						hotkeyAliases: ["S"],
-						label: "Prompt stash...",
+						label: "Prompt stash…",
 						showStatusBadge: false,
+						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => setMenu("stash"),
 					},
 					{
-						hotkey: Key.ctrl("r"),
-						hotkeyLabel: "Ctrl+r",
-						label: "Rewire agents (toggle)",
-						showStatusBadge: false,
-						isEnabled: () => true,
-						closeAfterRun: false,
-						run: () => runAfterClose(onToggleAgentsRewire),
-					},
-					{
 						hotkey: Key.ctrlShift("r"),
 						hotkeyLabel: "Ctrl+R",
-						label: "Rewire agents (menu)",
+						label: "Rewire agents",
 						showStatusBadge: false,
+						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(onOpenAgentsRewire),
 					},
 					{
+						hotkey: Key.ctrl("r"),
+						hotkeyLabel: "Ctrl+r",
+						label: "Agent rewiring",
+						toggleSeverity: "danger",
+						isEnabled: () => isAgentsRewireEnabled(),
+						closeAfterRun: false,
+						run: () => runAfterClose(onToggleAgentsRewire),
+					},
+					{
 						hotkey: "r",
 						hotkeyAliases: ["R"],
-						label: "Toggle reader mode",
+						label: "Reader mode",
+						toggleSeverity: "none",
 						isEnabled: (state) => state.readerOn,
 						run: onToggleReader,
 					},
 					{
 						hotkey: "+",
-						label: "Toggle outer mode",
+						label: "Outer access",
+						toggleSeverity: "warning",
 						isEnabled: (state) => state.outerOn,
 						run: onToggleOuter,
 					},
 					{
 						hotkey: "!",
-						label: "YOLO+ mode",
-						risk: true,
+						label: "YOLO+",
+						toggleSeverity: "danger",
 						isEnabled: (state) => state.yoloPlusOn,
 						run: onSetYoloPlus,
 					},
@@ -731,7 +754,7 @@ async function showHiDialog(
 						hotkey: "n",
 						hotkeyAliases: ["N"],
 						hotkeyLabel: "n/N",
-						label: "New note / list notes",
+						label: "New note / browse notes",
 						showStatusBadge: false,
 						isEnabled: () => true,
 						closeAfterRun: false,
@@ -762,7 +785,7 @@ async function showHiDialog(
 					{
 						hotkey: "l",
 						hotkeyAliases: ["L"],
-						label: "List/restore prompt stashes",
+						label: "List and restore stashes",
 						showStatusBadge: false,
 						isEnabled: () => true,
 						closeAfterRun: false,
@@ -771,8 +794,7 @@ async function showHiDialog(
 					{
 						hotkey: "x",
 						hotkeyAliases: ["X"],
-						label: "Clear all prompt stashes",
-						risk: true,
+						label: "Clear all stashes",
 						showStatusBadge: false,
 						isEnabled: () => true,
 						closeAfterRun: false,
@@ -781,19 +803,51 @@ async function showHiDialog(
 					{
 						hotkey: "<-",
 						hotkeyAliases: [Key.backspace],
+						hotkeyLabel: "←",
 						label: "Back",
 						showStatusBadge: false,
+						searchable: false,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => setMenu("main"),
 					},
 				];
 
+				const searchableActions: SearchAction[] = [
+					...mainActions.flatMap((action): SearchAction[] =>
+						action.hotkeyLabel === "n/N"
+							? [
+									{ action, menu: "main", label: "New note", hotkeyLabel: "n", executeKey: "n" },
+									{ action, menu: "main", label: "Browse notes", hotkeyLabel: "N", executeKey: "N" },
+								]
+							: [{ action, menu: "main" }],
+					),
+					...stashActions
+						.filter((action) => action.searchable !== false)
+						.map((action) => ({ action, menu: "stash" as const })),
+				];
 				const getActions = (): DialogAction[] => (activeMenu === "stash" ? stashActions : mainActions);
+				const getSearchActions = (): SearchAction[] => {
+					const query = searchQuery.trim().toLowerCase();
+					if (!query) return [];
+					const terms = query.split(/\s+/).filter(Boolean);
+					return searchableActions.filter(({ action, menu, label, hotkeyLabel }) => {
+						const haystack = [
+							label ?? action.label,
+							hotkeyLabel ?? action.hotkeyLabel ?? action.hotkey,
+							...(action.hotkeyAliases ?? []),
+							menu === "stash" ? "prompt stash" : "",
+						]
+							.join(" ")
+							.toLowerCase();
+						return terms.every((term) => haystack.includes(term));
+					});
+				};
 
-				const executeAction = (index: number, key?: string): void => {
-					const action = getActions()[index];
+				const executeAction = (action: DialogAction | undefined, key?: string): void => {
 					if (!action) return;
+					searchMode = false;
+					searchQuery = "";
 					void (async () => {
 						try {
 							if (key !== undefined && action.runWithKey) {
@@ -808,80 +862,181 @@ async function showHiDialog(
 					})();
 				};
 
-				const matchesActionKey = (data: string, key: string): boolean => {
-					return data === key || matchesKey(data, key);
-				};
-
-				const matchActionForInput = (data: string): { index: number; key: string } | undefined => {
-					const actions = getActions();
-					for (let index = 0; index < actions.length; index += 1) {
-						const action = actions[index]!;
-						if (matchesActionKey(data, action.hotkey)) return { index, key: action.hotkey };
+				const matchesActionKey = (data: string, key: string): boolean => data === key || matchesKey(data, key);
+				const matchActionForInput = (data: string): { action: DialogAction; key: string } | undefined => {
+					for (const action of getActions()) {
+						if (matchesActionKey(data, action.hotkey)) return { action, key: action.hotkey };
 						const alias = action.hotkeyAliases?.find((candidate) => matchesActionKey(data, candidate));
-						if (alias !== undefined) return { index, key: alias };
+						if (alias !== undefined) return { action, key: alias };
 					}
 					return undefined;
 				};
 
+				const enterSearch = (): void => {
+					searchReturnIndex = selectedIndex;
+					searchMode = true;
+					searchQuery = "";
+					selectedIndex = 0;
+					tui.requestRender();
+				};
+				const exitSearch = (): void => {
+					searchMode = false;
+					searchQuery = "";
+					selectedIndex = Math.min(searchReturnIndex, Math.max(0, getActions().length - 1));
+					tui.requestRender();
+				};
+
 				return {
 					render(width: number) {
-						if (width <= 2) return [];
-						const innerWidth = Math.max(1, width - 2);
+						if (width <= 6) return [];
+						// The overlay spans the terminal, while the dialog stays centered at its
+						// original responsive width. The surrounding cells use terminal background.
+						const frameWidth = Math.min(Math.max(1, width - 2), Math.max(40, Math.floor(width * 0.62)));
+						const contentWidth = Math.max(1, frameWidth - 2);
+						const outerWidth = Math.max(0, width - frameWidth);
+						const outerLeft = " ".repeat(Math.floor(outerWidth / 2));
+						const outerRight = " ".repeat(Math.ceil(outerWidth / 2));
 						const state = getSafeModeUiState();
-						const actionLine = (
-							hotkey: string,
-							label: string,
-							enabled: boolean,
-							isSelected: boolean,
-							options?: { risk?: boolean; showStatusBadge?: boolean },
-						): string => {
-							const showStatusBadge = options?.showStatusBadge !== false;
-							const badgeText = showStatusBadge ? (enabled ? "[ON]" : "[OFF]") : "";
-							const badgeColor = enabled
-								? options?.risk
-									? "\x1b[33m"
-									: "\x1b[32m"
-								: "\x1b[90m";
-							const badge = showStatusBadge ? `${badgeColor}${badgeText}${RESET_FG}` : "";
-							const badgeWidth = showStatusBadge ? visibleWidth(badgeText) : 0;
-							const prefix = isSelected ? "› " : "  ";
-							const left = `${prefix}[${hotkey}] ${label}`;
-							const availableLeft = Math.max(1, innerWidth - badgeWidth - (showStatusBadge ? 1 : 0));
-							const clippedLeft =
-								visibleWidth(left) > availableLeft ? truncateToWidth(left, availableLeft, "") : left;
-							const gap = Math.max(0, innerWidth - visibleWidth(clippedLeft) - badgeWidth);
-							return `${clippedLeft}${" ".repeat(gap)}${badge}`;
+						const border = (text: string): string => theme.fg("thinkingHigh", text);
+						const outerLine = " ".repeat(width);
+						const fit = (text: string): string => {
+							const clipped = truncateToWidth(text, contentWidth, "");
+							return `${clipped}${" ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)))}`;
 						};
-						const actions = getActions();
-						const title = activeMenu === "stash" ? "Ctrl+, Actions › Prompt stash" : "Ctrl+, Actions";
-						const actionLines = actions.map((action, index) =>
-							actionLine(action.hotkeyLabel ?? action.hotkey, action.label, action.isEnabled(state), selectedIndex === index, {
-								risk: action.risk,
-								showStatusBadge: action.showStatusBadge,
-							}),
-						);
-						return [
-							`╔${"═".repeat(innerWidth)}╗`,
-							`║${centerLine(innerWidth, title)}║`,
-							`║${"─".repeat(innerWidth)}║`,
-							...actionLines.map((line) => `║${line}║`),
-							`║${"─".repeat(innerWidth)}║`,
-							`║${centerLine(innerWidth, "↑/↓ move • Enter run • Esc/Ctrl+, close")}║`,
-							`╚${"═".repeat(innerWidth)}╝`,
-						];
+						const frame = (text: string): string => `${border("┃")}${fit(text)}${border("┃")}`;
+						const title = searchMode
+							? "Quick actions / Search"
+							: activeMenu === "stash"
+								? "Quick actions / Prompt stash"
+								: "Quick actions";
+						const titleText = truncateToWidth(` ${title} `, Math.max(1, contentWidth - 4), "");
+						const topFill = "━".repeat(Math.max(0, contentWidth - visibleWidth(titleText) - 3));
+						const top = `${border("╭━╾")}${border(theme.bold(titleText))}${border(`╼${topFill}╮`)}`;
+
+						const actionLine = (
+							action: DialogAction,
+							isSelected: boolean,
+							overrides?: { label?: string; hotkeyLabel?: string },
+						): string => {
+							const enabled = action.isEnabled(state);
+							const label = overrides?.label ?? action.label;
+							const shortcut = overrides?.hotkeyLabel ?? action.hotkeyLabel ?? action.hotkey;
+							const statusText = action.showStatusBadge === false ? "" : enabled ? "●" : "○";
+							const markerText = action.opensMenu ? "→" : statusText;
+							const rightText = [shortcut, markerText].filter(Boolean).join(" ");
+							const prefix = isSelected ? " › " : "   ";
+							const availableLeft = Math.max(1, contentWidth - visibleWidth(rightText) - 1);
+							const leftText = truncateToWidth(`${prefix}${label}`, availableLeft, "");
+							const gap = " ".repeat(Math.max(1, contentWidth - visibleWidth(leftText) - visibleWidth(rightText)));
+							const left = isSelected ? border(theme.bold(leftText)) : leftText;
+							const styledShortcut = isSelected ? border(shortcut) : theme.fg("dim", shortcut);
+							let marker = "";
+							if (action.opensMenu) marker = isSelected ? border("→") : theme.fg("muted", "→");
+							else if (statusText) {
+								const color =
+									action.toggleSeverity === "danger"
+										? "error"
+										: action.toggleSeverity === "warning"
+											? "warning"
+											: "success";
+								marker = theme.fg(color, enabled ? theme.bold(statusText) : statusText);
+							}
+							return fit(`${left}${gap}${styledShortcut}${marker ? ` ${marker}` : ""}`);
+						};
+
+						const searchActions = searchMode ? getSearchActions() : [];
+						const searchWindowStart = Math.floor(selectedIndex / 8) * 8;
+						const visibleSearchActions = searchActions.slice(searchWindowStart, searchWindowStart + 8);
+						const lines: string[] = [top];
+						if (searchMode) {
+							lines.push(frame(` ${theme.fg("accent", "/")} ${searchQuery}${theme.fg("accent", "▌")}`));
+							lines.push(border(`┣${"━".repeat(contentWidth)}┫`));
+							if (visibleSearchActions.length === 0) {
+								lines.push(frame(theme.fg("dim", searchQuery ? "   No matching actions" : "   Type to search all actions")));
+							}
+						} else {
+							lines.push(frame(""));
+						}
+						if (searchMode) {
+							lines.push(
+								...visibleSearchActions.map((item, index) =>
+									frame(
+										actionLine(item.action, searchWindowStart + index === selectedIndex, {
+											label: item.label,
+											hotkeyLabel: item.hotkeyLabel,
+										}),
+									),
+								),
+							);
+						} else {
+							lines.push(...getActions().map((action, index) => frame(actionLine(action, index === selectedIndex))));
+						}
+						lines.push(frame(""));
+						const footer = searchMode
+							? `${searchActions.length} result${searchActions.length === 1 ? "" : "s"} · ↑/↓ move · Enter run · Esc cancel`
+							: activeMenu === "stash"
+								? "← back · ↑/↓ move · Enter run · / search · Esc close"
+								: "↑/↓ move · Enter run · / search · Esc close";
+						lines.push(frame(theme.fg("dim", ` ${footer}`)));
+						lines.push(border(`╰${"━".repeat(contentWidth)}╯`));
+						return [outerLine, ...lines.map((line) => `${outerLeft}${line}${outerRight}`), outerLine];
 					},
-					invalidate() { },
+					invalidate() {},
 					handleInput(data: string) {
-						if (matchesKey(data, Key.escape) || data === ESC || matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
+						if (matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
 							closeDialog();
 							return;
 						}
-						if (matchesKey(data, Key.backspace)) {
-							if (activeMenu === "main") {
-								closeDialog();
-							} else {
-								setMenu("main");
+						if (searchMode) {
+							if (matchesKey(data, Key.escape) || data === ESC) {
+								exitSearch();
+								return;
 							}
+							if (matchesKey(data, Key.backspace)) {
+								if (!searchQuery) {
+									exitSearch();
+								} else {
+									searchQuery = Array.from(searchQuery).slice(0, -1).join("");
+									selectedIndex = 0;
+									tui.requestRender();
+								}
+								return;
+							}
+							const results = getSearchActions();
+							if (matchesKey(data, Key.up)) {
+								if (results.length > 0) selectedIndex = (selectedIndex - 1 + results.length) % results.length;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, Key.down)) {
+								if (results.length > 0) selectedIndex = (selectedIndex + 1) % results.length;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+								const result = results[selectedIndex];
+								executeAction(result?.action, result?.executeKey);
+								return;
+							}
+							if (/^[^\x00-\x1f\x7f]+$/.test(data)) {
+								searchQuery += data;
+								selectedIndex = 0;
+								tui.requestRender();
+							}
+							return;
+						}
+
+						if (matchesKey(data, Key.escape) || data === ESC) {
+							closeDialog();
+							return;
+						}
+						if (data === "/") {
+							enterSearch();
+							return;
+						}
+						if (matchesKey(data, Key.backspace)) {
+							if (activeMenu === "main") closeDialog();
+							else setMenu("main");
 							return;
 						}
 						if (matchesKey(data, Key.up) || data === "k" || data === "K") {
@@ -897,13 +1052,11 @@ async function showHiDialog(
 							return;
 						}
 						if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-							executeAction(selectedIndex);
+							executeAction(getActions()[selectedIndex]);
 							return;
 						}
 						const match = matchActionForInput(data);
-						if (match) {
-							executeAction(match.index, match.key);
-						}
+						if (match) executeAction(match.action, match.key);
 					},
 				};
 			},
@@ -911,9 +1064,9 @@ async function showHiDialog(
 				overlay: true,
 				overlayOptions: {
 					anchor: "center",
-					width: "62%",
+					width: "100%",
 					minWidth: 40,
-					maxHeight: "70%",
+					maxHeight: "85%",
 					margin: 1,
 				},
 			},
@@ -954,6 +1107,14 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let agentRunning = false;
 	let isActionDialogShown = false;
 	let requestActionDialogClose: (() => void) | undefined;
+	let agentsRewireEnabled = false;
+
+	pi.events.on(STATUS_BAR_REWIRE_SET_EVENT, () => {
+		agentsRewireEnabled = true;
+	});
+	pi.events.on(STATUS_BAR_REWIRE_CLEAR_EVENT, () => {
+		agentsRewireEnabled = false;
+	});
 
 	const ensureUiBellPatched = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -1039,6 +1200,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		pendingInteractiveInputSerial = 0;
 		agentRunning = false;
+		agentsRewireEnabled = false;
 		// Disabled: keep pi default busy indicator.
 		// stopAnimation(ctx);
 	});
@@ -1147,6 +1309,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					onOpenAgentsRewire: () => {
 						pi.events.emit(SUBAGENT_REWIRE_MENU_EVENT, { ctx });
 					},
+					isAgentsRewireEnabled: () => agentsRewireEnabled,
 				},
 				{
 					isShown: () => isActionDialogShown,
