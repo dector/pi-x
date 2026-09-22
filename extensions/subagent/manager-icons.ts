@@ -3,9 +3,8 @@
  *
  * The `/px:agents` list and the above-editor active-subagents widget must read
  * the same, so the Nerd Font Material Design glyphs and their theme tones live
- * here once. `running`/`paused` deliberately use the plain `play`/`pause`
- * glyphs (no ring) so they do not look like selection markers next to the
- * outcome checks.
+ * here once. `running`/`paused` use the light outline-circle pair so they sit
+ * quietly next to the outcome checks.
  *
  * This module is pure data with no Pi runtime imports so both surfaces (and
  * `bun test`) can load it cheaply.
@@ -17,8 +16,8 @@ export type ManagerRunOutcome = "running" | "paused" | "blocked" | "finished" | 
 /** Status glyphs, chosen to match the widget's existing robot icon family. */
 export const MANAGER_ICONS = {
 	batch: "\u{f06a9}", // md-robot
-	running: "\u{f040a}", // md-play
-	paused: "\u{f03e4}", // md-pause
+	running: "\u{f005a}", // md-arrow_right_drop_circle_outline
+	paused: "\u{f03e6}", // md-pause_circle_outline
 	blocked: "\u{f1238}", // md-exclamation_thick
 	finished: "\u{f012c}", // md-check
 	failed: "\u{f0156}", // md-close

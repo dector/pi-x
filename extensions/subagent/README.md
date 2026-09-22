@@ -395,8 +395,8 @@ Status glyphs are Nerd Font Material Design, shared by the list and the above-ed
 
 | State | Glyph | Meaning |
 | --- | --- | --- |
-| running | 󰐊 `U+F040A` | actively working |
-| paused | 󰏤 `U+F03E4` | `pause-requested` / `paused` / `resuming` / `aborting` |
+| running | 󰁚 `U+F005A` | actively working |
+| paused | 󰏦 `U+F03E6` | `pause-requested` / `paused` / `resuming` / `aborting` |
 | waiting approval | 󱈸 `U+F1238` | blocked on a parent approval |
 | finished | 󰄬 `U+F012C` | completed successfully |
 | failed | 󰅖 `U+F0156` | failed |
