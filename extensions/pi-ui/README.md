@@ -129,7 +129,9 @@ Entries with nothing to show are skipped, so navigation follows what you actuall
 - zero-height entries (for example an assistant message with no rendered content)
 - assistant messages that only request tools while thinking is hidden — pi renders those as a `Thinking...` placeholder plus padding
 
-A short chip is drawn over the selected entry, e.g. `▌ 310/312 tool`, styled with the same purple as pi-ui's dialog frames and the editor frame border (`thinkingHigh`, bold). It disappears after 1.5 s. The chip sits at the entry's own screen row, so it marks the concrete message rather than a corner of the screen.
+A short chip is drawn at the selected entry's own screen row, right-aligned: a purple pill with grayish text, e.g. ` tool :: 310/312 `. The purple is the same one pi-ui uses for its dialog frames and the editor frame border. The chip disappears after 1.5 s, and a toggle appends ` :: expanded` or ` :: collapsed`.
+
+`Alt+End` jumps to the last entry and `Alt+Home` (Alt+Start on keyboards that label the key that way) to the first.
 
 `Alt+O` toggles **the selected entry** — nothing else, and it never falls back to "the latest entry". It behaves like clicking that entry's result area:
 
@@ -145,7 +147,7 @@ Implementation notes:
 
 - Everything is read-only on pi's side. Entries are found by walking the transcript's layout tree from the primary `ScrollView` and matching known entry component class names; no component prototypes are patched and nothing is registered ahead of time, so session restore and `/reload` need no special handling.
 - Entry line offsets come from the child heights recorded during the last render (`mouseLayout`); navigation then calls `scrollTo(line)`.
-- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. The purple comes from the theme captured via `ctx.ui.theme` (`thinkingHigh`); without a captured theme it falls back to inverse video, like pi's own flash messages.
+- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. Its purple background is the theme's `thinkingHigh` colour reused as a background (`getFgAnsi` → `48;…`), with the theme's `text` colour inside; without a captured theme it falls back to inverse video, like pi's own flash messages.
 - The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
 - Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 
@@ -174,6 +176,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 ### Shortcut
 
 - `Alt+J` / `Alt+K` — select and scroll to the next / previous transcript entry
+- `Alt+End` — select the last transcript entry; `Alt+Home` (Alt+Start) — the first
 - `Alt+O` — toggle the selected transcript entry (same as clicking it)
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection

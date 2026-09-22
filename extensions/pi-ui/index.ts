@@ -28,6 +28,9 @@ const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 const TOGGLE_SELECTED_SHORTCUT = Key.alt("o");
 const NAV_NEXT_SHORTCUT = Key.alt("j");
 const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
+// Alt+Start on keyboards that label Home as Start.
+const NAV_FIRST_SHORTCUT = Key.alt("home");
+const NAV_LAST_SHORTCUT = Key.alt("end");
 
 const SELECTION_KEY = "__pi_ui_selection_v1";
 const CHIP_STATE_KEY = "__pi_ui_chip_state_v1";
@@ -358,6 +361,7 @@ interface ChipState {
 interface ChipTheme {
 	fg(color: string, text: string): string;
 	bold(text: string): string;
+	getFgAnsi?(color: string): string;
 }
 
 function componentClassName(component: object): string | undefined {
@@ -561,13 +565,27 @@ export function navigablePositions(positions: readonly EntryPosition[]): EntryPo
 	return positions.filter((position) => position.height > 0 && hasNavigableContent(position.component));
 }
 
+/** `tool :: 10/20` chip text. */
+function chipLabel(label: string, index: number, total: number, state?: string): string {
+	const suffix = state ? ` :: ${state}` : "";
+	return `${label} :: ${index + 1}/${total}${suffix}`;
+}
+
+/**
+ * Purple pill with grayish text, matching the branded accent pi-ui uses for its
+ * dialog frames. The background is the theme's `thinkingHigh` colour reused as a
+ * background, so it works for truecolor and 256-colour themes alike.
+ */
 function chipLine(text: string): string {
 	const theme = getThemeReference() as ChipTheme | undefined;
 	if (!theme || typeof theme.fg !== "function") return `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
-	const marker = `▌ ${text}`;
-	const styled = typeof theme.bold === "function" ? theme.bold(marker) : marker;
-	// Same purple as pi-ui's dialog frames and the editor frame border.
-	return `${theme.fg("thinkingHigh", styled)} `;
+
+	const body = ` ${text} `;
+	const foreground = typeof theme.bold === "function" ? theme.bold(theme.fg("text", body)) : theme.fg("text", body);
+	const purple = typeof theme.getFgAnsi === "function" ? String(theme.getFgAnsi("thinkingHigh")) : "";
+	const background = purple.startsWith("\x1b[38;") ? `\x1b[48;${purple.slice(5)}` : "";
+	if (background.length === 0) return `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
+	return `${background}${foreground}\x1b[49m`;
 }
 
 function hideEntryChip(): void {
@@ -580,22 +598,27 @@ function hideEntryChip(): void {
 }
 
 /**
- * Draw a transient chip at a transcript row, over the selected entry.
- * Overlays are composited by the alt-screen renderer at absolute rows and
- * `nonCapturing` keeps keyboard focus in the editor.
+ * Draw a transient chip at a transcript row, over the selected entry, aligned to
+ * the right edge of the screen. Overlays are composited by the alt-screen
+ * renderer at absolute rows and `nonCapturing` keeps keyboard focus in the editor.
  */
 export function showEntryChip(tui: unknown, row: number, text: string, durationMs = CHIP_DURATION_MS): boolean {
 	hideEntryChip();
 	const candidate = tui as
-		| { showOverlay?: (component: unknown, options?: unknown) => { hide(): void } | undefined }
+		| {
+				showOverlay?: (component: unknown, options?: unknown) => { hide(): void } | undefined;
+				terminal?: { columns?: number };
+		  }
 		| undefined;
 	if (typeof candidate?.showOverlay !== "function") return false;
 
 	const line = chipLine(text);
 	const width = Math.max(1, visibleWidth(line));
+	const columns = Number(candidate.terminal?.columns);
+	const col = Number.isFinite(columns) && columns > 0 ? Math.max(0, Math.round(columns) - width) : 0;
 	const handle = candidate.showOverlay(
 		{ render: () => [line], invalidate: () => {} },
-		{ row: Math.max(0, Math.round(row)), col: 0, width, nonCapturing: true },
+		{ row: Math.max(0, Math.round(row)), col, width, nonCapturing: true },
 	);
 	const state: ChipState = {};
 	if (handle) state.handle = handle;
@@ -611,32 +634,12 @@ function selectionIndex(positions: readonly EntryPosition[]): number {
 	return positions.findIndex((position) => position.component === selected);
 }
 
-/**
- * Select the next (direction 1) or previous (direction -1) transcript entry,
- * scroll it to the top of the viewport, and mark it with a chip.
- */
-export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): NavigationOutcome {
-	const scrollView = getTranscriptScrollView(tui);
-	if (!scrollView || !scrollView.child) return { status: "unavailable" };
-	const all = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
-	const positions = navigablePositions(all);
-	if (positions.length === 0) return { status: "empty" };
-
-	const selectedIndex = selectionIndex(positions);
-	let targetIndex: number;
-	if (selectedIndex >= 0) {
-		targetIndex = Math.max(0, Math.min(positions.length - 1, selectedIndex + direction));
-	} else {
-		const currentTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
-		const targetTop =
-			direction === 1 ? findNextEntryTop(positions, currentTop) : findPreviousEntryTop(positions, currentTop);
-		const fallbackIndex = direction === 1 ? 0 : positions.length - 1;
-		const foundIndex = targetTop === undefined
-			? -1
-			: positions.findIndex((position) => position.top === targetTop);
-		targetIndex = foundIndex >= 0 ? foundIndex : fallbackIndex;
-	}
-
+function selectPosition(
+	tui: unknown,
+	scrollView: ScrollViewLike,
+	positions: readonly EntryPosition[],
+	targetIndex: number,
+): NavigationOutcome {
 	const target = positions[targetIndex];
 	if (!target) return { status: "empty" };
 	scrollView.scrollTo(target.top);
@@ -645,7 +648,7 @@ export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): Navigation
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
 	const label = describeEntry(target.component);
-	showEntryChip(tui, row, `${targetIndex + 1}/${positions.length} ${label}`);
+	showEntryChip(tui, row, chipLabel(label, targetIndex, positions.length));
 
 	return {
 		status: "moved",
@@ -662,7 +665,44 @@ export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): Navigation
 	};
 }
 
-/** Toggle the selected transcript entry, the same way clicking it would. */
+/**
+ * Select the next (direction 1) or previous (direction -1) transcript entry,
+ * scroll it to the top of the viewport, and mark it with a chip.
+ */
+export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): NavigationOutcome {
+	const scrollView = getTranscriptScrollView(tui);
+	if (!scrollView || !scrollView.child) return { status: "unavailable" };
+	const all = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	const positions = navigablePositions(all);
+	if (positions.length === 0) return { status: "empty" };
+
+	const selectedIndex = selectionIndex(positions);
+	if (selectedIndex >= 0) {
+		return selectPosition(
+			tui,
+			scrollView,
+			positions,
+			Math.max(0, Math.min(positions.length - 1, selectedIndex + direction)),
+		);
+	}
+
+	const currentTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
+	const targetTop =
+		direction === 1 ? findNextEntryTop(positions, currentTop) : findPreviousEntryTop(positions, currentTop);
+	const foundIndex = targetTop === undefined ? -1 : positions.findIndex((position) => position.top === targetTop);
+	const fallbackIndex = direction === 1 ? 0 : positions.length - 1;
+	return selectPosition(tui, scrollView, positions, foundIndex >= 0 ? foundIndex : fallbackIndex);
+}
+
+/** Select the first (`alt+home` / Alt+Start) or last (`alt+end`) transcript entry. */
+export function selectEdgeEntry(tui: unknown, edge: "first" | "last"): NavigationOutcome {
+	const scrollView = getTranscriptScrollView(tui);
+	if (!scrollView || !scrollView.child) return { status: "unavailable" };
+	const positions = navigablePositions(computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui)));
+	if (positions.length === 0) return { status: "empty" };
+	return selectPosition(tui, scrollView, positions, edge === "first" ? 0 : positions.length - 1);
+}
+
 export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 	const selected = getSelectedEntry();
 	if (!selected) return { status: "no-selection" };
@@ -685,7 +725,11 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = position.top - scrollTop;
-	showEntryChip(tui, row, `${index + 1}/${positions.length} ${label} → ${expanded ? "expanded" : "collapsed"}`);
+	showEntryChip(
+		tui,
+		row,
+		chipLabel(label, index, positions.length, expanded ? "expanded" : "collapsed"),
+	);
 
 	return {
 		status: "toggled",
@@ -1893,6 +1937,24 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		description: "Select and scroll to the previous transcript entry",
 		handler: async (ctx) => {
 			const outcome = selectAdjacentEntry(captureTuiReference(ctx), -1);
+			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
+		},
+	});
+
+	pi.registerShortcut(NAV_FIRST_SHORTCUT, {
+		description: "Select the first transcript entry (Alt+Start)",
+		handler: async (ctx) => {
+			const outcome = selectEdgeEntry(captureTuiReference(ctx), "first");
+			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
+		},
+	});
+
+	pi.registerShortcut(NAV_LAST_SHORTCUT, {
+		description: "Select the last transcript entry",
+		handler: async (ctx) => {
+			const outcome = selectEdgeEntry(captureTuiReference(ctx), "last");
 			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
 			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
 		},

@@ -12,6 +12,7 @@ import {
 	isTrackedEntry,
 	navigablePositions,
 	selectAdjacentEntry,
+	selectEdgeEntry,
 	setSelectedEntry,
 	showEntryChip,
 	toggleSelectedEntry,
@@ -274,7 +275,7 @@ describe("entry chip", () => {
 		} as never);
 	}
 
-	test("draws a non-capturing overlay at the given row", () => {
+	test("draws a non-capturing overlay at the given row, right aligned", () => {
 		captureWithTheme(undefined);
 		const tui = createTui(undefined);
 
@@ -282,23 +283,27 @@ describe("entry chip", () => {
 		expect(tui.overlayCalls).toHaveLength(1);
 
 		const call = tui.overlayCalls[0];
-		expect(call?.options).toMatchObject({ row: 7, col: 0, nonCapturing: true });
-		expect(call?.options.width).toBe(" 12/379 tool ".length);
+		const width = " 12/379 tool ".length;
+		expect(call?.options).toMatchObject({ row: 7, col: 80 - width, width, nonCapturing: true });
 		expect(call?.component.render(80)[0]).toBe("\x1b[7m 12/379 tool \x1b[27m");
 	});
 
-	test("styles the chip with the captured theme purple", () => {
+	test("styles the chip as a purple pill with grayish text", () => {
 		const theme = {
 			fg: (color: string, text: string) => `<${color}>${text}`,
 			bold: (text: string) => `*${text}*`,
+			getFgAnsi: () => "\x1b[38;2;143;127;184m",
 		};
 		captureWithTheme(theme);
 		const tui = createTui(undefined);
 
-		showEntryChip(tui, 0, "480/482 tool");
+		showEntryChip(tui, 0, "tool :: 10/20");
 
 		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
-		expect(line).toContain("<thinkingHigh>*▌ 480/482 tool*");
+		expect(line).toContain("\x1b[48;2;143;127;184m");
+		expect(line).toContain("*<text> tool :: 10/20 *");
+		expect(line.endsWith("\x1b[49m")).toBe(true);
+		expect(line).not.toContain("\x1b[7m");
 	});
 
 	test("replaces the previous chip and hides it", () => {
@@ -400,8 +405,7 @@ describe("selection navigation", () => {
 		expect(getSelectedEntry()).toBe(chat.children[1]);
 	});
 
-	test("falls back to the scroll position when the selection is gone", () => {
-		const chat = createChat();
+	test("falls back to the scroll position when the selection is gone", () => {		const chat = createChat();
 		const scrollView = createScrollView(chat, 2);
 		const tui = createTui(scrollView);
 		setSelectedEntry(new ToolExecutionComponent());
@@ -409,6 +413,20 @@ describe("selection navigation", () => {
 		const outcome = selectAdjacentEntry(tui, 1);
 
 		expect(outcome.status === "moved" && outcome.result.index).toBe(2);
+	});
+
+	test("selects the first and last entry", () => {
+		const chat = createChat();
+		const scrollView = createScrollView(chat);
+		const tui = createTui(scrollView);
+
+		const last = selectEdgeEntry(tui, "last");
+		expect(last.status === "moved" && last.result).toMatchObject({ index: 2, label: "assistant", atEnd: true });
+
+		const first = selectEdgeEntry(tui, "first");
+		expect(first.status === "moved" && first.result).toMatchObject({ index: 0, label: "user", atStart: true });
+		expect(getSelectedEntry()).toBe(chat.children[0]);
+		expect(tui.overlayCalls.at(-1)?.component.render(80)[0]).toContain("user :: 1/3");
 	});
 
 	test("reports empty and unavailable transcripts", () => {
@@ -439,7 +457,7 @@ describe("selection toggle", () => {
 		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
 		expect(tool.expanded).toBe(true);
 		expect(tool.invalidations).toBe(1);
-		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("→ expanded");
+		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("tool :: 2/3 :: expanded");
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);
