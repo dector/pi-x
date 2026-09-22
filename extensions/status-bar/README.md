@@ -91,9 +91,9 @@ text is hidden while no tracker is active.
 - Every text field (`title`, `unit`, `label`, `phase`) is stripped of ANSI/OSC
   escapes and all C0/C1 controls by `sanitizeUntrustedProgressText` before
   rendering.
-- Placement: the text renders on its own line(s) directly above the status
-  bar's first line (line `-1`), between the input and the status bar. The first
-  status line is left untouched.
+- Placement: the text renders centered on its own line(s) directly above the
+  status bar's first line (line `-1`), between the input and the status bar.
+  The first status line is left untouched.
 - The text is shortened on very narrow screens (for example a phone):
   `Milestone` -> `M`, `Phase` -> `P`, `Step` -> `St`, and wrapped to at most
   three lines, with a trailing `...` when it still does not fit.

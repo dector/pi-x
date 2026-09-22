@@ -356,6 +356,13 @@ export function wrapProgressText(text: string, width: number, maxLines: number):
 	return [...head, tail];
 }
 
+/** Center an ANSI-styled progress line within `width` without trailing padding. */
+export function centerProgressLine(line: string, width: number): string {
+	const truncated = truncateToWidth(line, width, "");
+	const padding = Math.max(0, Math.floor((width - visibleWidth(truncated)) / 2));
+	return `${" ".repeat(padding)}${truncated}`;
+}
+
 /**
  * Footer lines for the progress text, rendered directly above the status bar's
  * first line (line `-1`). Prefers the full text, then the compact (abbreviated)
@@ -1880,7 +1887,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							width,
 							full: progressRow,
 							compact: formatProgressRow(progressStore.current, { compact: true }),
-						}).map(progressColor);
+						}).map((line) => centerProgressLine(progressColor(line), width));
 					}
 
 					const layout = activeLayout();

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { progressFooterLines, wrapProgressText } from "./index.ts";
+import { centerProgressLine, progressFooterLines, wrapProgressText } from "./index.ts";
 
 describe("wrapProgressText", () => {
 	test("wraps plain text to the requested width", () => {
@@ -18,6 +18,17 @@ describe("wrapProgressText", () => {
 	test("returns no lines for non-positive width or maxLines", () => {
 		expect(wrapProgressText("x", 0, 3)).toEqual([]);
 		expect(wrapProgressText("x", 10, 0)).toEqual([]);
+	});
+});
+
+describe("centerProgressLine", () => {
+	test("centers without trailing padding", () => {
+		expect(centerProgressLine("abc", 9)).toBe("   abc");
+	});
+
+	test("computes width ignoring ANSI codes", () => {
+		const centered = centerProgressLine("\u001b[35mabc\u001b[0m", 9);
+		expect(centered.startsWith("   \u001b[35m")).toBe(true);
 	});
 });
 
