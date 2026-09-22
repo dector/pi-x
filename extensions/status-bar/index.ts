@@ -284,7 +284,7 @@ interface FrameStatusEditorOptions {
 	progressColor?: (text: string) => string;
 	/** Confirmation guard used before an active agent operation is interrupted. */
 	interruptConfirmation: InterruptConfirmationGuard;
-	/** Muted theme color used for zero-valued border git stats. */
+	/** Pale-purple theme color used for zero-valued border git stats. */
 	mutedColor?: (text: string) => string;
 	/**
 	 * Color for the working highlight. `depth` 0 is the leading character
@@ -1794,7 +1794,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const relocatedGitRaw = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
 					const relocatedGit = hasVisibleText(relocatedGitRaw)
 						? decorateBorderGitStats(sanitizeStatusText(relocatedGitRaw), {
-								mute: (value) => theme.fg("muted", value),
+								mute: (value) => theme.fg("thinkingOff", value),
 							})
 						: undefined;
 					const mergeRelocated = (
@@ -1879,7 +1879,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				getOperationToken: () => activeContext().signal,
 				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),
 			}),
-			mutedColor: (text) => activeContext().ui.theme.fg("muted", text),
+			mutedColor: (text) => activeContext().ui.theme.fg("thinkingOff", text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));

@@ -146,8 +146,8 @@ labels are rendered in the frame corners:
   `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
   producer's `[ ]`/`|` markers and `+`/`-`/`M` prefixes are replaced by Nerd Font
   icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group also carries
-  the modified-file count. Zero values render in the muted theme color, non-zero
-  values keep the producer's colors. On narrow frames the compact split form drops
+  the modified-file count. Zero values render in pale purple (`thinkingOff`),
+  while non-zero values keep the producer's colors. On narrow frames the compact split form drops
   the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
   files group (`󰐖1󰍵2󰦓4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode

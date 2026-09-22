@@ -174,7 +174,7 @@ horizontal editor padding (`paddingX: 1`), and renders:
   ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The producer's `[ ]`/`|` and `+`/`-`/`M`
   prefixes are replaced by Nerd Font icons (additions `󰐖`, removals `󰍵`, modified
   `󰦓`); the files group also carries the modified-file count. Zero values render in
-  the muted theme color, non-zero values keep the producer's colors. On narrow
+  pale purple (`thinkingOff`), while non-zero values keep the producer's colors. On narrow
   frames the compact split form drops the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the
   changed-line group is dropped to keep the files group (`󰐖1󰍵2󰦓4`). The model label
   remains visible whenever it fits, and labels sharing the top edge need only one

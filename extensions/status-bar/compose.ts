@@ -104,8 +104,8 @@ function readGitCount(chunk: string | undefined, marker: string): number | undef
  *   `+1 -2 M4 · +150 -200` -> `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`
  *
  * Both groups reuse the addition/removal icons; the modified count only exists
- * in the files group. Zero values render muted (via `mute`); nonzero values keep
- * the producer's ANSI colors. `includeLineCounts: false` drops the line group
+ * in the files group. Zero values use the caller's subdued color (via `mute`);
+ * nonzero values keep the producer's ANSI colors. `includeLineCounts: false` drops the line group
  * for narrow frames.
  */
 export function decorateBorderGitStats(
