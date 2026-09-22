@@ -120,9 +120,11 @@ Integration contract (important):
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
-### 4) Toggle newest transcript entry (Alt+O)
+### 4) Transcript toggle and navigation (Alt+O, Alt+J, Alt+K)
 
 `Alt+O` toggles the newest collapsible transcript entry — the same effect as clicking that entry's result area. Nothing else is affected, unlike pi's built-in `Ctrl+O`, which expands or collapses every tool output at once.
+
+`Alt+J` and `Alt+K` scroll the transcript so the next or previous entry sits at the top of the viewport. Navigation covers every entry, collapsed or not. At the last entry `Alt+J` jumps to the transcript end, and at the first entry `Alt+K` jumps to the very top.
 
 Toggleable entries are the transcript components pi renders with an expanded/collapsed state:
 
@@ -132,9 +134,14 @@ Toggleable entries are the transcript components pi renders with an expanded/col
 - compaction and branch summaries
 - skill invocation messages
 
-Plain user and assistant text messages have no collapsed state in pi, so they are skipped: `Alt+O` always targets the newest toggleable entry above the editor. An entry can be toggled either way (expanded ⇄ collapsed), and a notification is shown only when no toggleable entry exists yet.
+Plain user and assistant text messages have no collapsed state in pi, so `Alt+O` skips them and always targets the newest toggleable entry; they are still reachable with `Alt+J`/`Alt+K`. An entry can be toggled either way (expanded ⇄ collapsed), and a notification is shown only when no toggleable entry exists yet.
 
-Implementation note: pi only exposes a single global expand flag to extensions, so `pi-ui` tracks collapsible entries by wrapping `Container.addChild`/`removeChild`/`clear`/`render` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. Rendering backfills entries that already existed when the extension loaded (startup, session restore, `/reload`). If pi renames those components, the shortcut stops finding entries (use `/px:pi-ui-expandable` to inspect what is tracked).
+Implementation notes:
+
+- pi only exposes a single global expand flag to extensions, so `pi-ui` tracks entries by wrapping `Container.addChild`/`removeChild`/`clear`/`render` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. Rendering backfills entries that already existed when the extension loaded (startup, session restore, `/reload`).
+- Navigation needs the transcript's `ScrollView`. `pi-ui` reads it through the alt-screen's primary scroll view (falling back to a walk of the layout tree) and computes each entry's line offset from the child heights recorded during the last render (`mouseLayout`), then calls `scrollTo(line)`.
+- The TUI reference comes from a hidden zero-height widget registered with `setWidget`, so no rendering changes.
+- Both features are coupled to pi internals: if pi renames those components or moves the scroll view, they degrade to a notification instead of doing the wrong thing (use `/px:pi-ui-expandable` to inspect tracked entries and scroll-view state). Fullscreen TUI mode is required for navigation.
 
 ## Configuration
 
@@ -156,11 +163,12 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 - `/px:pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
 - `/px:pi-ui-bell [on|off|toggle|status]` — control bell notifications
-- `/px:pi-ui-expandable` — show how many collapsible transcript entries are tracked, and the five newest
+- `/px:pi-ui-expandable` — show how many transcript entries are tracked, the five newest, and whether the transcript scroll view was found
 
 ### Shortcut
 
 - `Alt+O` — toggle the newest collapsible transcript entry (same as clicking it)
+- `Alt+J` / `Alt+K` — scroll to the next / previous transcript entry
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action

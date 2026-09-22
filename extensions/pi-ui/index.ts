@@ -26,18 +26,34 @@ const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 const TOGGLE_NEWEST_SHORTCUT = Key.alt("o");
+const NAV_NEXT_SHORTCUT = Key.alt("j");
+const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
 
 const EXPANDABLE_REGISTRY_KEY = "__pi_ui_expandable_registry_v1";
 const EXPANDABLE_PATCHED_METHODS_KEY = "__pi_ui_expandable_patched_methods_v1";
+const TUI_REFERENCE_KEY = "__pi_ui_tui_reference_v1";
+const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
 const MAX_TRACKED_EXPANDABLES = 1000;
 
 /**
- * Transcript entry components that pi renders with a collapsed/expanded state.
+ * Transcript entry components pi renders, used to recognise them by class name.
  * `isExpandable()` in interactive mode only checks for `setExpanded()`, which is
- * not enough to tell these entries apart from the startup header, so the known
- * component class names are used instead.
+ * not enough to tell entries apart from the startup header.
  */
-const EXPANDABLE_COMPONENT_NAMES = new Set([
+const TRACKED_ENTRY_COMPONENT_NAMES = new Set([
+	"ToolExecutionComponent",
+	"BashExecutionComponent",
+	"CustomMessageComponent",
+	"CustomEntryComponent",
+	"CompactionSummaryMessageComponent",
+	"BranchSummaryMessageComponent",
+	"SkillInvocationMessageComponent",
+	"AssistantMessageComponent",
+	"UserMessageComponent",
+]);
+
+/** Tracked entries pi can collapse and expand. */
+const EXPANDABLE_ENTRY_COMPONENT_NAMES = new Set([
 	"ToolExecutionComponent",
 	"BashExecutionComponent",
 	"CustomMessageComponent",
@@ -269,21 +285,41 @@ function padToVisibleWidth(text: string, width: number): string {
 	return `${finalText}${" ".repeat(width - textWidth)}`;
 }
 
-interface ExpandableEntry {
-	setExpanded(expanded: boolean): void;
+interface TrackedEntry {
+	setExpanded?(expanded: boolean): void;
 	invalidate?(): void;
+	render?(width: number): string[];
+	children?: unknown[];
+	mouseLayout?: { width: number; children: Array<{ component: unknown; height: number }> };
+	constructor?: { name?: string };
 }
 
-interface ExpandableRegistry {
-	entries: ExpandableEntry[];
+interface EntryRegistry {
+	entries: TrackedEntry[];
 	seen: WeakSet<object>;
 }
 
-function getExpandableRegistry(): ExpandableRegistry {
+/** The slice of pi-tui's `ScrollView` used to move the transcript. */
+export interface ScrollViewLike {
+	scrollTop: number;
+	viewportHeight: number;
+	scrollTo(top: number): void;
+	child?: unknown;
+	children?: unknown[];
+	primary?: boolean;
+}
+
+export interface EntryPosition {
+	component: TrackedEntry;
+	top: number;
+	height: number;
+}
+
+function getEntryRegistry(): EntryRegistry {
 	const globalAny = globalThis as Record<string, unknown>;
-	const existing = globalAny[EXPANDABLE_REGISTRY_KEY] as ExpandableRegistry | undefined;
+	const existing = globalAny[EXPANDABLE_REGISTRY_KEY] as EntryRegistry | undefined;
 	if (existing) return existing;
-	const created: ExpandableRegistry = { entries: [], seen: new WeakSet() };
+	const created: EntryRegistry = { entries: [], seen: new WeakSet() };
 	globalAny[EXPANDABLE_REGISTRY_KEY] = created;
 	return created;
 }
@@ -292,16 +328,24 @@ function componentClassName(component: object): string | undefined {
 	return (component as { constructor?: { name?: string } }).constructor?.name;
 }
 
-function isTrackedExpandable(component: unknown): component is ExpandableEntry {
+/** True for the transcript entry components pi renders in the chat container. */
+export function isTrackedEntry(component: unknown): component is TrackedEntry {
 	if (!component || typeof component !== "object") return false;
-	if (typeof (component as { setExpanded?: unknown }).setExpanded !== "function") return false;
 	const name = componentClassName(component);
-	return name !== undefined && EXPANDABLE_COMPONENT_NAMES.has(name);
+	return name !== undefined && TRACKED_ENTRY_COMPONENT_NAMES.has(name);
 }
 
-function registerExpandable(component: unknown): void {
-	if (!isTrackedExpandable(component)) return;
-	const registry = getExpandableRegistry();
+/** True for tracked entries with a collapsed/expanded state. */
+export function isExpandableEntry(component: unknown): component is TrackedEntry {
+	if (!isTrackedEntry(component)) return false;
+	if (typeof component.setExpanded !== "function") return false;
+	const name = componentClassName(component);
+	return name !== undefined && EXPANDABLE_ENTRY_COMPONENT_NAMES.has(name);
+}
+
+function registerEntry(component: unknown): void {
+	if (!isTrackedEntry(component)) return;
+	const registry = getEntryRegistry();
 	if (registry.seen.has(component)) return;
 	registry.seen.add(component);
 	registry.entries.push(component);
@@ -309,34 +353,34 @@ function registerExpandable(component: unknown): void {
 	if (overflow > 0) registry.entries.splice(0, overflow);
 }
 
-function registerExpandables(components: readonly unknown[]): void {
-	for (const component of components) registerExpandable(component);
+function registerEntries(components: readonly unknown[]): void {
+	for (const component of components) registerEntry(component);
 }
 
-function unregisterExpandables(components: readonly unknown[]): void {
-	const registry = getExpandableRegistry();
+function unregisterEntries(components: readonly unknown[]): void {
+	const registry = getEntryRegistry();
 	if (registry.entries.length === 0) return;
-	const dropped = new Set(components.filter(isTrackedExpandable));
+	const dropped = new Set(components.filter(isTrackedEntry));
 	if (dropped.size === 0) return;
 	for (const entry of dropped) registry.seen.delete(entry);
 	registry.entries = registry.entries.filter((entry) => !dropped.has(entry));
 }
 
-/** Forget tracked entries (used when a new session starts). */
-export function resetExpandableTracking(): void {
+/** Forget tracked entries. */
+export function resetEntryTracking(): void {
 	const globalAny = globalThis as Record<string, unknown>;
-	globalAny[EXPANDABLE_REGISTRY_KEY] = { entries: [], seen: new WeakSet() } satisfies ExpandableRegistry;
+	globalAny[EXPANDABLE_REGISTRY_KEY] = { entries: [], seen: new WeakSet() } satisfies EntryRegistry;
 }
 
 /**
- * Track transcript entries pi can collapse/expand, in display order.
+ * Track transcript entries in display order.
  *
- * pi keeps expansion state per entry but only exposes a single global toggle to
- * extensions, so entries are observed as containers add, drop, and render their
- * children. Rendering is what backfills entries that already existed when this
- * extension loaded (startup, session restore, `/reload`).
+ * pi keeps expansion state and transcript positions internally but only exposes
+ * a single global toggle to extensions, so entries are observed as containers
+ * add, drop, and render their children. Rendering is what backfills entries that
+ * already existed when this extension loaded (startup, session restore, `/reload`).
  */
-export function installExpandableTracking(): void {
+export function installEntryTracking(): void {
 	const globalAny = globalThis as Record<string, unknown>;
 	const installedRaw = globalAny[EXPANDABLE_PATCHED_METHODS_KEY];
 	const installed = installedRaw instanceof Set ? (installedRaw as Set<string>) : new Set<string>();
@@ -354,7 +398,7 @@ export function installExpandableTracking(): void {
 	if (!installed.has("addChild")) {
 		const originalAddChild = prototype.addChild;
 		prototype.addChild = function patchedAddChild(this: unknown, component: unknown) {
-			registerExpandable(component);
+			registerEntry(component);
 			return originalAddChild.call(this, component);
 		};
 		installed.add("addChild");
@@ -363,7 +407,7 @@ export function installExpandableTracking(): void {
 	if (!installed.has("removeChild")) {
 		const originalRemoveChild = prototype.removeChild;
 		prototype.removeChild = function patchedRemoveChild(this: unknown, component: unknown) {
-			unregisterExpandables([component]);
+			unregisterEntries([component]);
 			return originalRemoveChild.call(this, component);
 		};
 		installed.add("removeChild");
@@ -373,7 +417,7 @@ export function installExpandableTracking(): void {
 		const originalClear = prototype.clear;
 		prototype.clear = function patchedClear(this: unknown) {
 			const children = (this as { children?: unknown[] }).children;
-			if (Array.isArray(children) && children.length > 0) unregisterExpandables(children);
+			if (Array.isArray(children) && children.length > 0) unregisterEntries(children);
 			return originalClear.call(this);
 		};
 		installed.add("clear");
@@ -383,34 +427,196 @@ export function installExpandableTracking(): void {
 		const originalRender = prototype.render;
 		prototype.render = function patchedRender(this: unknown, width: number) {
 			const children = (this as { children?: unknown[] }).children;
-			if (Array.isArray(children) && children.length > 0) registerExpandables(children);
+			if (Array.isArray(children) && children.length > 0) registerEntries(children);
 			return originalRender.call(this, width);
 		};
 		installed.add("render");
 	}
 }
 
-function isEntryExpanded(entry: ExpandableEntry): boolean {
+function isEntryExpanded(entry: TrackedEntry): boolean {
 	const record = entry as unknown as Record<string, unknown>;
 	if (typeof record.expanded === "boolean") return record.expanded;
 	if (typeof record._expanded === "boolean") return record._expanded;
 	return false;
 }
 
-/** Names of tracked entries, oldest → newest (debug helper). */
-export function listTrackedExpandables(): string[] {
-	return getExpandableRegistry().entries.map((entry) => componentClassName(entry) ?? "entry");
+/** Class names of tracked entries, oldest → newest (debug helper). */
+export function listTrackedEntries(): string[] {
+	return getEntryRegistry().entries.map((entry) => componentClassName(entry) ?? "entry");
 }
 
-/** Toggle the newest tracked transcript entry, the same way clicking it would. */
+/** Toggle the newest tracked expandable entry, the same way clicking it would. */
 export function toggleNewestExpandable(): { name: string; expanded: boolean } | undefined {
-	const registry = getExpandableRegistry();
-	const entry = registry.entries[registry.entries.length - 1];
-	if (!entry) return undefined;
-	const expanded = !isEntryExpanded(entry);
-	entry.setExpanded(expanded);
-	entry.invalidate?.();
-	return { name: componentClassName(entry) ?? "entry", expanded };
+	const registry = getEntryRegistry();
+	for (let index = registry.entries.length - 1; index >= 0; index -= 1) {
+		const entry = registry.entries[index];
+		if (!isExpandableEntry(entry)) continue;
+		const expanded = !isEntryExpanded(entry);
+		entry.setExpanded?.(expanded);
+		entry.invalidate?.();
+		return { name: componentClassName(entry) ?? "entry", expanded };
+	}
+	return undefined;
+}
+
+function childRenderedHeight(component: TrackedEntry, width: number): number {
+	if (typeof component.render !== "function") return 0;
+	try {
+		return component.render(width).length;
+	} catch {
+		return 0;
+	}
+}
+
+function recordedChildHeights(container: TrackedEntry, width: number): number[] | undefined {
+	const layout = container.mouseLayout;
+	if (!layout || layout.width !== width || !Array.isArray(layout.children)) return undefined;
+	return layout.children.map((child) => child.height);
+}
+
+function collectEntryPositions(
+	container: TrackedEntry,
+	baseTop: number,
+	width: number,
+	out: EntryPosition[],
+): void {
+	const children = Array.isArray(container.children) ? container.children : [];
+	if (children.length === 0) return;
+	const recorded = recordedChildHeights(container, width);
+	let y = 0;
+	for (let index = 0; index < children.length; index += 1) {
+		const child = children[index] as TrackedEntry;
+		const height = recorded?.[index] ?? childRenderedHeight(child, width);
+		const top = baseTop + y;
+		if (isTrackedEntry(child)) {
+			out.push({ component: child, top, height });
+		} else {
+			collectEntryPositions(child, top, width, out);
+		}
+		y += height;
+	}
+}
+
+/** Display positions of transcript entries, top → bottom, in document lines. */
+export function computeEntryPositions(root: unknown, width: number): EntryPosition[] {
+	const positions: EntryPosition[] = [];
+	if (!root || typeof root !== "object" || width <= 0) return positions;
+	collectEntryPositions(root as TrackedEntry, 0, width, positions);
+	return positions;
+}
+
+/** Top offset of the first entry below the given scroll offset. */
+export function findNextEntryTop(positions: readonly EntryPosition[], scrollTop: number): number | undefined {
+	for (const position of positions) {
+		if (position.top > scrollTop) return position.top;
+	}
+	return undefined;
+}
+
+/** Top offset of the last entry above the given scroll offset. */
+export function findPreviousEntryTop(
+	positions: readonly EntryPosition[],
+	scrollTop: number,
+): number | undefined {
+	let previous: number | undefined;
+	for (const position of positions) {
+		if (position.top >= scrollTop) break;
+		previous = position.top;
+	}
+	return previous;
+}
+
+/** The TUI reference captured from a widget factory (see captureTuiReference). */
+export function getTuiReference(): unknown {
+	return (globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY];
+}
+
+/**
+ * Capture the live TUI instance through `setWidget`, whose factory receives it.
+ * The widget renders nothing; it only exists to obtain the reference.
+ */
+export function captureTuiReference(ctx: ExtensionContext): unknown {
+	if (ctx.hasUI) {
+		ctx.ui.setWidget(TUI_CAPTURE_WIDGET_KEY, (tui) => {
+			(globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY] = tui;
+			return { render: () => [], invalidate: () => {} };
+		});
+	}
+	return getTuiReference();
+}
+
+function isScrollViewLike(candidate: unknown): candidate is ScrollViewLike {
+	if (!candidate || typeof candidate !== "object") return false;
+	const record = candidate as Record<string, unknown>;
+	return (
+		typeof record.scrollTo === "function" &&
+		typeof record.scrollBy === "function" &&
+		typeof record.scrollTop === "number"
+	);
+}
+
+function findScrollViewLike(node: unknown, depth: number): ScrollViewLike | undefined {
+	if (!node || typeof node !== "object" || depth > 6) return undefined;
+	const children = (node as { children?: unknown[] }).children;
+	if (!Array.isArray(children)) return undefined;
+	for (const child of children) {
+		if (isScrollViewLike(child) && child.primary) return child;
+	}
+	for (const child of children) {
+		const found = findScrollViewLike(child, depth + 1);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+/** Locate the primary transcript scroll view (fullscreen alt-screen mode). */
+export function getTranscriptScrollView(tui: unknown): ScrollViewLike | undefined {
+	if (!tui || typeof tui !== "object") return undefined;
+	const candidate = tui as { getPrimaryScrollView?: () => unknown; layoutRoot?: unknown; children?: unknown[] };
+	if (typeof candidate.getPrimaryScrollView === "function") {
+		const primary = candidate.getPrimaryScrollView();
+		if (isScrollViewLike(primary)) return primary;
+	}
+	return findScrollViewLike(candidate.layoutRoot ?? candidate, 0);
+}
+
+function scrollContentWidth(scrollView: ScrollViewLike, tui: unknown): number {
+	const content = scrollView.child as TrackedEntry | undefined;
+	const recorded = content?.mouseLayout?.width;
+	if (typeof recorded === "number" && recorded > 0) return recorded;
+	const columns = (tui as { terminal?: { columns?: number } } | undefined)?.terminal?.columns;
+	return Math.max(1, (typeof columns === "number" ? columns : 80) - 1);
+}
+
+/**
+ * Move the transcript so the next (direction 1) or previous (direction -1) entry
+ * starts at the top of the viewport. Clamps to the document start and end.
+ */
+export function scrollToEntry(
+	tui: unknown,
+	direction: 1 | -1,
+): { index: number; total: number; name: string; top: number } | undefined {
+	const scrollView = getTranscriptScrollView(tui);
+	if (!scrollView || !scrollView.child) return undefined;
+	const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	if (positions.length === 0) return undefined;
+
+	const currentTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
+	const target = direction === 1 ? findNextEntryTop(positions, currentTop) : findPreviousEntryTop(positions, currentTop);
+	const top = target ?? (direction === 1 ? Number.MAX_SAFE_INTEGER : 0);
+	scrollView.scrollTo(top);
+
+	const index = positions.findIndex((position) => position.top === target);
+	if (index >= 0) {
+		return {
+			index,
+			total: positions.length,
+			name: componentClassName(positions[index]?.component ?? {}) ?? "entry",
+			top: target ?? top,
+		};
+	}
+	return { index: -1, total: positions.length, name: "start/end", top };
 }
 
 function patchLoaderWorkingSpinner(): void {
@@ -1394,7 +1600,7 @@ async function showHiDialog(
 export default function piUiExtension(pi: ExtensionAPI): void {
 	// Disabled: use pi's default busy indicator instead of pi-ui custom loader.
 	// patchLoaderWorkingSpinner();
-	installExpandableTracking();
+	installEntryTracking();
 
 	let minimumTrackLength = clamp(
 		parseIntEnv("PI_UI_WORKING_LENGTH", DEFAULT_MIN_TRACK_LENGTH),
@@ -1473,12 +1679,13 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		resetExpandableTracking();
+		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
@@ -1587,13 +1794,31 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerShortcut(NAV_NEXT_SHORTCUT, {
+		description: "Scroll the transcript to the next entry",
+		handler: async (ctx) => {
+			const result = scrollToEntry(captureTuiReference(ctx), 1);
+			if (!result) notify(ctx, "pi-ui: transcript navigation unavailable");
+		},
+	});
+
+	pi.registerShortcut(NAV_PREVIOUS_SHORTCUT, {
+		description: "Scroll the transcript to the previous entry",
+		handler: async (ctx) => {
+			const result = scrollToEntry(captureTuiReference(ctx), -1);
+			if (!result) notify(ctx, "pi-ui: transcript navigation unavailable");
+		},
+	});
+
 	pi.registerCommand("px:pi-ui-expandable", {
-		description: "Show the newest tracked expandable transcript entries: /px:pi-ui-expandable",
+		description: "Show tracked transcript entries and scroll-view status: /px:pi-ui-expandable",
 		handler: async (_args, ctx) => {
-			const tracked = listTrackedExpandables();
+			const tracked = listTrackedEntries();
 			const recent = tracked.slice(-5);
-			const suffix = recent.length > 0 ? ` (oldest → newest: ${recent.join(", ")})` : "";
-			notify(ctx, `pi-ui expandable: ${tracked.length} tracked${suffix}`);
+			const suffix = recent.length > 0 ? ` (newest: ${recent.join(", ")})` : "";
+			const scrollView = getTranscriptScrollView(captureTuiReference(ctx));
+			const scrollInfo = scrollView ? `scroll view ok (top ${Math.round(scrollView.scrollTop)})` : "no scroll view";
+			notify(ctx, `pi-ui entries: ${tracked.length} tracked${suffix} · ${scrollInfo}`);
 		},
 	});
 
