@@ -26,10 +26,6 @@ const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 
 const RESET_FG = "\x1b[39m";
-const ANSI_BOLD = "\x1b[1m";
-const ANSI_BOLD_OFF = "\x1b[22m";
-const ANSI_ITALIC = "\x1b[3m";
-const ANSI_ITALIC_OFF = "\x1b[23m";
 const BELL_CHAR = "\x07";
 const ESC = "\u001b";
 
@@ -366,12 +362,14 @@ type SessionEntry = {
 	message?: {
 		role?: string;
 		content?: unknown;
+		stopReason?: string;
 	};
 };
 
 type ContentBlock = {
 	type?: string;
 	text?: string;
+	textSignature?: string;
 };
 
 function extractTextParts(content: unknown): string[] {
@@ -411,6 +409,57 @@ function getUserPrompts(ctx: ExtensionContext): string[] {
 	return prompts;
 }
 
+function isCommentaryTextBlock(block: ContentBlock): boolean {
+	if (!block.textSignature) return false;
+	try {
+		const signature = JSON.parse(block.textSignature) as { phase?: unknown };
+		return signature.phase === "commentary";
+	} catch {
+		return false;
+	}
+}
+
+function extractFinalAssistantText(message: SessionEntry["message"]): string | undefined {
+	if (!message || message.role !== "assistant" || message.stopReason !== "stop") return undefined;
+	if (!Array.isArray(message.content)) return undefined;
+	if (message.content.some((block) => block && typeof block === "object" && (block as ContentBlock).type === "toolCall")) {
+		return undefined;
+	}
+
+	const parts: string[] = [];
+	for (const block of message.content) {
+		if (!block || typeof block !== "object") continue;
+		const textBlock = block as ContentBlock;
+		if (textBlock.type !== "text" || typeof textBlock.text !== "string") continue;
+		if (isCommentaryTextBlock(textBlock) || !textBlock.text.trim()) continue;
+		parts.push(textBlock.text);
+	}
+	const text = parts.join("\n").trim();
+	return text || undefined;
+}
+
+function getFinalAssistantResponses(ctx: ExtensionContext): string[] {
+	const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+	const responses: string[] = [];
+	let turnResponse: string | undefined;
+	let hasUserPrompt = false;
+
+	for (const entry of branch) {
+		if (entry?.type !== "message") continue;
+		if (entry.message?.role === "user") {
+			if (hasUserPrompt && turnResponse) responses.push(turnResponse);
+			hasUserPrompt = true;
+			turnResponse = undefined;
+			continue;
+		}
+		if (!hasUserPrompt) continue;
+		const finalText = extractFinalAssistantText(entry.message);
+		if (finalText) turnResponse = finalText;
+	}
+	if (hasUserPrompt && turnResponse) responses.push(turnResponse);
+	return responses;
+}
+
 function sanitizePreviewText(input: string): string {
 	// Strip ANSI escape sequences and control chars that can break layout width.
 	const withoutAnsi = input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1B[@-_]/g, "");
@@ -442,6 +491,7 @@ function wrapLineSoft(line: string, width: number): string[] {
 }
 
 function previewLinesSoftWrapped(text: string | undefined, maxLines: number, lineWidth: number): string[] {
+	if (maxLines <= 0) return [];
 	if (!text) return ["(none)"];
 
 	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -463,80 +513,140 @@ async function showPromptPreviewDialog(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 
 	const prompts = getUserPrompts(ctx);
-	const firstPrompt = prompts[0];
-	const latestPrompt = prompts[prompts.length - 1];
+	const responses = getFinalAssistantResponses(ctx);
+	type PromptTab = "prompts" | "first" | "responses";
+	const tabs: Array<{ id: PromptTab; label: string }> = [
+		{ id: "prompts", label: "User prompts" },
+		{ id: "first", label: "First prompt" },
+		{ id: "responses", label: "Agent responses" },
+	];
 
 	await ctx.ui.custom<void>(
-		(tui, _theme, _kb, done) => {
+		(tui, theme, _kb, done) => {
 			let closed = false;
+			let activeTabIndex = 1;
+			let promptOffset = 0;
+			let responseOffset = 0;
+			const textScroll: Record<PromptTab, number> = { prompts: 0, first: 0, responses: 0 };
 			const closeDialog = (): void => {
 				if (closed) return;
 				closed = true;
 				done();
 			};
-
-			type PreviewLine = { text: string; style?: "bold" | "italic" };
-			const renderSection = (innerWidth: number, title: string, lines: string[]): PreviewLine[] => {
-				const centeredTitle = centerLine(innerWidth, truncateToWidth(title, innerWidth, ""));
-				const output: PreviewLine[] = [{ text: centeredTitle, style: "bold" }];
-				for (const line of lines) {
-					output.push({ text: `  ${line}`, style: "italic" });
+			const activeTab = (): PromptTab => tabs[activeTabIndex]?.id ?? "first";
+			const moveHistory = (delta: number): void => {
+				const tab = activeTab();
+				if (tab === "prompts") {
+					const nextOffset = clamp(promptOffset + delta, 0, Math.max(0, prompts.length - 1));
+					if (nextOffset !== promptOffset) textScroll.prompts = 0;
+					promptOffset = nextOffset;
+				} else if (tab === "responses") {
+					const nextOffset = clamp(responseOffset + delta, 0, Math.max(0, responses.length - 1));
+					if (nextOffset !== responseOffset) textScroll.responses = 0;
+					responseOffset = nextOffset;
 				}
-				return output;
 			};
 
 			return {
 				render(width: number) {
-					if (width <= 2) return [];
-					const innerWidth = Math.max(1, width - 2);
-					const promptLineWidth = Math.max(1, innerWidth - 4);
-					const firstLines = previewLinesSoftWrapped(firstPrompt, 10, promptLineWidth);
-					const latestLines = previewLinesSoftWrapped(latestPrompt, 10, promptLineWidth);
-					const body: PreviewLine[] = [
-						...renderSection(innerWidth, "FIRST prompt:", firstLines),
-						{ text: "" },
-						{ text: "---" },
-						{ text: "" },
-						...renderSection(innerWidth, "LATEST prompt:", latestLines),
-					];
+					const maxDialogHeight = Math.floor(tui.terminal.rows * 0.85);
+					if (width < 12 || maxDialogHeight < 10) return [];
+					const frameWidth = Math.max(1, width - 2);
+					const contentWidth = Math.max(1, frameWidth - 2);
+					const border = (text: string): string => theme.fg("thinkingHigh", text);
+					const fit = (text: string): string => padToVisibleWidth(truncateToWidth(text, contentWidth, ""), contentWidth);
+					const frame = (text: string): string => ` ${border("┃")}${fit(text)}${border("┃")} `;
+					const titleText = truncateToWidth(" Prompt history ", Math.max(1, contentWidth - 3), "");
+					const topFill = "━".repeat(Math.max(0, contentWidth - visibleWidth(titleText) - 3));
+					const top = ` ${border("╭━╾")}${border(theme.bold(titleText))}${border(`╼${topFill}╮`)} `;
+					const tabText = tabs
+						.map((tab, index) => {
+							const label = ` ${tab.label} `;
+							return index === activeTabIndex ? border(theme.bold(`╾${label}╼`)) : theme.fg("dim", label);
+						})
+						.join("   ");
+
+					const tab = activeTab();
+					let selectedText: string | undefined;
+					let heading = "First user prompt";
+					let position = prompts.length > 0 ? "1 of 1" : "0 of 0";
+					if (tab === "prompts") {
+						selectedText = prompts[prompts.length - 1 - promptOffset];
+						heading = promptOffset === 0 ? "Latest user prompt" : `User prompt -${promptOffset}`;
+						position = prompts.length > 0 ? `${promptOffset + 1} of ${prompts.length}` : "0 of 0";
+					} else if (tab === "responses") {
+						selectedText = responses[responses.length - 1 - responseOffset];
+						heading = responseOffset === 0 ? "Latest agent response" : `Agent response -${responseOffset}`;
+						position = responses.length > 0 ? `${responseOffset + 1} of ${responses.length}` : "0 of 0";
+					} else {
+						selectedText = prompts[0];
+					}
+
+					const maxBodyLines = Math.max(0, maxDialogHeight - 10);
+					const textWidth = Math.max(1, contentWidth - 4);
+					const allBodyLines = previewLinesSoftWrapped(selectedText, Number.MAX_SAFE_INTEGER, textWidth);
+					const maxScroll = Math.max(0, allBodyLines.length - maxBodyLines);
+					textScroll[tab] = clamp(textScroll[tab], 0, maxScroll);
+					const bodyLines = allBodyLines.slice(textScroll[tab], textScroll[tab] + maxBodyLines);
+					const scrollPosition =
+						allBodyLines.length > maxBodyLines && maxBodyLines > 0
+							? ` · lines ${textScroll[tab] + 1}-${textScroll[tab] + bodyLines.length}/${allBodyLines.length}`
+							: "";
 					return [
-						`╔${"═".repeat(innerWidth)}╗`,
-						`║${centerLine(innerWidth, "Prompt Previews")}║`,
-						`║${"─".repeat(innerWidth)}║`,
-						...body.map((line) => {
-							const clipped = truncateToWidth(line.text, innerWidth, "");
-							const padded = padToVisibleWidth(clipped, innerWidth);
-							const styled =
-								line.style === "bold"
-									? `${ANSI_BOLD}${padded}${ANSI_BOLD_OFF}`
-									: line.style === "italic"
-										? `${ANSI_ITALIC}${padded}${ANSI_ITALIC_OFF}`
-										: padded;
-							return `║${styled}║`;
-						}),
-						`║${"─".repeat(innerWidth)}║`,
-						`║${centerLine(innerWidth, "Esc/Enter/q close")}║`,
-						`╚${"═".repeat(innerWidth)}╝`,
+						" ".repeat(width),
+						top,
+						frame(centerLine(contentWidth, tabText)),
+						` ${border(`┣${"━".repeat(contentWidth)}┫`)} `,
+						frame(` ${theme.bold(heading)}${" ".repeat(Math.max(1, contentWidth - visibleWidth(heading) - visibleWidth(position) - 2))}${theme.fg("dim", position)} `),
+						frame(""),
+						...bodyLines.map((line) => frame(`  ${theme.italic(line)}`)),
+						frame(""),
+						frame(theme.fg("dim", ` ←/→ tabs · ↑/PgUp older · ↓/PgDn newer · j/k scroll 5 lines${scrollPosition} · Esc/Enter/q close`)),
+						` ${border(`╰${"━".repeat(contentWidth)}╯`)} `,
+						" ".repeat(width),
 					];
 				},
-				invalidate() { },
+				invalidate() {},
 				handleInput(data: string) {
 					if (
-						matchesKey(data, Key.escape) ||
-						data === ESC ||
-						matchesKey(data, Key.enter) ||
-						matchesKey(data, Key.return) ||
-						data === "q" ||
-						data === "Q"
+						matchesKey(data, Key.escape) || data === ESC ||
+						matchesKey(data, Key.enter) || matchesKey(data, Key.return) ||
+						data === "q" || data === "Q" || matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)
 					) {
 						closeDialog();
 						return;
 					}
-					if (matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) {
-						closeDialog();
+					if (matchesKey(data, Key.left) || data === "h" || data === "H") {
+						activeTabIndex = (activeTabIndex - 1 + tabs.length) % tabs.length;
+						tui.requestRender();
 						return;
 					}
-					tui.requestRender();
+					if (matchesKey(data, Key.right) || data === "l" || data === "L") {
+						activeTabIndex = (activeTabIndex + 1) % tabs.length;
+						tui.requestRender();
+						return;
+					}
+					if (matchesKey(data, Key.up) || matchesKey(data, Key.pageUp)) {
+						moveHistory(1);
+						tui.requestRender();
+						return;
+					}
+					if (matchesKey(data, Key.down) || matchesKey(data, Key.pageDown)) {
+						moveHistory(-1);
+						tui.requestRender();
+						return;
+					}
+					if (data === "k" || data === "K") {
+						const tab = activeTab();
+						textScroll[tab] = Math.max(0, textScroll[tab] - 5);
+						tui.requestRender();
+						return;
+					}
+					if (data === "j" || data === "J") {
+						const tab = activeTab();
+						textScroll[tab] += 5;
+						tui.requestRender();
+					}
 				},
 			};
 		},
@@ -546,7 +656,7 @@ async function showPromptPreviewDialog(ctx: ExtensionContext): Promise<void> {
 				anchor: "center",
 				width: "100%",
 				minWidth: 40,
-				maxHeight: "80%",
+				maxHeight: "85%",
 				margin: 1,
 			},
 		},
@@ -740,7 +850,7 @@ async function showHiDialog(
 					{
 						hotkey: "p",
 						hotkeyAliases: ["P"],
-						label: "Preview prompts",
+						label: "Prompt history",
 						showStatusBadge: false,
 						isEnabled: () => true,
 						closeAfterRun: false,
