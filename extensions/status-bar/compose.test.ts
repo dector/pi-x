@@ -17,6 +17,7 @@ import {
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
+	formatRewireStatusLabel,
 	hasVisibleText,
 	sanitizeStatusText,
 	styleSafeModeLabel,
@@ -57,6 +58,26 @@ describe("pure text helpers", () => {
 		expect(hasVisibleText(undefined)).toBe(false);
 		expect(hasVisibleText("   ")).toBe(false);
 		expect(hasVisibleText("x")).toBe(true);
+	});
+
+	test("formats the rewire target with provider and model aliases", () => {
+		expect(
+			formatRewireStatusLabel(
+				"openai-codex/gpt-5.6-sol",
+				"high",
+				{ "openai-codex": "cdx" },
+				{ "gpt-5.6-sol": "5.6-sol" },
+			),
+		).toBe("󰒍 cdx/5.6-sol · high");
+	});
+
+	test("keeps full unaliased model names and supports provider-less ids", () => {
+		expect(formatRewireStatusLabel("anthropic/claude-sonnet", "medium")).toBe(
+			"󰒍 anthropic/claude-sonnet · medium",
+		);
+		expect(formatRewireStatusLabel("local-model", "off", {}, { "local-model": "local" })).toBe(
+			"󰒍 local · off",
+		);
 	});
 
 	test("compactFrameLabel removes value spacing without damaging ANSI colors", () => {

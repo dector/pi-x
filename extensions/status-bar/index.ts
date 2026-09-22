@@ -37,6 +37,7 @@ import {
 	type StatusBarFirstLineSetPayload,
 	type StatusBarLayout,
 	type StatusBarPingPayload,
+	type StatusBarRewireSetPayload,
 	type StatusBarRowClearPayload,
 	type StatusBarRowSetPayload,
 	type StatusBarSection,
@@ -56,6 +57,7 @@ import {
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
 	FRAME_RIGHT_CORNER_CLOSE,
+	formatRewireStatusLabel,
 	hasVisibleText,
 	sanitizeStatusText,
 } from "./compose";
@@ -76,6 +78,8 @@ const CONTEXT_WATCHER_IDS = {
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
 const REPO_STATS_ID = "repo-stats";
+const REWIRE_STATUS_ID = "subagent-rewire";
+const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dash kept between labels (or beside a lone label).
 const MIN_CORNER_LABEL_GAP = 1;
@@ -922,6 +926,17 @@ function isFirstLineClearPayload(value: unknown): value is StatusBarFirstLineCle
 	return typeof maybe.id === "string";
 }
 
+function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarRewireSetPayload>;
+	return (
+		typeof maybe.model === "string" &&
+		maybe.model.trim().length > 0 &&
+		typeof maybe.thinkingLevel === "string" &&
+		maybe.thinkingLevel.trim().length > 0
+	);
+}
+
 function isPingPayload(value: unknown): value is StatusBarPingPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<StatusBarPingPayload>;
@@ -1514,6 +1529,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	const rowById = new Map<string, RowEntry>();
 	let firstLineOrderCounter = 0;
 	let rowOrderCounter = 0;
+	let rewireTarget: StatusBarRewireSetPayload | undefined;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
 	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
@@ -1563,8 +1579,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		section: StatusBarSection,
 		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
 		attensionCoreSuffix?: string,
+		rewireContent?: string,
 	): string | undefined => {
-		const items = [...firstLineById.entries()]
+		const entries = [...firstLineById.entries()];
+		if (section === "right" && hasVisibleText(rewireContent)) {
+			entries.push([
+				REWIRE_STATUS_ID,
+				{
+					content: rewireContent,
+					section: "right",
+					priority: REWIRE_FIRST_LINE_PRIORITY,
+					order: Number.MAX_SAFE_INTEGER,
+				},
+			]);
+		}
+		const items = entries
 			.filter(
 				([id, entry]) =>
 					entry.section === section && hasVisibleText(entry.content) && !isFirstLineSuppressed(id),
@@ -1583,6 +1612,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	const hasFirstLineContent = (): boolean => {
+		if (rewireTarget) return true;
 		for (const [id, entry] of firstLineById.entries()) {
 			if (hasVisibleText(entry.content) && !isFirstLineSuppressed(id)) return true;
 		}
@@ -1658,7 +1688,23 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						const producerLeft = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
 						const left = producerLeft ?? (hasAttensionCore ? undefined : defaultFirstLine);
 						const center = renderFirstLineSection("center", firstLineJoinSeparator, attensionCoreSuffix);
-						const producerRight = renderFirstLineSection("right", firstLineJoinSeparator, attensionCoreSuffix);
+						const rewireContent = rewireTarget
+							? theme.fg(
+									"error",
+									formatRewireStatusLabel(
+										rewireTarget.model,
+										rewireTarget.thinkingLevel,
+										providerAliases,
+										modelAliases,
+									),
+								)
+							: undefined;
+						const producerRight = renderFirstLineSection(
+							"right",
+							firstLineJoinSeparator,
+							attensionCoreSuffix,
+							rewireContent,
+						);
 						const right = firstLineTokenLabel
 							? producerRight
 								? `${producerRight}${firstLineJoinSeparator}${firstLineTokenLabel}`
@@ -1928,6 +1974,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.events.on(STATUS_BAR_EVENTS.firstLineClear, (payload) => {
 		if (!isFirstLineClearPayload(payload)) return;
 		firstLineById.delete(payload.id);
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.rewireSet, (payload) => {
+		if (!isRewireSetPayload(payload)) return;
+		rewireTarget = { model: payload.model.trim(), thinkingLevel: payload.thinkingLevel.trim() };
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.rewireClear, () => {
+		rewireTarget = undefined;
 		requestRender();
 	});
 

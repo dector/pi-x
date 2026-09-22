@@ -173,6 +173,9 @@ const HUB_ASK_EVENT = "hub:ask";
 const HUB_ANSWER_EVENT = "hub:answer";
 const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 
+const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
+const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
+
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -779,6 +782,16 @@ export default function (pi: ExtensionAPI) {
 					thinkingLevel: ctx.thinkingLevel ?? "off",
 				}
 			: undefined;
+	const publishRewireStatus = (): void => {
+		if (rewireConfig?.enabled) {
+			pi.events.emit(STATUS_BAR_REWIRE_SET_EVENT, {
+				model: rewireConfig.model,
+				thinkingLevel: rewireConfig.thinkingLevel,
+			});
+			return;
+		}
+		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
+	};
 	const defaultRewireConfigWithPreset = async (
 		ctx: ExtensionContext,
 	): Promise<SubagentRewireConfig | undefined> => {
@@ -809,6 +822,7 @@ export default function (pi: ExtensionAPI) {
 			if (oldest === undefined) break;
 			rewireSessionStates.delete(oldest);
 		}
+		publishRewireStatus();
 	};
 	// Session-scoped abort signal and in-flight dispatch tracking. Together they
 	// let shutdown abort and await blocking runs before disposing the owned tab,
@@ -1654,6 +1668,7 @@ export default function (pi: ExtensionAPI) {
 		shuttingDown = false;
 		const storedRewire = rewireSessionStates.get(ctx.sessionManager.getSessionId());
 		rewireConfig = storedRewire ? { ...storedRewire } : await defaultRewireConfigWithPreset(ctx);
+		publishRewireStatus();
 		sessionEpoch += 1;
 		sessionShutdown = new AbortController();
 		herdrPreflightInFlight.reset();
@@ -1679,6 +1694,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		sessionContext = ctx;
+		publishRewireStatus();
 		// The tree can re-render with the same active set, so reset the dedup
 		// state and force a republish instead of skipping an identical snapshot.
 		activeWidget.reset();
@@ -1689,6 +1705,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
 		// Order matters: flip the shutdown flag, abort detached controllers,
 		// terminate active RPC children, await settled dispatch promises, then
 		// clear runtime state. Completion delivery is suppressed by the manager

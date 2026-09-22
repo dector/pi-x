@@ -54,6 +54,9 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - In `new` display mode the git branch carries the border branch icon inside the
   parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
   mode keeps the plain `~/pi-x (trunk)` form.
+- When session rewiring is enabled, the first-line right section shows a red
+  `󰒍 <provider>/<model> · <effort>` immediately before the skills counter. Provider
+  and model aliases are applied, for example `󰒍 cdx/5.6-sol · high`.
 - `new` display mode appends the context token breakdown to the first-line right
   section, after the producer items (that is, after the skills `󰐱 n/m` counter
   when present). It is prefixed with the total-usage icon and omits the cost
@@ -263,8 +266,9 @@ in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
 ```
 
 - `providerAliases`: `ctx.model.provider` -> short label. Applied to the border label only.
-- `modelAliases`: `ctx.model.id` -> short label. Applied wherever the model is shown
-  (border and legacy `context-watcher-model`).
+- `modelAliases`: model id -> short label. Applied wherever the model is shown
+  (border, legacy `context-watcher-model`, and the rewiring indicator).
+- The rewiring indicator also applies `providerAliases` to its provider id.
 - Missing keys fall back to the raw provider/model id.
 - Loaded at session start; edit the file and restart/reload to apply.
 

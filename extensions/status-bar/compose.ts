@@ -199,6 +199,23 @@ export function hasVisibleText(value?: string): value is string {
 // unadorned token breakdown.
 export const BORDER_BRANCH_ICON = "\ueafe ";
 export const BORDER_TOTAL_USAGE_ICON = "\u{000f04e1} ";
+export const REWIRE_ICON = "󰒍 ";
+
+/** Format the active subagent rewire target with the status bar's exact-name aliases. */
+export function formatRewireStatusLabel(
+	model: string,
+	thinkingLevel: string,
+	providerAliases: Readonly<Record<string, string>> = {},
+	modelAliases: Readonly<Record<string, string>> = {},
+): string {
+	const separator = model.indexOf("/");
+	const provider = separator === -1 ? undefined : model.slice(0, separator);
+	const modelId = separator === -1 ? model : model.slice(separator + 1);
+	const modelLabel = modelAliases[modelId] ?? modelId;
+	const providerLabel = provider ? (providerAliases[provider] ?? provider) : undefined;
+	const target = providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
+	return `${REWIRE_ICON}${target} · ${thinkingLevel}`;
+}
 
 /** Append the git branch to the cwd path with the border-mode branch icon. */
 export function decorateBorderPathBranch(args: { path: string; branch?: string }): string {
