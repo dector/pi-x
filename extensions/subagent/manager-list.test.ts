@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_MANAGER_LIST_VISIBLE,
+	MANAGER_LIST_EMPTY,
 	MANAGER_LIST_HELP,
 	MANAGER_LIST_TITLE,
 	ManagerListView,
@@ -341,6 +342,15 @@ describe("ManagerListView", () => {
 		for (let index = 0; index < items.length - 1; index++) view.handleInput(DOWN);
 		const last = view.render(80).join("\n");
 		expect(last).toContain(`(${items.length}/${items.length})`);
+	});
+
+	test("renders the window with a muted empty message when there are no items", () => {
+		const { view } = makeView([]);
+		const lines = view.render(120);
+		const text = lines.join("\n");
+		expect(text).toContain(MANAGER_LIST_TITLE);
+		expect(text).toContain(MANAGER_LIST_EMPTY);
+		expect(view.selectedItem).toBeUndefined();
 	});
 
 	test("renders a batch header with dispatch, execution, count, and summary", () => {

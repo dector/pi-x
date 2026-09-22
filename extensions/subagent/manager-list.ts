@@ -32,6 +32,7 @@ import {
 
 export const MANAGER_LIST_TITLE = "Subagent manager";
 export const MANAGER_LIST_HELP = "↑↓ or j/k move • enter actions • d attach • D detach • esc close";
+export const MANAGER_LIST_EMPTY = "No agents running…";
 export const DEFAULT_MANAGER_LIST_VISIBLE = 12;
 
 /** Structural subset the list needs from a manager entry. */
@@ -133,6 +134,8 @@ export interface ManagerListViewOptions<T extends ManagerListItemLike> {
 	/** Injectable clock for deterministic elapsed labels. */
 	now?: () => number;
 	maxVisible?: number;
+	/** Shown in place of the list when there are no items. */
+	emptyMessage?: string;
 }
 
 export class ManagerListView<T extends ManagerListItemLike> implements Component {
@@ -221,6 +224,16 @@ export class ManagerListView<T extends ManagerListItemLike> implements Component
 		const lines: string[] = [border, "", truncateToWidth(` ${theme.fg("accent", theme.bold(MANAGER_LIST_TITLE))}`, w)];
 		if (this.summary) lines.push(truncateToWidth(` ${theme.fg("dim", this.summary)}`, w));
 		lines.push("");
+
+		if (this.rows.length === 0) {
+			const empty = this.options.emptyMessage ?? MANAGER_LIST_EMPTY;
+			lines.push(truncateToWidth(` ${theme.fg("muted", empty)}`, w));
+			lines.push("");
+			lines.push(truncateToWidth(` ${theme.fg("dim", MANAGER_LIST_HELP)}`, w));
+			lines.push("");
+			lines.push(border);
+			return lines;
+		}
 
 		const { start, end } = this.visibleRange();
 		for (let index = start; index < end; index++) {

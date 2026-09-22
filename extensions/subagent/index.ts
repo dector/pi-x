@@ -1632,10 +1632,6 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI) return;
 			while (true) {
 				const items = managerItems(ctx);
-				if (items.length === 0) {
-					ctx.ui.notify("No subagent runs yet.", "info");
-					return;
-				}
 				const result = await ctx.ui.custom<ManagerListResult>((tui, theme, keybindings, done) =>
 					new ManagerListView<ManagerItem>({
 						items,
