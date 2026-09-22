@@ -3,10 +3,8 @@
 // Kept free of pi runtime and TUI imports so `index.ts` can wire them to real
 // themes and tests can assert complete rendered strings. `network.ts` owns the
 // state/token contract; these helpers own the surface ordering rules, including
-// the rule that safe mode and the network token always share one label joined
-// by exactly ` · ` even when surrounding items switch to the compact separator.
-
-import { joinSafeModeAndNetwork } from "./network";
+// the rule that policy indicators share one label joined by exactly ` · ` even
+// when surrounding items switch to the compact separator.
 
 /**
  * Border bridge between two labels that share the bottom edge. The outer cells
@@ -27,6 +25,15 @@ export const FRAME_RIGHT_CORNER_CLOSE = " ╼━";
 
 export function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
+}
+
+/** Append the review icon after model effort with a frame-colored separator. */
+export function composeTopLeftModelReview(
+	modelLabel: string,
+	reviewLabel: string | undefined,
+	borderColor: (text: string) => string,
+): string {
+	return hasVisibleText(reviewLabel) ? `${modelLabel}${borderColor(` · ${reviewLabel}`)}` : modelLabel;
 }
 
 // Border-only status icons (Nerd Font). Each keeps a trailing space so the
@@ -386,9 +393,12 @@ function joinStatusPolicyGroup(
 	subagent: string | undefined,
 	separator: (text: string) => string,
 ): string | undefined {
-	const base = joinSafeModeAndNetwork(safeMode, network, separator);
-	if (!subagent) return base;
-	return base ? `${base}${separator(" · ")}${subagent}` : subagent;
+	let group: string | undefined;
+	for (const item of [safeMode, network, subagent]) {
+		if (!item) continue;
+		group = group ? `${group}${separator(" · ")}${item}` : item;
+	}
+	return group;
 }
 
 export function composeSafeModeNetworkGroup(args: {
@@ -426,7 +436,7 @@ export interface LegacyLeftSectionArgs {
 	getContent: (id: string) => string | undefined;
 	networkLabel?: string;
 	subagentLabel?: string;
-	/** Already themed ` · ` used only between safe mode and the network token. */
+	/** Already themed ` · ` used inside the policy-indicator group. */
 	networkSeparator: string;
 	/** Generic separator between section items (compact under crowded widths). */
 	itemSeparator: string;
@@ -436,8 +446,8 @@ export interface LegacyLeftSectionArgs {
 
 /**
  * Compose the status-line left section. The safe-mode item is replaced in place
- * by the `safe · network` group (a single override), so the network token always
- * follows safe mode immediately and is never joined by the compact separator.
+ * by the `safe · network · subagent` group (a single override), so its internal
+ * separators never collapse under compact layout.
  */
 export function composeLegacyLeftSection(args: LegacyLeftSectionArgs): string | undefined {
 	const overrides = new Map<string, string | undefined>(args.overrides);

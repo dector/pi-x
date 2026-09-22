@@ -7,6 +7,7 @@ import {
 	composeLegacyLeftSection,
 	composeSafeModeNetworkGroup,
 	composeSectionItems,
+	composeTopLeftModelReview,
 	decorateBorderContextLabel,
 	decorateBorderGitStats,
 	decorateBorderPathBranch,
@@ -108,6 +109,20 @@ describe("pure text helpers", () => {
 		expect(decorateBorderSafeModeLabel("PARANOID", border)).toBe("󰕥 PARANOID");
 		expect(decorateBorderSafeModeLabel("\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m", border)).toBe(
 			"\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m",
+		);
+	});
+});
+
+describe("top-left model/review composition", () => {
+	test("appends review after model effort with a border-colored separator", () => {
+		expect(composeTopLeftModelReview("󰙴 cdx/5.6-sol · high", "󰡬 ", border)).toBe(
+			"󰙴 cdx/5.6-sol · high« · 󰡬 »",
+		);
+	});
+
+	test("keeps the model label unchanged when review is absent", () => {
+		expect(composeTopLeftModelReview("󰙴 cdx/5.6-sol · high", undefined, border)).toBe(
+			"󰙴 cdx/5.6-sol · high",
 		);
 	});
 });

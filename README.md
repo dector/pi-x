@@ -13,6 +13,7 @@ This repo currently contains the following extension(s):
 | [`status-bar`](extensions/status-bar/README.md) | **Required shared dependency** for other status-producing extensions in this repo. Install this first. | |
 | [`no-reflection`](extensions/no-reflection/README.md) | Removes pi's built-in documentation reference block from the agent system prompt without dumping the prompt anywhere. Disable with `PI_NO_REFLECTION=false`, `no`, `n`, or `0`. | |
 | [`switch-thinking`](extensions/switch-thinking/README.md) | Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. | `status-bar` |
+| [`review-level`](extensions/review-level/README.md) | Adds `/px:review` with session-scoped `auto`, `off`, `minimal`, `normal`, and `high` review recommendations, injects explicit guidance into the agent prompt, and shows an eye icon in the editor border. | `status-bar` |
 | [`safe-mode`](extensions/safe-mode/README.md) | Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. | `status-bar`, `bash-parser` |
 | [`permissions-core`](extensions/permissions-core/README.md) | Headless network permission provider: validates and classifies `perm:net` requests and owns the session network policy (Auto, explicit, PARANOID). | `hub` |
 | [`permissions-ui`](extensions/permissions-ui/README.md) | Adds the `/px:net` selector to configure the network policy through permissions-core. | `permissions-core` |

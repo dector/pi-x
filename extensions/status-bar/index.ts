@@ -39,6 +39,8 @@ import {
 	type StatusBarLayout,
 	type StatusBarPingPayload,
 	type StatusBarRewireSetPayload,
+	type StatusBarReviewLevel,
+	type StatusBarReviewLevelSetPayload,
 	type StatusBarSubagentDepthSetPayload,
 	type StatusBarRowClearPayload,
 	type StatusBarRowSetPayload,
@@ -51,6 +53,7 @@ import {
 	chooseTopBorderSegments,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
+	composeTopLeftModelReview,
 	composeSectionItems,
 	decorateBorderContextCost,
 	decorateBorderGitStats,
@@ -86,6 +89,13 @@ const REPO_STATS_ID = "repo-stats";
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
 const SUBAGENT_DEPTH_ICON = "󰚩";
+const REVIEW_LEVEL_ICONS: Record<StatusBarReviewLevel, string> = {
+	auto: "󰈈",
+	off: "󰛑",
+	minimal: "󱀧",
+	normal: "󰛐",
+	high: "󰡬",
+};
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dash kept between labels (or beside a lone label).
 const MIN_CORNER_LABEL_GAP = 1;
@@ -284,6 +294,8 @@ interface FrameStatusEditorOptions {
 	bottomLeftSubagent?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
+	/** Recommended review level, rendered after the top-left model effort. */
+	topLeftReview?: FrameStatusProvider;
 	/** Top-right corner label (git dirty totals). */
 	topRight?: FrameStatusProvider;
 	/** Bottom-right corner label (unsent message token size). Receives the current editor text. */
@@ -406,6 +418,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
 	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
+	private readonly topLeftReviewProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly bottomRightProvider?: (text: string) => string | undefined;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
@@ -431,6 +444,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
 		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
 		this.topLeftProvider = options.topLeft;
+		this.topLeftReviewProvider = options.topLeftReview;
 		this.topRightProvider = options.topRight;
 		this.bottomRightProvider = options.bottomRight;
 		this.relocatedLabels = options.relocatedLabels;
@@ -553,8 +567,8 @@ class FrameStatusEditor extends CustomEditor {
 	 * Top-left corner label: model plus effort inset from the corner by `━━ `.
 	 * While streaming the label runs the configured animation.
 	 */
-	private topLeftSegment(label: string): string {
-		const body = this.renderModelLabel(label);
+	private topLeftSegment(label: string, reviewLabel?: string): string {
+		const body = composeTopLeftModelReview(this.renderModelLabel(label), reviewLabel, (text) => this.borderColor(text));
 		return `${this.borderColor(FRAME_LEFT_CORNER_OPEN)}${body}${this.borderColor(FRAME_LABEL_CLOSE)}`;
 	}
 
@@ -663,13 +677,15 @@ class FrameStatusEditor extends CustomEditor {
 		// alone does not fit, the model still wins and the totals relocate.
 		const fullModelLabel = this.topLeftLabel(false);
 		const compactModelLabel = this.topLeftLabel(true);
+		const reviewLabel = this.topLeftReviewProvider?.();
+		const reviewSuffix = hasVisibleText(reviewLabel) ? ` · ${reviewLabel}` : "";
 		// Measure uncolored placeholders so only the selected model variant runs
 		// through the stateful working animation renderer.
 		const fullModelPlaceholder = fullModelLabel
-			? `${FRAME_LEFT_CORNER_OPEN}${fullModelLabel}${FRAME_LABEL_CLOSE}`
+			? `${FRAME_LEFT_CORNER_OPEN}${fullModelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
 			: "";
 		const compactModelPlaceholder = compactModelLabel
-			? `${FRAME_LEFT_CORNER_OPEN}${compactModelLabel}${FRAME_LABEL_CLOSE}`
+			? `${FRAME_LEFT_CORNER_OPEN}${compactModelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
 			: "";
 		const fullRightSegment = this.topRightSegment();
 		const chosen = chooseTopBorderSegments({
@@ -690,7 +706,7 @@ class FrameStatusEditor extends CustomEditor {
 				: chosen.left === compactModelPlaceholder
 					? compactModelLabel
 					: undefined;
-		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel) : "";
+		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel) : "";
 		const rightSegment = chosen.right;
 
 		const candidates: Array<[string, string]> = [
@@ -1094,6 +1110,18 @@ function renderSubagentDepthLabel(depth: number, theme: ExtensionContext["ui"]["
 	if (depth < 0) return theme.fg("muted", text);
 	if (depth === 0) return theme.fg("text", text);
 	return theme.fg("warning", text);
+}
+
+export function isReviewLevelSetPayload(value: unknown): value is StatusBarReviewLevelSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const level = (value as Partial<StatusBarReviewLevelSetPayload>).level;
+	return typeof level === "string" && Object.hasOwn(REVIEW_LEVEL_ICONS, level);
+}
+
+export function formatReviewLevelLabel(level: StatusBarReviewLevel): string | undefined {
+	// Keep the Auto glyph mapping above: we may make the implicit/default state visible again later.
+	if (level === "auto") return undefined;
+	return `${REVIEW_LEVEL_ICONS[level]} `;
 }
 
 function isPingPayload(value: unknown): value is StatusBarPingPayload {
@@ -1690,6 +1718,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let rowOrderCounter = 0;
 	let rewireTarget: StatusBarRewireSetPayload | undefined;
 	let subagentDepth: number | undefined;
+	let reviewLevel: StatusBarReviewLevel | undefined;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
 	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
@@ -1902,9 +1931,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						networkResolution?.surface === "status-line" ? networkResolution.label : undefined;
 					const subagentStatusLabel =
 						subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, theme);
-					// Safe mode and the network token always share one item joined by exactly
-					// ` · ` (here `networkSeparator`), so a crowded line switching to the compact
-					// separator cannot collapse that dot.
+					// Policy indicators share one item joined by exactly ` · ` (here
+					// `networkSeparator`), so a crowded line switching to the compact separator
+					// cannot collapse those dots.
 					const renderLeft = (
 						itemSeparator: string,
 						extraOverrides?: Map<string, string | undefined>,
@@ -2007,6 +2036,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					pi.getThinkingLevel(),
 					opts?.compact ?? false,
 				),
+			topLeftReview: () =>
+				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
 			bottomRight: (text) =>
 				buildMessageSizeLabel(text, activeContext().ui.theme, collectImageTokens(text, activeContext().cwd)),
@@ -2123,6 +2154,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		networkStore.deactivate();
 		progressStore.deactivate();
 		subagentDepth = undefined;
+		reviewLevel = undefined;
 		requestFooterRender = undefined;
 	});
 
@@ -2176,6 +2208,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.subagentDepthClear, () => {
 		subagentDepth = undefined;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.reviewLevelSet, (payload) => {
+		if (!isReviewLevelSetPayload(payload)) return;
+		reviewLevel = payload.level;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.reviewLevelClear, () => {
+		reviewLevel = undefined;
 		requestRender();
 	});
 

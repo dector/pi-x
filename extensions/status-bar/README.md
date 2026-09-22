@@ -38,6 +38,16 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - Item delimiter inside a section: ` · `
 - Section delimiter: two spaces (`  `)
 
+### Review-level indicator
+
+- `px:status-bar:review-level:set` with `{ level }`, where `level` is `auto`,
+  `off`, `minimal`, `normal`, or `high`.
+- `px:status-bar:review-level:clear` removes the indicator.
+- In `new` mode explicit levels render the corresponding icon in the top-left
+  model label, immediately after effort with a frame-colored ` · ` separator:
+  off `󰛑`, minimal `󱀧`, normal `󰛐`, or high `󰡬`. Auto is hidden.
+- Every visible review icon uses the same frame-border purple and keeps an explicit trailing space.
+
 ### First line sections
 
 - Sections: `left`, `center`, `right`
@@ -141,9 +151,9 @@ labels are rendered in the frame corners:
   light/heavy half cell, so the light half always faces the text: `╾` when the
   line runs into a label, `╼` when it leaves one. Two labels sharing the
   bottom-left edge are bridged the same way on both ends:
-  `╰━╾ <safe-mode> · <network> ╼━╾ <context> ╼━━━╯`.
-  Safe mode and the network token always share one label and keep the spaced
-  ` · ` separator even when the status line is crowded.
+  `╰━╾ <safe-mode> · <network> · <subagents> ╼━╾ <context> ╼━━━╯`.
+  Policy indicators share one label and keep the spaced ` · ` separators even
+  when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - Pressing the configured interrupt key (Escape by default) while an agent operation is active opens a `y/n` confirmation instead of aborting immediately. Declining (or pressing Escape again) keeps the operation running, and idle Escape behavior is unchanged.
 - **top-right** — git dirty totals from `repo-stats`, rendered as two icon groups,
@@ -196,7 +206,11 @@ labels are rendered in the frame corners:
   Rendered only while the `safe-mode` producer has published content. `SMART` and
   its icon are colored with the frame border color; other modes keep the producer's
   own color on both the icon and the text.
-- **top-left** — the model icon `󰙴 ` followed by provider + model + thinking level
+- **top-left** — the model icon `󰙴 ` followed by provider + model + thinking level,
+  then an explicit review icon after a frame-colored separator (`<effort> · <review>`).
+  Review uses the same frame-border purple: off `󰛑`, minimal `󱀧`, normal `󰛐`,
+  high `󰡬`. Auto is hidden; its `󰈈` mapping remains in code for possible reuse.
+  The base model label is
   joined with ` · ` (`󰙴 <provider>/<model> · <thinking>`, e.g.
   `󰙴 deepseek/deepseek-chat · high`; id-only when provider is missing), rendered in
   the frame border color. Hidden when no model is active. Both parts go through the
@@ -246,7 +260,7 @@ labels are rendered in the frame corners:
 `displayMode` controls where context/model/safe-mode information lives:
 
 - `new` (default) — border priority.
-  - Editor frame shows the corner labels (top-left model icon + model · thinking, top-right git totals, bottom-left safe-mode · network + context).
+  - Editor frame shows the corner labels (top-left model icon + model · thinking + review, top-right git totals, bottom-left safe-mode · network + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
     producer items (after the skills counter), prefixed with the total-usage icon,

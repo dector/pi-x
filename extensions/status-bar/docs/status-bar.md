@@ -88,10 +88,9 @@ Rules:
 
 - Include only non-empty producer content.
 - Join items **inside a section** with ` · `.
-- The `safe-mode` and effective network token are one group: they are joined by
-  exactly ` · ` (muted) even when a crowded line switches the other items to the
-  compact `·` separator. The group is placed at the `safe-mode` position, so the
-  network token always follows safe mode immediately.
+- Safe mode, effective network, and subagent depth form one group: they are joined
+  by exactly ` · ` (muted) even when a crowded line switches the other items to
+  compact `·`. The group is placed at the `safe-mode` position.
 - Omit empty sections.
 - Keep section separator contract (`"  "`) as minimum inter-section gap/fallback join.
 - Do not wrap content with synthetic decorators (no `[]`, no added `|...|`).
@@ -131,7 +130,9 @@ context/model/safe-mode info:
 The effective network token (from `permissions-core`) is rendered on exactly one
 surface: the editor frame bottom-left in `new` mode, the status line in `legacy`
 mode. It is never duplicated across both. `safe-mode` and the token always share
-one label joined by exactly ` · `.
+one label joined by exactly ` · `. The review-level producer uses
+`px:status-bar:review-level:set` with `{ level }` and
+`px:status-bar:review-level:clear`; its icon follows model effort in the top-left label.
 
 Setup:
 
@@ -168,7 +169,7 @@ full frame (heavy `┃` sides + light arc `╭ ╮ ╰ ╯` corners; set
 `FRAME_CORNER_STYLE` for the heavy square `┏ ┓ ┗ ┛` corners), enables one column of
 horizontal editor padding (`paddingX: 1`), and renders:
 
-- top-left: the model icon `󰙴 ` then active provider + model ID and thinking level (`󰙴 <ctx.model.provider>/<ctx.model.id> · <thinking>`, id-only when provider is missing; e.g. `󰙴 cdx/5.6-sol · high`), with exact-name aliases applied, colored with the frame border color. The thinking level is the 3-4 lowercase symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown (`󰙴 cdx/5.6-sol · 🡺`). While streaming the label runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
+- top-left: the model icon `󰙴 ` then active provider + model ID and thinking level (`󰙴 <ctx.model.provider>/<ctx.model.id> · <thinking>`, id-only when provider is missing; e.g. `󰙴 cdx/5.6-sol · high`), with exact-name aliases applied, colored with the frame border color. For explicit review levels, the review icon follows effort after a frame-colored ` · ` and uses the same frame-border color: off `󰛑`, minimal `󱀧`, normal `󰛐`, high `󰡬`. Auto is hidden, though its `󰈈` mapping remains in code. The thinking level is the 3-4 lowercase symbol; on narrow screens (e.g. a phone) the text is dropped and only the arrow indicator is shown (`󰙴 cdx/5.6-sol · 🡺 · 󰛐`). While streaming the model/effort portion runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
 - top-right: `repo-stats` git dirty totals, rendered only when the repo is dirty.
   They are split into two icon groups, files first then changed lines, separated by
   ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The producer's `[ ]`/`|` and `+`/`-`/`M`
@@ -200,9 +201,9 @@ horizontal editor padding (`paddingX: 1`), and renders:
   Network uses one color for the full indicator and one space after its icon:
   muted `󰅟 ×` for deny-all, the subdued accent (a darkened thinking color) for
   ask-all `󰅟 ?`, allow-trusted `󰅟 ✓`, and ask-untrusted `󰅟 ✓?`, and red
-  `󰅟 !` for allow-all. Subagent depth follows the same
-  rule: muted `󰚩 ×` when disabled, the subdued accent `󰚩 ✓` for top-level only,
-  and warning-colored `󰚩 N` for recursive delegation.
+  `󰅟 !` for allow-all. Subagent depth follows network: muted `󰚩 ×` when disabled,
+  the subdued accent `󰚩 ✓` for top-level only, and warning-colored `󰚩 N` for
+  recursive delegation.
 - bottom-right: the unsent message token size in the normal text color, prefixed
   with the message icon `󰍡 ` (`󰍡 1.2k`). Text uses pi's conservative chars/4
   heuristic on the paste-expanded editor text, so it matches what will be sent.

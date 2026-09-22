@@ -7,6 +7,8 @@ export const STATUS_BAR_EVENTS = {
 	rewireClear: "px:status-bar:rewire:clear",
 	subagentDepthSet: "px:status-bar:subagent-depth:set",
 	subagentDepthClear: "px:status-bar:subagent-depth:clear",
+	reviewLevelSet: "px:status-bar:review-level:set",
+	reviewLevelClear: "px:status-bar:review-level:clear",
 	rowSet: "px:status-bar:row:set",
 	rowClear: "px:status-bar:row:clear",
 	ping: "px:status-bar:ping",
@@ -64,6 +66,13 @@ export interface StatusBarRewireSetPayload {
 
 export interface StatusBarSubagentDepthSetPayload {
 	depth: number;
+}
+
+export const STATUS_BAR_REVIEW_LEVELS = ["auto", "off", "minimal", "normal", "high"] as const;
+export type StatusBarReviewLevel = (typeof STATUS_BAR_REVIEW_LEVELS)[number];
+
+export interface StatusBarReviewLevelSetPayload {
+	level: StatusBarReviewLevel;
 }
 
 // Extra footer rows. Each registered id renders as its own line after the two

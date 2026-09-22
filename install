@@ -143,6 +143,7 @@ extensions=(
   "proc"
   "no-reflection"
   "switch-thinking"
+  "review-level"
   "safe-mode"
   "permissions-core"
   "permissions-ui"
