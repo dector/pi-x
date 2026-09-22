@@ -244,6 +244,25 @@ export function decorateBorderTotalUsage(label: string): string {
 	return `${BORDER_TOTAL_USAGE_ICON}${label}`;
 }
 
+// Border-only unsent-message icon (Nerd Font). Keeps a trailing space so the
+// glyph reads as a prefix, matching the other border indicators.
+export const BORDER_MESSAGE_ICON = "󰍡 ";
+
+// Pi estimates tokens with a conservative chars/4 heuristic (`estimateTokens`).
+// The interactive editor carries text only (a pasted image is inserted as its
+// file path and attached later by the agent), so the same heuristic applies.
+export const MESSAGE_CHARS_PER_TOKEN = 4;
+
+/**
+ * Estimate the token size of unsent editor text with pi's chars/4 heuristic.
+ * Whitespace-only input is empty because pi trims submitted text.
+ */
+export function estimateMessageTokens(text: string): number {
+	const trimmed = text.trim();
+	if (trimmed.length === 0) return 0;
+	return Math.ceil(trimmed.length / MESSAGE_CHARS_PER_TOKEN);
+}
+
 /**
  * Drop the decorative spaces from a border label so it fits narrow frames.
  * Only ASCII spaces are touched; ANSI color codes never contain one, so the

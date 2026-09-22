@@ -203,6 +203,15 @@ horizontal editor padding (`paddingX: 1`), and renders:
   `󰅟 !` for allow-all. Subagent depth follows the same
   rule: muted `󰚩 ×` when disabled, the subdued accent `󰚩 ✓` for top-level only,
   and warning-colored `󰚩 N` for recursive delegation.
+- bottom-right: the unsent message token size in the normal text color, prefixed
+  with the message icon `󰍡 ` (`󰍡 1.2k`). Text uses pi's conservative chars/4
+  heuristic on the paste-expanded editor text, so it matches what will be sent.
+  Pasted image paths are detected, their pixel size is read from the file header
+  (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's published
+  vision calculator (upscale below ~544×544, downscale to ~1300×1300, 1024-token
+  cap); this is a first estimate, since other providers tokenize images
+  differently. The label is hidden while the editor is empty and dropped before
+  the bottom-left labels when the frame is too narrow.
 
 Border labels use spaces instead of angle tacks (`╭━╾ left ╼━╮`).
 The frame line is heavy, but every point where it touches a label tapers to a

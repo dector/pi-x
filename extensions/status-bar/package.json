@@ -9,6 +9,6 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck contract.ts network.ts compose.ts progress.ts interrupt-confirmation.ts index.ts"
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck contract.ts network.ts compose.ts progress.ts interrupt-confirmation.ts image-tokens.ts index.ts"
   }
 }

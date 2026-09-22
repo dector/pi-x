@@ -120,7 +120,7 @@ labels are rendered in the frame corners:
 ```
 ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
-╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╯
+╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╾ 󰍡 1.2k ╼━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -221,6 +221,15 @@ labels are rendered in the frame corners:
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
     `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
+- **bottom-right** — unsent message token size in the normal text color,
+  prefixed with the message icon `󰍡 ` (`󰍡 1.2k`). Text uses pi's conservative
+  chars/4 heuristic on the paste-expanded editor text, so it reflects what will
+  actually be sent. Pasted image paths are detected, their pixel size is read from
+  the file header (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's
+  published vision calculator (upscale below ~544×544, downscale to ~1300×1300,
+  1024-token cap). That is a first estimate only: other providers tokenize images
+  differently, and the path text is counted too. Hidden while the editor is empty;
+  dropped before the bottom-left labels when the frame is too narrow.
 - Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits on the right of the
@@ -341,5 +350,6 @@ Required files:
 - `contract.ts`
 - `network.ts`
 - `compose.ts`
+- `image-tokens.ts`
 
 Then run `/reload`.

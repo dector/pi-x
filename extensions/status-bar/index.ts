@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	CustomEditor,
 	DynamicBorder,
@@ -46,6 +46,7 @@ import {
 } from "./contract";
 import {
 	BORDER_CONTEXT_ICON,
+	BORDER_MESSAGE_ICON,
 	chooseTopBorderSegments,
 	composeBorderBottomLeft,
 	composeLegacyLeftSection,
@@ -54,6 +55,7 @@ import {
 	decorateBorderGitStats,
 	decorateBorderPathBranch,
 	decorateBorderTotalUsage,
+	estimateMessageTokens,
 	FRAME_LABEL_CLOSE,
 	FRAME_LABEL_OPEN,
 	FRAME_LEFT_CORNER_OPEN,
@@ -63,6 +65,7 @@ import {
 	sanitizeStatusText,
 } from "./compose";
 import { createProtectedInterrupt, InterruptConfirmationGuard } from "./interrupt-confirmation";
+import { deepseekImageTokens, findImagePaths, parseImageDimensions } from "./image-tokens";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
 import { formatProgressEditorLine, ProgressObserver } from "./progress";
 
@@ -282,6 +285,8 @@ interface FrameStatusEditorOptions {
 	topLeft?: FrameStatusProvider;
 	/** Top-right corner label (git dirty totals). */
 	topRight?: FrameStatusProvider;
+	/** Bottom-right corner label (unsent message token size). Receives the current editor text. */
+	bottomRight?: (text: string) => string | undefined;
 	/** Sink for labels relocated off the border on narrow frames (status line 2). */
 	relocatedLabels?: RelocatedBorderLabels;
 	/** Streaming animation style for the top-left model label. */
@@ -369,6 +374,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
+	private readonly bottomRightProvider?: (text: string) => string | undefined;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly progressRowProvider?: () => string | undefined;
@@ -395,6 +401,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
 		this.topLeftProvider = options.topLeft;
 		this.topRightProvider = options.topRight;
+		this.bottomRightProvider = options.bottomRight;
 		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
 		this.progressRowProvider = options.progressRow;
@@ -700,6 +707,13 @@ class FrameStatusEditor extends CustomEditor {
 				: usageLabel || costLabel;
 		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
+		// The unsent-message size uses the paste-expanded text, which is what pi
+		// actually sends (submit expands paste markers, then trims).
+		const messageLabel = this.bottomRightProvider?.(this.getExpandedText());
+		const messageSegment = hasVisibleText(messageLabel)
+			? `${this.borderColor(FRAME_LABEL_OPEN)}${sanitizeStatusText(messageLabel)}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`
+			: "";
+		const rightSegment = messageSegment ? `${scrollSegment}${messageSegment}` : scrollSegment;
 		const borderColor = (text: string) => this.borderColor(text);
 
 		// On a narrow frame the cost no longer fits. Keep the usage meter on the border
@@ -716,17 +730,17 @@ class FrameStatusEditor extends CustomEditor {
 		}
 
 		if (!leftSegment) {
-			return renderBorderLine(width, "", scrollSegment, borderColor);
+			return renderBorderLine(width, "", rightSegment, borderColor);
 		}
 
-		if (visibleWidth(leftSegment) + visibleWidth(scrollSegment) < width) {
-			return renderBorderLine(width, leftSegment, scrollSegment, borderColor);
+		if (visibleWidth(leftSegment) + visibleWidth(rightSegment) < width) {
+			return renderBorderLine(width, leftSegment, rightSegment, borderColor);
 		}
 		if (visibleWidth(leftSegment) < width) {
 			return renderBorderLine(width, leftSegment, "", borderColor);
 		}
-		if (scrollSegment && visibleWidth(scrollSegment) < width) {
-			return renderBorderLine(width, "", scrollSegment, borderColor);
+		if (rightSegment && visibleWidth(rightSegment) < width) {
+			return renderBorderLine(width, "", rightSegment, borderColor);
 		}
 
 		return renderBorderLine(width, "", "", borderColor);
@@ -931,6 +945,68 @@ export function buildFirstLineTokenLabel(
 		Number(Math.max(0, percent).toFixed(1)),
 		decorateBorderTotalUsage(buildContextTokenLabel(ctx, false)),
 	);
+}
+
+// How many leading bytes of an image file are read to parse its header. Deep
+// enough for JPEG frame headers in normal files; huge metadata can exceed it.
+const IMAGE_HEADER_BYTES = 256 * 1024;
+
+// Path -> DeepSeek image token estimate (0 when unreadable/unsupported). Pasted
+// images are immutable temp files, so caching by resolved path is safe and keeps
+// file I/O off the render path after the first sighting.
+const imageTokenCache = new Map<string, number>();
+
+function readImageTokens(filePath: string): number {
+	let descriptor: number | undefined;
+	try {
+		descriptor = openSync(filePath, "r");
+		const buffer = Buffer.alloc(IMAGE_HEADER_BYTES);
+		const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
+		const dimensions = parseImageDimensions(buffer.subarray(0, bytesRead));
+		return dimensions ? deepseekImageTokens(dimensions.width, dimensions.height) : 0;
+	} catch {
+		return 0;
+	} finally {
+		if (descriptor !== undefined) {
+			try {
+				closeSync(descriptor);
+			} catch {
+				// Best effort; the label must never fail a render.
+			}
+		}
+	}
+}
+
+/**
+ * Sum the DeepSeek image-token estimate for every local image path in the
+ * editor text. Unreadable or unsupported paths contribute 0.
+ */
+export function collectImageTokens(text: string, cwd: string): number {
+	let total = 0;
+	for (const candidate of findImagePaths(text)) {
+		const absolute = isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
+		let tokens = imageTokenCache.get(absolute);
+		if (tokens === undefined) {
+			tokens = readImageTokens(absolute);
+			imageTokenCache.set(absolute, tokens);
+		}
+		total += tokens;
+	}
+	return total;
+}
+
+// Unsent-message token size for the border's bottom-right corner, e.g. `󰍡 1.2k`.
+// Returns undefined for an empty editor so the corner stays clear. Text uses
+// pi's conservative chars/4 estimate on the paste-expanded input; `imageTokens`
+// adds the DeepSeek image estimate for any pasted image paths.
+export function buildMessageSizeLabel(
+	text: string,
+	theme: { fg: (token: ThemeColor, text: string) => string },
+	imageTokens = 0,
+): string | undefined {
+	const tokens = estimateMessageTokens(text) + Math.max(0, Math.floor(imageTokens));
+	if (tokens <= 0) return undefined;
+	return theme.fg("text", `${BORDER_MESSAGE_ICON}${formatTokens(tokens)}`);
 }
 
 interface FirstLineEntry {
@@ -1899,6 +1975,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					opts?.compact ?? false,
 				),
 			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
+			bottomRight: (text) =>
+				buildMessageSizeLabel(text, activeContext().ui.theme, collectImageTokens(text, activeContext().cwd)),
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
 			progressRow: () => progressRow,
