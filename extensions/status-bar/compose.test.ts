@@ -27,6 +27,7 @@ import { resolveNetworkStatus, type NetworkPermissionState } from "./network.ts"
 // Wrap colored fragments so tests can assert exactly where a themed separator
 // landed instead of only seeing the plain text.
 const border = (text: string) => `«${text}»`;
+const accent = (text: string) => `‹${text}›`;
 
 const LEGACY_IDS = ["safe-mode", "switch-thinking"];
 
@@ -218,6 +219,25 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;196m󰅟 \u001b[0m\u001b[1m\u001b[38;5;196m!\u001b[0m« »");
+	});
+
+	test("colors a neutral network token with the accent color, not the border", () => {
+		const out = composeBorderBottomLeft({ networkLabel: "?", borderColor: border, accentColor: accent });
+		expect(out).toBe("«━╾ »‹󰅟 ?›« »");
+	});
+
+	test("colors the top-level subagent check with the accent color", () => {
+		const out = composeBorderBottomLeft({ subagentLabel: "󰚩 ✓", borderColor: border, accentColor: accent });
+		expect(out).toBe("«━╾ »‹󰚩 ✓›« »");
+	});
+
+	test("keeps a producer-colored subagent depth ahead of the accent", () => {
+		const out = composeBorderBottomLeft({
+			subagentLabel: "\u001b[38;5;220m󰚩 2\u001b[0m",
+			borderColor: border,
+			accentColor: accent,
+		});
+		expect(out).toBe("«━╾ »\u001b[38;5;220m󰚩 \u001b[0m\u001b[38;5;220m2\u001b[0m« »");
 	});
 
 	test("keeps safe mode when the core is absent", () => {

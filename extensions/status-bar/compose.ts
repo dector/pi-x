@@ -67,25 +67,25 @@ function paintAnsi(color: string, text: string): string {
 }
 
 /** Prefix the network value and give the whole compact indicator one color. */
-function decorateBorderNetworkLabel(label: string, borderColor: (text: string) => string): string {
+function decorateBorderNetworkLabel(label: string, accentColor: (text: string) => string): string {
 	const sanitized = sanitizeStatusText(label);
 	const producerColor = leadingAnsiSequences(sanitized);
 	return producerColor
 		? `${paintAnsi(producerColor, BORDER_NETWORK_ICON)}${sanitized}`
-		: borderColor(`${BORDER_NETWORK_ICON}${sanitized}`);
+		: accentColor(`${BORDER_NETWORK_ICON}${sanitized}`);
 }
 
 /** Give the compact subagent depth indicator one state-dependent color. */
-function decorateBorderSubagentLabel(label: string, borderColor: (text: string) => string): string {
+function decorateBorderSubagentLabel(label: string, accentColor: (text: string) => string): string {
 	const sanitized = sanitizeStatusText(label);
 	const valueWithSpacing = sanitized.replace(BORDER_SUBAGENT_ICON, "");
 	const valueStyle = leadingAnsiSequences(valueWithSpacing);
 	const value = `${valueStyle}${valueWithSpacing.slice(valueStyle.length).replace(/^ +/, "")}`;
-	if (stripAnsi(value) === "✓") return borderColor(`${BORDER_SUBAGENT_ICON}✓`);
+	if (stripAnsi(value) === "✓") return accentColor(`${BORDER_SUBAGENT_ICON}✓`);
 	const producerColor = leadingAnsiSequences(sanitized);
 	return producerColor
 		? `${paintAnsi(producerColor, BORDER_SUBAGENT_ICON)}${value}`
-		: borderColor(`${BORDER_SUBAGENT_ICON}${value}`);
+		: accentColor(`${BORDER_SUBAGENT_ICON}${value}`);
 }
 
 /** Read `+N`/`-N`/`MN` from a git stats chunk; `undefined` when it does not match. */
@@ -310,11 +310,14 @@ export interface BorderBottomLeftArgs {
 	networkLabel?: string;
 	subagentLabel?: string;
 	borderColor: (text: string) => string;
+	/** Subdued color for default-color indicators; defaults to `borderColor`. */
+	accentColor?: (text: string) => string;
 }
 
 /**
  * Compose the editor-frame bottom-left segment. Safe mode and the network token
- * share one label joined by exactly ` · ` (colored like the border); the context
+ * share one label joined by exactly ` · ` (border-colored, except neutral
+ * network and top-level subagent depth, which use `accentColor`); the context
  * label follows after the tapered border bridge:
  *
  *   `━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 `
@@ -322,15 +325,16 @@ export interface BorderBottomLeftArgs {
  * Either producer part may be missing; both missing yields `""`.
  */
 export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
+	const accentColor = args.accentColor ?? args.borderColor;
 	const hasContext = hasVisibleText(args.contextLabel);
 	const safeModeLabel = hasVisibleText(args.statusLabel)
 		? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
 		: undefined;
 	const networkLabel = hasVisibleText(args.networkLabel)
-		? decorateBorderNetworkLabel(args.networkLabel, args.borderColor)
+		? decorateBorderNetworkLabel(args.networkLabel, accentColor)
 		: undefined;
 	const subagentLabel = hasVisibleText(args.subagentLabel)
-		? decorateBorderSubagentLabel(args.subagentLabel, args.borderColor)
+		? decorateBorderSubagentLabel(args.subagentLabel, accentColor)
 		: undefined;
 	const statusGroup = joinStatusPolicyGroup(safeModeLabel, networkLabel, subagentLabel, args.borderColor);
 	if (!hasContext && !statusGroup) return "";

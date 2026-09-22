@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BORDER_TOTAL_USAGE_ICON } from "./compose.ts";
-import { buildFirstLineTokenLabel, buildFrameContextParts } from "./index.ts";
+import { buildFirstLineTokenLabel, buildFrameContextParts, styleDarkAccent } from "./index.ts";
 
 type Ctx = Parameters<typeof buildFirstLineTokenLabel>[0];
 type Theme = Parameters<typeof buildFirstLineTokenLabel>[1];
@@ -26,16 +26,38 @@ const theme: Theme = {
 const TOKENS = "↑100/↓50/0";
 
 describe("buildFrameContextParts", () => {
-	test("uses purple for the first context-usage bucket", () => {
+	test("uses the subdued accent for the first context-usage bucket", () => {
 		const ctx = {
 			getContextUsage: () => ({ percent: 15.9, tokens: 210_000 }),
 			sessionManager: { getBranch: () => [] },
 		} as unknown as Parameters<typeof buildFrameContextParts>[0];
+		const frameTheme = {
+			fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
+			getFgAnsi: () => "\u001b[38;2;143;127;184m",
+		} as unknown as Parameters<typeof buildFrameContextParts>[1];
 
-		expect(buildFrameContextParts(ctx, theme)).toEqual({
-			usage: "<thinkingOff>󰊚 15.9% 210k</thinkingOff>",
-			cost: "<thinkingOff>󰇁 0.00</thinkingOff>",
+		expect(buildFrameContextParts(ctx, frameTheme)).toEqual({
+			usage: "\u001b[38;2;86;76;110m󰊚 15.9% 210k\u001b[39m",
+			cost: "\u001b[38;2;86;76;110m󰇁 0.00\u001b[39m",
 		});
+	});
+});
+
+describe("styleDarkAccent", () => {
+	const makeTheme = (ansi: string) =>
+		({
+			fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
+			getFgAnsi: () => ansi,
+		}) as unknown as Parameters<typeof styleDarkAccent>[0];
+
+	test("blends the thinking color toward black", () => {
+		expect(styleDarkAccent(makeTheme("\u001b[38;2;143;127;184m"), "x")).toBe(
+			"\u001b[38;2;86;76;110mx\u001b[39m",
+		);
+	});
+
+	test("falls back to the raw theme color when the ANSI is unparsable", () => {
+		expect(styleDarkAccent(makeTheme(""), "x")).toBe("<thinkingOff>x</thinkingOff>");
 	});
 });
 

@@ -146,8 +146,9 @@ labels are rendered in the frame corners:
   `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
   producer's `[ ]`/`|` markers and `+`/`-`/`M` prefixes are replaced by Nerd Font
   icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group also carries
-  the modified-file count. Zero values render in pale purple (`thinkingOff`),
-  while non-zero values keep the producer's colors. On narrow frames the compact split form drops
+  the modified-file count. Zero values render in the subdued accent (a darkened
+  shade of the thinking color `thinkingOff`), while non-zero values keep the
+  producer's colors. On narrow frames the compact split form drops
   the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
   files group (`󰐖1󰍵2󰦓4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode
@@ -161,15 +162,15 @@ labels are rendered in the frame corners:
   - **network** — compact effective policy from `permissions-core`, shown only
     after safe mode and joined with exactly ` · ` (the dot uses the frame border
     color). One space follows the prefix icon. The complete indicator uses one
-    color: deny-all is muted `󰅟 ×`; ask-all is border-colored `󰅟 ?`;
-    allow-trusted is border-colored `󰅟 ✓`; ask-untrusted is border-colored
-    `󰅟 ✓?`; allow-all is red `󰅟 !`. It reflects effective state only, so
+    color: deny-all is muted `󰅟 ×`; ask-all, allow-trusted, and ask-untrusted use
+    the subdued accent (a darkened thinking color): `󰅟 ?`, `󰅟 ✓`, `󰅟 ✓?`;
+    allow-all is red `󰅟 !`. It reflects effective state only, so
     PARANOID renders `󰅟 ?`. In `legacy` mode the existing `NET`/`NET?`/`NET+`
     token moves to the status line instead (see [Display mode](#display-mode));
     exactly one surface renders it.
   - **subagents** — compact delegation depth immediately after network. One
-    space follows the prefix icon. Disabled is muted `󰚩 ×`, top-level-only is
-    border-colored `󰚩 ✓`, and recursive delegation is warning-colored `󰚩 N`.
+    space follows the prefix icon. Disabled is muted `󰚩 ×`, top-level-only uses
+    the subdued accent `󰚩 ✓`, and recursive delegation is warning-colored `󰚩 N`.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
   - `cost`: cumulative session cost, prefixed with the price icon `󰇁 ` and with no
@@ -182,8 +183,8 @@ labels are rendered in the frame corners:
     three-decimal value as the session cost.
   - The frame label is independent of the second-line cost whitelist: it always shows
     accumulated `usage.cost.total` from the active branch.
-  - The label uses purple (`thinkingOff`) up to 20%, `text` up to 30%,
-    `warning` up to 50%, and `error` above 50%.
+  - The label uses the subdued accent (a darkened thinking color) up to 20%,
+    `text` up to 30%, `warning` up to 50%, and `error` above 50%.
     It stays uncolored when context percent is unknown.
 - **safe-mode** (bottom-left, before context) — the `󰕥 ` icon followed by
   `SMART`, `READER`, `YOLO`, `PARANOID`, plus `+` when outer access is on.

@@ -174,7 +174,8 @@ horizontal editor padding (`paddingX: 1`), and renders:
   ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The producer's `[ ]`/`|` and `+`/`-`/`M`
   prefixes are replaced by Nerd Font icons (additions `󰐖`, removals `󰍵`, modified
   `󰦓`); the files group also carries the modified-file count. Zero values render in
-  pale purple (`thinkingOff`), while non-zero values keep the producer's colors. On narrow
+  the subdued accent (a darkened shade of the thinking color `thinkingOff`), while
+  non-zero values keep the producer's colors. On narrow
   frames the compact split form drops the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the
   changed-line group is dropped to keep the files group (`󰐖1󰍵2󰦓4`). The model label
   remains visible whenever it fits, and labels sharing the top edge need only one
@@ -182,8 +183,9 @@ horizontal editor padding (`paddingX: 1`), and renders:
   first line; in `legacy` mode they stay there.
 - bottom-left: context usage and cumulative cost, prefixed with the context icon
   `󰊚 ` and the price icon `󰇁 ` (`━━ 󰊚 15.9% 210k · 󰇁 0.03 `). The border form has no
-  trailing `$`. The label is colored purple (`thinkingOff`) <=20%, `text` <=30%,
-  `warning` <=50%, and `error` >50%. When subagent usage changes the total, cost
+  trailing `$`. The label is colored with the subdued accent (a darkened thinking
+  color) <=20%, `text` <=30%, `warning` <=50%, and `error` >50%. When subagent
+  usage changes the total, cost
   renders as session then total, each with its own icon
   (`󰇁 0.01 Tot󰇁 0.013`), the total with three decimals so small
   subagent spend stays visible. It includes every subagent in the branch, nested
@@ -196,10 +198,10 @@ horizontal editor padding (`paddingX: 1`), and renders:
   safe-mode text is prefixed with `󰕥 `, which shares its color; `SMART` uses the
   frame border color, while other modes keep the producer color on icon and text.
   Network uses one color for the full indicator and one space after its icon:
-  muted `󰅟 ×` for deny-all, border-colored `󰅟 ?` for ask-all,
-  border-colored `󰅟 ✓` for allow-trusted, border-colored `󰅟 ✓?` for
-  ask-untrusted, and red `󰅟 !` for allow-all. Subagent depth follows the same
-  rule: muted `󰚩 ×` when disabled, border-colored `󰚩 ✓` for top-level only,
+  muted `󰅟 ×` for deny-all, the subdued accent (a darkened thinking color) for
+  ask-all `󰅟 ?`, allow-trusted `󰅟 ✓`, and ask-untrusted `󰅟 ✓?`, and red
+  `󰅟 !` for allow-all. Subagent depth follows the same
+  rule: muted `󰚩 ×` when disabled, the subdued accent `󰚩 ✓` for top-level only,
   and warning-colored `󰚩 N` for recursive delegation.
 
 Border labels use spaces instead of angle tacks (`╭━╾ left ╼━╮`).

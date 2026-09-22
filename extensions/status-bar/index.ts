@@ -211,10 +211,13 @@ interface FrameContextParts {
 	cost: string;
 }
 
-// Uses purple for the first bucket; higher usage follows the status-bar context colors.
+// Uses the subdued accent for the first bucket; higher usage follows the status-bar context colors.
 export function buildFrameContextParts(
 	ctx: ExtensionContext,
-	theme?: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
+	theme?: {
+		fg: (token: ThemeColor, text: string) => string;
+		getFgAnsi: (token: ThemeColor) => string;
+	},
 ): FrameContextParts {
 	const usage = ctx.getContextUsage();
 
@@ -239,8 +242,12 @@ export function buildFrameContextParts(
 	const costText = decorateBorderContextCost(costLabel);
 	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
 
-	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, "thinkingOff");
-	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, "thinkingOff");
+	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, (text) =>
+		styleDarkAccent(theme, text),
+	);
+	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, (text) =>
+		styleDarkAccent(theme, text),
+	);
 	return { usage: styledUsage, cost: styledCost };
 }
 
@@ -284,8 +291,8 @@ interface FrameStatusEditorOptions {
 	progressColor?: (text: string) => string;
 	/** Confirmation guard used before an active agent operation is interrupted. */
 	interruptConfirmation: InterruptConfirmationGuard;
-	/** Pale-purple theme color used for zero-valued border git stats. */
-	mutedColor?: (text: string) => string;
+	/** Subdued accent color used for the border's default-color indicators. */
+	subduedColor?: (text: string) => string;
 	/**
 	 * Color for the working highlight. `depth` 0 is the leading character
 	 * (brightest); higher depths are the trailing fade behind the direction of motion.
@@ -365,7 +372,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly progressRowProvider?: () => string | undefined;
 	private readonly progressColor?: (text: string) => string;
-	private readonly mutedColor?: (text: string) => string;
+	private readonly subduedColor?: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
 	private working = false;
@@ -392,7 +399,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.progressRowProvider = options.progressRow;
 		this.progressColor = options.progressColor;
 		this.interruptConfirmation = options.interruptConfirmation;
-		this.mutedColor = options.mutedColor;
+		this.subduedColor = options.subduedColor;
 		this.highlightColor = options.highlightColor;
 	}
 
@@ -523,7 +530,7 @@ class FrameStatusEditor extends CustomEditor {
 		const label = this.topRightProvider?.();
 		if (!hasVisibleText(label)) return "";
 		const decorated = decorateBorderGitStats(sanitizeStatusText(label), {
-			mute: this.mutedColor,
+			mute: this.subduedColor,
 		});
 		return `${this.borderColor(FRAME_LABEL_OPEN)}${decorated}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
 	}
@@ -743,6 +750,7 @@ class FrameStatusEditor extends CustomEditor {
 			networkLabel,
 			subagentLabel,
 			borderColor: (text) => this.borderColor(text),
+			accentColor: this.subduedColor,
 		});
 	}
 }
@@ -820,15 +828,32 @@ function collectSubagentCostFromMessages(messages: unknown): number {
 }
 
 function styleContextLabel(
-	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
 	percent: number,
 	label: string,
-	firstBucket: "muted" | "thinkingOff" = "muted",
+	firstBucket?: (text: string) => string,
 ): string {
-	if (percent <= 20) return theme.fg(firstBucket, label);
+	if (percent <= 20) return firstBucket ? firstBucket(label) : theme.fg("muted", label);
 	if (percent <= 30) return theme.fg("text", label);
 	if (percent <= 50) return theme.fg("warning", label);
 	return theme.fg("error", label);
+}
+
+// How far the subdued indicators move from the thinking color toward black.
+// Higher values are darker; tweak this one constant to taste.
+const DARK_ACCENT_MIX = 0.4;
+
+// Subdued accent for the border's "default color" indicators (zero git stats,
+// neutral network, top-level subagent depth, low context usage): the thinking
+// color blended toward black so they recede instead of drawing the eye. Falls
+// back to the raw theme color when the ANSI escape cannot be parsed.
+export function styleDarkAccent(
+	theme: { fg: (token: ThemeColor, text: string) => string; getFgAnsi: (token: ThemeColor) => string },
+	text: string,
+): string {
+	const base = parseAnsiRgb(theme.getFgAnsi("thinkingOff"));
+	if (!base) return theme.fg("thinkingOff", text);
+	return fgRgb(mixRgb(base, { r: 0, g: 0, b: 0 }, DARK_ACCENT_MIX), text);
 }
 
 // Border (top-left) model label: "provider/model-id (EFFORT)" with alias tables
@@ -862,7 +887,7 @@ function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): st
 
 function getContextWatcherOverrides(
 	ctx: ExtensionContext,
-	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
 	modelAliases: StatusBarAliasMap = {},
 ): Map<string, string | undefined> {
 	const overrides = new Map<string, string | undefined>([
@@ -893,7 +918,7 @@ function getContextWatcherOverrides(
 // The icon is decorated before styling so it shares the label's themed color.
 export function buildFirstLineTokenLabel(
 	ctx: ExtensionContext,
-	theme: { fg: (token: "muted" | "thinkingOff" | "text" | "warning" | "error", text: string) => string },
+	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
 ): string {
 	const percent = ctx.getContextUsage()?.percent;
 	if (typeof percent !== "number" || !Number.isFinite(percent)) {
@@ -1794,7 +1819,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const relocatedGitRaw = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
 					const relocatedGit = hasVisibleText(relocatedGitRaw)
 						? decorateBorderGitStats(sanitizeStatusText(relocatedGitRaw), {
-								mute: (value) => theme.fg("thinkingOff", value),
+								mute: (value) => styleDarkAccent(theme, value),
 							})
 						: undefined;
 					const mergeRelocated = (
@@ -1879,7 +1904,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				getOperationToken: () => activeContext().signal,
 				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),
 			}),
-			mutedColor: (text) => activeContext().ui.theme.fg("thinkingOff", text),
+			subduedColor: (text) => styleDarkAccent(activeContext().ui.theme, text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));
