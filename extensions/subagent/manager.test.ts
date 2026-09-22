@@ -9,20 +9,26 @@
 import { describe, expect, test } from "bun:test";
 import { HerdrTabError } from "./herdr-tab.ts";
 import {
+	MANAGER_ICONS,
 	ManagerHerdrActions,
 	applyDispatchOwnership,
 	buildManagerPicker,
 	clearHerdrLocation,
 	derivedPaneStatus,
+	describeManagerBatchHeader,
 	describeManagerRun,
 	descriptorFromEntry,
 	descriptorFromRun,
+	groupManagerBatches,
 	hasHerdrPane,
 	isRetainedCompleted,
 	isStalePaneError,
 	managerActions,
+	managerBatchElapsed,
 	managerDetails,
+	managerRunOutcome,
 	mergeManagerDescriptors,
+	rollupBatchOutcome,
 	shouldAbortDispatch,
 	type DispatchOwnershipSource,
 	type HerdrManagerPort,
@@ -335,6 +341,74 @@ describe("manager picker", () => {
 		expect(new Set(labels).size).toBe(3);
 		expect(byLabel.get(labels[2])).toBe(2);
 		expect(labels[0]).toBe(describeManagerRun(descriptors[0], 1000));
+	});
+});
+
+describe("manager batches", () => {
+	test("managerRunOutcome prioritizes approval, then pauses, then running", () => {
+		expect(managerRunOutcome(activeProcess())).toBe("running");
+		expect(managerRunOutcome(activeProcess({ state: "paused" }))).toBe("paused");
+		expect(managerRunOutcome(activeProcess({ state: "resuming" }))).toBe("paused");
+		expect(managerRunOutcome(activeProcess({ state: "waiting-approval" }))).toBe("blocked");
+		expect(managerRunOutcome(activeProcess({ pendingApproval: "bash — rm" }))).toBe("blocked");
+		expect(managerRunOutcome(completedProcess())).toBe("finished");
+		expect(managerRunOutcome(completedProcess({ failed: true }))).toBe("failed");
+		expect(managerRunOutcome(completedProcess({ state: "aborted" }))).toBe("canceled");
+	});
+
+	test("rollupBatchOutcome picks the most attention-worthy state", () => {
+		expect(rollupBatchOutcome(["finished", "running", "failed"])).toBe("running");
+		expect(rollupBatchOutcome(["finished", "paused"])).toBe("paused");
+		expect(rollupBatchOutcome(["running", "blocked"])).toBe("blocked");
+		expect(rollupBatchOutcome(["finished", "failed"])).toBe("failed");
+		expect(rollupBatchOutcome(["finished"])).toBe("finished");
+	});
+
+	test("groups runs by dispatch, active batches first", () => {
+		const batches = groupManagerBatches([
+			activeProcess({ runId: "a", dispatchId: "dp-1", execution: "async", startedAt: 1000 }),
+			completedProcess({ runId: "b", dispatchId: "dp-2", startedAt: 0, completedAt: 500 }),
+			activeProcess({ runId: "c", dispatchId: "dp-1", execution: "async", startedAt: 1200 }),
+		]);
+		expect(batches.map((batch) => batch.dispatchId)).toEqual(["dp-1", "dp-2"]);
+		expect(batches[0]?.itemIndices).toEqual([0, 2]);
+		expect(batches[0]?.active).toBe(true);
+		expect(batches[0]?.outcome).toBe("running");
+		expect(batches[0]?.execution).toBe("async");
+		expect(batches[0]?.startedAt).toBe(1000);
+		expect(batches[1]?.outcome).toBe("finished");
+	});
+
+	test("marks a batch detached when any run is backgrounded", () => {
+		const [batch] = groupManagerBatches([
+			activeProcess({ runId: "a", dispatchId: "dp-1" }),
+			activeProcess({ runId: "b", dispatchId: "dp-1", detached: true }),
+		]);
+		expect(batch?.detached).toBe(true);
+	});
+
+	test("describeManagerBatchHeader renders dispatch, execution, and count", () => {
+		const [batch] = groupManagerBatches([
+			activeProcess({ runId: "a", dispatchId: "dp-7c1", execution: "blocking" }),
+			activeProcess({ runId: "b", dispatchId: "dp-7c1", execution: "blocking" }),
+		]);
+		const header = describeManagerBatchHeader(batch!);
+		expect(header).toContain(MANAGER_ICONS.batch);
+		expect(header).toContain("dp-7c1");
+		expect(header).toContain(MANAGER_ICONS.blocking);
+		expect(header).toContain("blocking");
+		expect(header).toContain("2 runs");
+	});
+
+	test("managerBatchElapsed tracks the live clock while active", () => {
+		const [batch] = groupManagerBatches([
+			activeProcess({ runId: "a", dispatchId: "dp-1", startedAt: 1_000 }),
+		]);
+		expect(managerBatchElapsed(batch!, 62_000)).toBe("01:01");
+		const [settled] = groupManagerBatches([
+			completedProcess({ runId: "b", dispatchId: "dp-2", startedAt: 0, completedAt: 45_000 }),
+		]);
+		expect(managerBatchElapsed(settled!, 999_999)).toBe("00:45");
 	});
 });
 

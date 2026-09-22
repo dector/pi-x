@@ -121,6 +121,32 @@ describe("buildManagerListRows", () => {
 		expect(buildManagerListRows([descriptor({ active: false })])).toEqual([{ kind: "item", itemIndex: 0 }]);
 		expect(buildManagerListRows([])).toEqual([]);
 	});
+
+	test("emits a header per dispatch and one separator between groups", () => {
+		const rows = buildManagerListRows([
+			descriptor({ runId: "a", dispatchId: "dp-1", active: true }),
+			descriptor({ runId: "b", dispatchId: "dp-1", active: true }),
+			descriptor({ runId: "c", dispatchId: "dp-2", active: false }),
+		]);
+		expect(rows).toEqual([
+			{ kind: "batch", groupIndex: 0 },
+			{ kind: "item", itemIndex: 0 },
+			{ kind: "item", itemIndex: 1 },
+			{ kind: "separator" },
+			{ kind: "batch", groupIndex: 1 },
+			{ kind: "item", itemIndex: 2 },
+		]);
+	});
+
+	test("keeps dispatch-less singleton runs flat", () => {
+		expect(
+			buildManagerListRows([descriptor({ runId: "a" }), descriptor({ runId: "b", active: false })]),
+		).toEqual([
+			{ kind: "item", itemIndex: 0 },
+			{ kind: "separator" },
+			{ kind: "item", itemIndex: 1 },
+		]);
+	});
 });
 
 describe("resolveManagerShortcut", () => {
@@ -166,6 +192,17 @@ describe("ManagerListView", () => {
 		expect(view.selectedItem?.descriptor.runId).toBe("active-1");
 		view.handleInput(UP);
 		expect(view.selectedItem?.descriptor.runId).toBe("finished-1");
+	});
+
+	test("j/k navigate like the arrow keys", () => {
+		const { view } = makeView([
+			item({ runId: "active-1" }),
+			item({ runId: "finished-1", active: false }),
+		]);
+		view.handleInput("j");
+		expect(view.selectedItem?.descriptor.runId).toBe("finished-1");
+		view.handleInput("k");
+		expect(view.selectedItem?.descriptor.runId).toBe("active-1");
 	});
 
 	test("enter selects the highlighted run by original index", () => {
@@ -304,5 +341,25 @@ describe("ManagerListView", () => {
 		for (let index = 0; index < items.length - 1; index++) view.handleInput(DOWN);
 		const last = view.render(80).join("\n");
 		expect(last).toContain(`(${items.length}/${items.length})`);
+	});
+
+	test("renders a batch header with dispatch, execution, count, and summary", () => {
+		const { view } = makeView([
+			item({ runId: "a", dispatchId: "dp-7c1", execution: "async" }),
+			item({ runId: "b", dispatchId: "dp-7c1", execution: "async" }),
+		]);
+		const text = view.render(120).join("\n");
+		expect(text).toContain("dp-7c1");
+		expect(text).toContain("async");
+		expect(text).toContain("2 runs");
+		expect(text).toContain("2 active");
+	});
+
+	test("batch headers never exceed the requested width", () => {
+		const { view } = makeView([
+			item({ runId: "a", dispatchId: "dp-with-a-very-long-identifier", execution: "blocking" }),
+			item({ runId: "b", dispatchId: "dp-with-a-very-long-identifier", execution: "blocking" }),
+		]);
+		for (const line of view.render(10)) expect(visibleWidth(line)).toBeLessThanOrEqual(10);
 	});
 });

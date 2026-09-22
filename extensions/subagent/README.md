@@ -389,7 +389,22 @@ When enabled, the configured values override each agent file's `model` and `thin
 
 ## Runtime manager
 
-Run `/px:agents` to list active and recent children, async and blocking alike. Active runs are grouped above finished runs, separated by one blank non-selectable line. In the list: `↑`/`↓` move, `enter` opens the run's action menu, `d` attaches/joins the selected run (a completed persisted run opens its read-only transcript), `D` detaches the selected attached blocking dispatch, and `esc` closes. An ineligible `d`/`D` keeps the list open and shows a short warning. Select a run to:
+Run `/px:agents` to list active and recent children, async and blocking alike. Runs are grouped into **batches by dispatch**: each dispatch renders one header (`󰚩 dp_… · 󱐋 async · 2 runs`) followed by its runs, and active batches sit above settled batches separated by one blank non-selectable line. The header shows the dispatch id, execution mode, run count, `detached` when backgrounded, and a roll-up status glyph with elapsed time; each run row is prefixed by its status glyph. Dispatch-less runs stay flat. In the list: `↑`/`↓` (or `j`/`k`) move, `enter` opens the run's action menu, `d` attaches/joins the selected run (a completed persisted run opens its read-only transcript), `D` detaches the selected attached blocking dispatch, and `esc` closes. An ineligible `d`/`D` keeps the list open and shows a short warning.
+
+Status glyphs are Nerd Font Material Design, shared by the list and the above-editor widget (see `manager-icons.ts`):
+
+| State | Glyph | Meaning |
+| --- | --- | --- |
+| running | 󰐊 `U+F040A` | actively working |
+| paused | 󰏤 `U+F03E4` | `pause-requested` / `paused` / `resuming` / `aborting` |
+| waiting approval | 󱈸 `U+F1238` | blocked on a parent approval |
+| finished | 󰄬 `U+F012C` | completed successfully |
+| failed | 󰅖 `U+F0156` | failed |
+| canceled | 󰜺 `U+F073A` | aborted |
+| async | 󱐋 `U+F140B` | detached/background dispatch |
+| blocking | 󰥿 `U+F097F` | attached blocking dispatch |
+
+Select a run to:
 
 - watch a live transcript/progress stream in a read-only floating panel without changing dispatch ownership or execution mode. The panel draws a rounded purple frame titled with the agent id, with one terminal-background cell of spacing outside the frame; `j`/`k` scroll one line and `Shift+j`/`Shift+k` scroll five;
 - attach to the full transcript with steering and run controls;

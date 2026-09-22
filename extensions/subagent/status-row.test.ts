@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { MANAGER_ICONS } from "./manager-icons.ts";
 import * as statusRow from "./status-row.ts";
 import {
 	ACTIVE_SUBAGENT_REFRESH_INTERVAL_MS,
@@ -99,7 +100,7 @@ test("one active run renders identity, runtime, and task lines", () => {
 	expect(lines).toBeDefined();
 	expect(lines).toHaveLength(4);
 	expect(lines?.[0]).toBe("󰚩 Subagents (1 active)");
-	expect(lines?.[1]).toBe(" ● [sa-abc123] · worker");
+	expect(lines?.[1]).toBe(` ${MANAGER_ICONS.running} [sa-abc123] · worker`);
 	expect(lines?.[2]).toBe(" │ running 34s");
 	expect(lines?.[3]).toBe(" │ Implement validation");
 });
@@ -154,7 +155,7 @@ test("settled siblings stay visible with outcome counts until their dispatch fin
 		}),
 	], NOW);
 	expect(lines?.[0]).toBe("󰚩 Subagents (1 active, 1 finished, 1 failed, 1 canceled)");
-	expect(lines?.join("\n")).toContain("✓ [sa-ok]");
+	expect(lines?.join("\n")).toContain(`${MANAGER_ICONS.finished} [sa-ok]`);
 	expect(lines?.[lines.length - 1]).toBe("… 2 more");
 });
 
@@ -173,9 +174,9 @@ test("state maps to a distinct icon", () => {
 		[makeRun({ result: { state: "waiting-approval", pendingApproval: { method: "confirm" } } })],
 		NOW,
 	)?.[1];
-	expect(running).toStartWith(" ● ");
-	expect(starting).toStartWith(" ○ ");
-	expect(waiting).toStartWith(" ◐ ");
+	expect(running).toStartWith(` ${MANAGER_ICONS.running} `);
+	expect(starting).toStartWith(` ${MANAGER_ICONS.running} `);
+	expect(waiting).toStartWith(` ${MANAGER_ICONS.blocked} `);
 });
 
 test("model and effort are on the identity line while usage stays on the activity line", () => {
@@ -225,7 +226,7 @@ test("elapsed renders minutes once a run passes a minute", () => {
 
 test("readable run ids are shown on the identity line", () => {
 	const line = formatActiveSubagentWidget([makeRun({ runId: "red-panda" })], NOW)?.[1] ?? "";
-	expect(line).toStartWith(" ● [red-panda] · ");
+	expect(line).toStartWith(` ${MANAGER_ICONS.running} [red-panda] · `);
 });
 
 test("widget uses theme roles for hierarchy and run state", () => {
@@ -243,7 +244,7 @@ test("widget uses theme roles for hierarchy and run state", () => {
 		},
 	});
 	expect(lines?.[0]).toBe("<accent><b>󰚩 Subagents (1 active)</b></accent>");
-	expect(lines?.[1]).toBe(" <success>●</success> <dim>[red-panda]</dim><dim> · </dim><muted>worker</muted>");
+	expect(lines?.[1]).toBe(` <success>${MANAGER_ICONS.running}</success> <dim>[red-panda]</dim><dim> · </dim><muted>worker</muted>`);
 	expect(lines?.[2]).toBe("<dim> │ running 34s</dim>");
 	expect(lines?.[3]).toBe("<dim> │ Implement validation</dim>");
 });
@@ -265,10 +266,10 @@ test("state icons use their corresponding theme colors", () => {
 			makeRun({ result: { state, pendingApproval: pendingApproval ? { method: "confirm" } : undefined } }),
 		], NOW, { styles })?.[1] ?? "";
 
-	expect(identityFor("running")).toContain("<success>●</success>");
-	expect(identityFor("waiting-approval", true)).toContain("<warning>◐</warning>");
-	expect(identityFor("failed")).toContain("<error>✗</error>");
-	expect(identityFor("starting")).toContain("<muted>○</muted>");
+	expect(identityFor("running")).toContain(`<success>${MANAGER_ICONS.running}</success>`);
+	expect(identityFor("waiting-approval", true)).toContain(`<error>${MANAGER_ICONS.blocked}</error>`);
+	expect(identityFor("failed")).toContain(`<error>${MANAGER_ICONS.failed}</error>`);
+	expect(identityFor("starting")).toContain(`<muted>${MANAGER_ICONS.running}</muted>`);
 
 	const terminalIdentity = (result: ActiveSubagentWidgetRun["result"]) => {
 		const dispatchId = "dispatch-colors";
@@ -277,9 +278,9 @@ test("state icons use their corresponding theme colors", () => {
 			makeRun({ runId: "done", dispatchId, completedAt: NOW - 1, result }),
 		], NOW, { styles })?.[4] ?? "";
 	};
-	expect(terminalIdentity({ exitCode: 0 })).toContain("<success>✓</success>");
-	expect(terminalIdentity({ exitCode: 1 })).toContain("<error>✗</error>");
-	expect(terminalIdentity({ exitCode: 1, stopReason: "aborted" })).toContain("<warning>⊘</warning>");
+	expect(terminalIdentity({ exitCode: 0 })).toContain(`<success>${MANAGER_ICONS.finished}</success>`);
+	expect(terminalIdentity({ exitCode: 1 })).toContain(`<error>${MANAGER_ICONS.failed}</error>`);
+	expect(terminalIdentity({ exitCode: 1, stopReason: "aborted" })).toContain(`<warning>${MANAGER_ICONS.canceled}</warning>`);
 });
 
 test("long agent names and overall lines stay within the display budget", () => {

@@ -193,6 +193,7 @@ const STATUS_BAR_SUBAGENT_DEPTH_SET_EVENT = "px:status-bar:subagent-depth:set";
 const STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT = "px:status-bar:subagent-depth:clear";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
+const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1590,146 +1591,153 @@ export default function (pi: ExtensionAPI) {
 			handler: async (_args, ctx) => openAgentConfigMenu(ctx),
 		});
 
+		const openAgentManager = async (ctx: ExtensionContext): Promise<void> => {
+			if (!ctx.hasUI) return;
+			while (true) {
+				const items = managerItems(ctx);
+				if (items.length === 0) {
+					ctx.ui.notify("No subagent runs yet.", "info");
+					return;
+				}
+				const result = await ctx.ui.custom<ManagerListResult>((tui, theme, keybindings, done) =>
+					new ManagerListView<ManagerItem>({
+						items,
+						theme: {
+							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+							bold: (text) => theme.bold(text),
+						},
+						keybindings,
+						requestRender: () => tui.requestRender(),
+						done,
+						hasTranscript: (item) => Boolean(item.run || item.entry?.result),
+					}),
+				);
+				if (!result || result.type === "cancel") return;
+				const item = items[result.itemIndex];
+				if (!item) continue;
+				if (result.type === "attach") {
+					if (item.run) await openAttach(item.run, ctx);
+					else if (item.entry) await openRecoveredAttach(item.entry, ctx);
+					continue;
+				}
+				if (result.type === "detach") {
+					const dispatchId = item.descriptor.dispatchId;
+					if (!dispatchId) continue;
+					const outcome = dispatchManager.detach(dispatchId);
+					ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
+					continue;
+				}
+				const descriptor = item.descriptor;
+				const run = item.run;
+				const action = await ctx.ui.select(
+					`${descriptor.agentName} [${descriptor.runId}]`,
+					managerActions(descriptor),
+				);
+				if (!action || action === "Back") continue;
+
+				if (action === "Watch") {
+					if (run) await openWatch(run, ctx);
+					else ctx.ui.notify(`Watch unavailable: ${descriptor.runId} is not a live run.`, "warning");
+					continue;
+				}
+
+				if (action === "Attach" || action === "View transcript") {
+					if (run) await openAttach(run, ctx);
+					else if (item.entry) await openRecoveredAttach(item.entry, ctx);
+					continue;
+				}
+
+				if (action === "Detach") {
+					if (!descriptor.dispatchId) continue;
+					const outcome = dispatchManager.detach(descriptor.dispatchId);
+					ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
+					continue;
+				}
+
+				if (action === "Details") {
+					// Live-validate a Herdr location so a manually closed pane shows as
+					// missing instead of a stale active/retained status.
+					if (descriptor.herdr && hasHerdrPane(descriptor)) {
+						const herdr = await managerHerdrActions(ctx);
+						if (herdr) descriptor.paneStatus = await herdr.status(descriptor.herdr);
+					}
+					await ctx.ui.editor(`Subagent details: ${descriptor.runId}`, managerDetails(descriptor));
+					continue;
+				}
+
+				if (action === "Jump to Herdr pane") {
+					if (!descriptor.herdr) continue;
+					const herdr = await managerHerdrActions(ctx);
+					if (!herdr) continue;
+					const result = await herdr.jump(descriptor.herdr);
+					ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
+					if (result.stale) dismissHerdrLocation(item);
+					// Return from the manager after a successful focus so the user lands
+					// in the exact pane; stale/error results keep the menu open.
+					if (result.ok) return;
+					continue;
+				}
+
+				if (action === "Close retained pane") {
+					if (!descriptor.herdr) continue;
+					const confirmed = await ctx.ui.confirm(
+						"Close retained pane",
+						`Close Herdr pane ${descriptor.herdr.paneId} for ${descriptor.runId}? The subagent result and log are preserved.`,
+					);
+					if (!confirmed) continue;
+					const herdr = await managerHerdrActions(ctx);
+					if (!herdr) continue;
+					const result = await herdr.closeRetained(descriptor.herdr);
+					ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
+					if (result.stale) dismissHerdrLocation(item);
+					continue;
+				}
+
+				// The remaining actions are live-run controls only.
+				if (!run) continue;
+				try {
+					if (action === "Pause") {
+						run.result.state = "pause-requested";
+						await sendControl(run, "pause");
+					} else if (action === "Resume") {
+						run.result.state = "resuming";
+						await sendControl(run, "resume");
+					} else if (action === "Configure permissions") {
+						const mode = await ctx.ui.select("Safe mode", ["paranoid", "reader", "smart", "yolo"]);
+						if (!mode) continue;
+						const outerChoice = await ctx.ui.select("Outer access", ["off", "on"]);
+						if (!outerChoice) continue;
+						if ((mode === "yolo" || outerChoice === "on") && !(await ctx.ui.confirm("Confirm child permissions", `Set ${run.runId} to ${mode}${outerChoice === "on" ? "+" : ""}?`))) continue;
+						await sendControl(run, `mode ${mode} outer-${outerChoice}`);
+					} else if (action === "Abort") {
+						if (!(await ctx.ui.confirm("Abort subagent", `Abort ${run.agentName} [${run.runId}]?`))) continue;
+						run.result.state = "aborting";
+						// Detached/async work is aborted at the dispatch level so the final
+						// completion is classified as aborted and queued chain/parallel work
+						// stops. An attached blocking dispatch is per-run: cancelling its
+						// controller would kill parallel siblings, so only `run.abort` and the
+						// run's child are stopped here.
+						if (shouldAbortDispatch(run.dispatchId, (dispatchId) => dispatchManager.isAttached(dispatchId))) {
+							dispatchManager.abort(run.dispatchId as string);
+						}
+						run.abort?.();
+						try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
+						await run.child?.terminate();
+					}
+				} catch (error) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				}
+			}
+		};
+
+		pi.events.on(SUBAGENT_MANAGER_MENU_EVENT, (payload) => {
+			const ctx = eventContext(payload);
+			if (ctx) void openAgentManager(ctx);
+		});
+
 		pi.registerCommand("px:agents", {
 			description: "Manage active and recent subagent runs",
-			handler: async (_args, ctx) => {
-				if (!ctx.hasUI) return;
-				while (true) {
-					const items = managerItems(ctx);
-					if (items.length === 0) {
-						ctx.ui.notify("No subagent runs yet.", "info");
-						return;
-					}
-					const result = await ctx.ui.custom<ManagerListResult>((tui, theme, keybindings, done) =>
-						new ManagerListView<ManagerItem>({
-							items,
-							theme: {
-								fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
-								bold: (text) => theme.bold(text),
-							},
-							keybindings,
-							requestRender: () => tui.requestRender(),
-							done,
-							hasTranscript: (item) => Boolean(item.run || item.entry?.result),
-						}),
-					);
-					if (!result || result.type === "cancel") return;
-					const item = items[result.itemIndex];
-					if (!item) continue;
-					if (result.type === "attach") {
-						if (item.run) await openAttach(item.run, ctx);
-						else if (item.entry) await openRecoveredAttach(item.entry, ctx);
-						continue;
-					}
-					if (result.type === "detach") {
-						const dispatchId = item.descriptor.dispatchId;
-						if (!dispatchId) continue;
-						const outcome = dispatchManager.detach(dispatchId);
-						ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
-						continue;
-					}
-					const descriptor = item.descriptor;
-					const run = item.run;
-					const action = await ctx.ui.select(
-						`${descriptor.agentName} [${descriptor.runId}]`,
-						managerActions(descriptor),
-					);
-					if (!action || action === "Back") continue;
-
-					if (action === "Watch") {
-						if (run) await openWatch(run, ctx);
-						else ctx.ui.notify(`Watch unavailable: ${descriptor.runId} is not a live run.`, "warning");
-						continue;
-					}
-
-					if (action === "Attach" || action === "View transcript") {
-						if (run) await openAttach(run, ctx);
-						else if (item.entry) await openRecoveredAttach(item.entry, ctx);
-						continue;
-					}
-
-					if (action === "Detach") {
-						if (!descriptor.dispatchId) continue;
-						const outcome = dispatchManager.detach(descriptor.dispatchId);
-						ctx.ui.notify(outcome.message, outcome.ok ? "info" : "warning");
-						continue;
-					}
-
-					if (action === "Details") {
-						// Live-validate a Herdr location so a manually closed pane shows as
-						// missing instead of a stale active/retained status.
-						if (descriptor.herdr && hasHerdrPane(descriptor)) {
-							const herdr = await managerHerdrActions(ctx);
-							if (herdr) descriptor.paneStatus = await herdr.status(descriptor.herdr);
-						}
-						await ctx.ui.editor(`Subagent details: ${descriptor.runId}`, managerDetails(descriptor));
-						continue;
-					}
-
-					if (action === "Jump to Herdr pane") {
-						if (!descriptor.herdr) continue;
-						const herdr = await managerHerdrActions(ctx);
-						if (!herdr) continue;
-						const result = await herdr.jump(descriptor.herdr);
-						ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
-						if (result.stale) dismissHerdrLocation(item);
-						// Return from the manager after a successful focus so the user lands
-						// in the exact pane; stale/error results keep the menu open.
-						if (result.ok) return;
-						continue;
-					}
-
-					if (action === "Close retained pane") {
-						if (!descriptor.herdr) continue;
-						const confirmed = await ctx.ui.confirm(
-							"Close retained pane",
-							`Close Herdr pane ${descriptor.herdr.paneId} for ${descriptor.runId}? The subagent result and log are preserved.`,
-						);
-						if (!confirmed) continue;
-						const herdr = await managerHerdrActions(ctx);
-						if (!herdr) continue;
-						const result = await herdr.closeRetained(descriptor.herdr);
-						ctx.ui.notify(result.message, result.ok ? "info" : result.stale ? "warning" : "error");
-						if (result.stale) dismissHerdrLocation(item);
-						continue;
-					}
-
-					// The remaining actions are live-run controls only.
-					if (!run) continue;
-					try {
-						if (action === "Pause") {
-							run.result.state = "pause-requested";
-							await sendControl(run, "pause");
-						} else if (action === "Resume") {
-							run.result.state = "resuming";
-							await sendControl(run, "resume");
-						} else if (action === "Configure permissions") {
-							const mode = await ctx.ui.select("Safe mode", ["paranoid", "reader", "smart", "yolo"]);
-							if (!mode) continue;
-							const outerChoice = await ctx.ui.select("Outer access", ["off", "on"]);
-							if (!outerChoice) continue;
-							if ((mode === "yolo" || outerChoice === "on") && !(await ctx.ui.confirm("Confirm child permissions", `Set ${run.runId} to ${mode}${outerChoice === "on" ? "+" : ""}?`))) continue;
-							await sendControl(run, `mode ${mode} outer-${outerChoice}`);
-						} else if (action === "Abort") {
-							if (!(await ctx.ui.confirm("Abort subagent", `Abort ${run.agentName} [${run.runId}]?`))) continue;
-							run.result.state = "aborting";
-							// Detached/async work is aborted at the dispatch level so the final
-							// completion is classified as aborted and queued chain/parallel work
-							// stops. An attached blocking dispatch is per-run: cancelling its
-							// controller would kill parallel siblings, so only `run.abort` and the
-							// run's child are stopped here.
-							if (shouldAbortDispatch(run.dispatchId, (dispatchId) => dispatchManager.isAttached(dispatchId))) {
-								dispatchManager.abort(run.dispatchId as string);
-							}
-							run.abort?.();
-							try { run.child?.send({ id: `abort-${run.runId}`, type: "abort" }); } catch {}
-							await run.child?.terminate();
-						}
-					} catch (error) {
-						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-					}
-				}
-			},
+			handler: async (_args, ctx) => openAgentManager(ctx),
 		});
 
 		pi.registerCommand("px:agent:log", {

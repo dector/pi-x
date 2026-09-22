@@ -12,6 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { MANAGER_ICONS, MANAGER_OUTCOME_TONE } from "./manager-icons.ts";
 import { isAbortedResult, isFailedResult } from "./result-output.ts";
 import type { SubagentRunState, UsageStats } from "./types.ts";
 
@@ -249,18 +250,26 @@ function formatTurns(turns: number | undefined): string {
 
 type StateTone = "success" | "warning" | "error" | "muted";
 
+/**
+ * Widget state appearance, reusing the shared `/px:agents` glyphs so both
+ * surfaces read identically. `starting` keeps the running glyph but a muted
+ * tone so it stays distinct from a live run.
+ */
 function stateAppearance(
 	state: WidgetOutcome,
 	pendingApproval: boolean,
 ): { icon: string; tone: StateTone } {
-	if (state === "finished") return { icon: "✓", tone: "success" };
-	if (state === "failed") return { icon: "✗", tone: "error" };
-	if (state === "canceled") return { icon: "⊘", tone: "warning" };
-	if (pendingApproval || ["waiting-approval", "pause-requested", "paused", "resuming", "aborting"].includes(state)) {
-		return { icon: "◐", tone: "warning" };
+	if (state === "finished") return { icon: MANAGER_ICONS.finished, tone: MANAGER_OUTCOME_TONE.finished };
+	if (state === "failed") return { icon: MANAGER_ICONS.failed, tone: MANAGER_OUTCOME_TONE.failed };
+	if (state === "canceled") return { icon: MANAGER_ICONS.canceled, tone: MANAGER_OUTCOME_TONE.canceled };
+	if (pendingApproval || state === "waiting-approval") {
+		return { icon: MANAGER_ICONS.blocked, tone: MANAGER_OUTCOME_TONE.blocked };
 	}
-	if (state === "starting") return { icon: "○", tone: "muted" };
-	return { icon: "●", tone: "success" };
+	if (state === "pause-requested" || state === "paused" || state === "resuming" || state === "aborting") {
+		return { icon: MANAGER_ICONS.paused, tone: MANAGER_OUTCOME_TONE.paused };
+	}
+	if (state === "starting") return { icon: MANAGER_ICONS.running, tone: "muted" };
+	return { icon: MANAGER_ICONS.running, tone: MANAGER_OUTCOME_TONE.running };
 }
 
 /** Compact elapsed rendering: `34s`, `5m 2s`, `1h 3m`. */

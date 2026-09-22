@@ -21,6 +21,7 @@ const NOTES_OPEN_EVENT = "px:notes:open";
 const NOTES_LIST_EVENT = "px:notes:list";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
+const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
@@ -678,6 +679,7 @@ async function showHiDialog(
 		onListNotes: () => Promise<void>;
 		onToggleAgentsRewire: () => void;
 		onOpenAgentsRewire: () => void;
+		onOpenAgentsManager: () => void;
 		isAgentsRewireEnabled: () => boolean;
 	},
 	dialogLifecycle: {
@@ -716,6 +718,7 @@ async function showHiDialog(
 					onListNotes,
 					onToggleAgentsRewire,
 					onOpenAgentsRewire,
+					onOpenAgentsManager,
 					isAgentsRewireEnabled,
 				} = handlers;
 				let selectedIndex = 0;
@@ -805,6 +808,16 @@ async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => setMenu("stash"),
+					},
+					{
+						hotkey: "a",
+						hotkeyAliases: ["A"],
+						label: "Subagents",
+						showStatusBadge: false,
+						opensMenu: true,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onOpenAgentsManager),
 					},
 					{
 						hotkey: Key.ctrlShift("r"),
@@ -1418,6 +1431,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onOpenAgentsRewire: () => {
 						pi.events.emit(SUBAGENT_REWIRE_MENU_EVENT, { ctx });
+					},
+					onOpenAgentsManager: () => {
+						pi.events.emit(SUBAGENT_MANAGER_MENU_EVENT, { ctx });
 					},
 					isAgentsRewireEnabled: () => agentsRewireEnabled,
 				},

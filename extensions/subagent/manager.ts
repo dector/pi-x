@@ -17,8 +17,11 @@
 
 import { HerdrTabError } from "./herdr-tab.ts";
 import type { HerdrPaneStatus } from "./herdr-tab.ts";
+import { MANAGER_ICONS, MANAGER_OUTCOME_TONE, type ManagerRunOutcome } from "./manager-icons.ts";
 import { isFailedResult } from "./result-output.ts";
 import type { HerdrRetention, HerdrRunLocation, SubagentBackendKind, SubagentExecution } from "./types.ts";
+
+export * from "./manager-icons.ts";
 
 export type ManagerPaneStatus = HerdrPaneStatus;
 
@@ -170,16 +173,60 @@ export function managerDetails(descriptor: ManagerRunDescriptor): string {
 	return lines.join("\n");
 }
 
-/** One-line picker label, matching the existing manager ordering. */
-export function describeManagerRun(descriptor: ManagerRunDescriptor, now = Date.now()): string {
-	const elapsedMs = Math.max(0, (descriptor.completedAt ?? now) - (descriptor.startedAt ?? now));
-	const elapsed = Math.floor(elapsedMs / 1000);
-	const state = descriptor.active ? (descriptor.state ?? "running").toUpperCase() : descriptor.failed ? "FAILED" : "COMPLETED";
-	const mode = descriptor.mode?.toUpperCase() ?? "UNKNOWN";
-	const clock = `${Math.floor(elapsed / 60)
+/** Settled-state label per outcome (live states keep their own text). */
+const MANAGER_OUTCOME_LABEL: Record<ManagerRunOutcome, string> = {
+	running: "running",
+	paused: "paused",
+	blocked: "waiting approval",
+	finished: "finished",
+	failed: "failed",
+	canceled: "canceled",
+};
+
+/**
+ * Reduce one run to its manager outcome. A pending approval wins over the
+ * transport state so a blocked run never reads as merely running; paused-ish
+ * active states stay distinct so a stalled sibling is visible.
+ */
+export function managerRunOutcome(descriptor: ManagerRunDescriptor): ManagerRunOutcome {
+	if (descriptor.pendingApproval) return "blocked";
+	if (descriptor.active) {
+		if (descriptor.state === "waiting-approval") return "blocked";
+		if (
+			descriptor.state === "pause-requested" ||
+			descriptor.state === "paused" ||
+			descriptor.state === "resuming" ||
+			descriptor.state === "aborting"
+		) {
+			return "paused";
+		}
+		return "running";
+	}
+	if (descriptor.state === "aborted" || descriptor.state === "canceled") return "canceled";
+	return descriptor.failed ? "failed" : "finished";
+}
+
+/** Live state while active, else the settled outcome label. */
+function managerStateLabel(descriptor: ManagerRunDescriptor, outcome: ManagerRunOutcome): string {
+	if (descriptor.pendingApproval || descriptor.state === "waiting-approval") return "waiting approval";
+	if (descriptor.active) return (descriptor.state ?? "running").replace(/-/g, " ");
+	return MANAGER_OUTCOME_LABEL[outcome];
+}
+
+/** `mm:ss` clock shared by run rows and batch headers. */
+function formatManagerClock(milliseconds: number): string {
+	const seconds = Math.floor(Math.max(0, milliseconds) / 1000);
+	return `${Math.floor(seconds / 60)
 		.toString()
-		.padStart(2, "0")}:${(elapsed % 60).toString().padStart(2, "0")}`;
-	return `${descriptor.agentName} [${descriptor.runId}]  ${state}  ${mode}  ${clock}`;
+		.padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+}
+
+/** One-line picker label, without the leading status glyph. */
+export function describeManagerRun(descriptor: ManagerRunDescriptor, now = Date.now()): string {
+	const outcome = managerRunOutcome(descriptor);
+	const elapsedMs = Math.max(0, (descriptor.completedAt ?? now) - (descriptor.startedAt ?? now));
+	const mode = descriptor.mode?.toLowerCase() ?? "unknown";
+	return `${descriptor.agentName} [${descriptor.runId}] · ${managerStateLabel(descriptor, outcome)} · ${mode} · ${formatManagerClock(elapsedMs)}`;
 }
 
 /** Unique labels for the manager picker plus a label -> index map. */
@@ -201,6 +248,103 @@ export function buildManagerPicker(
 		labels.push(label);
 	});
 	return { labels, byLabel };
+}
+
+/** A batch of runs sharing one dispatch. */
+export interface ManagerBatch {
+	/** Dispatch id, or a per-run fallback when the run has none. */
+	key: string;
+	dispatchId?: string;
+	/** Item indices in the source descriptor list, in first-seen order. */
+	itemIndices: number[];
+	active: boolean;
+	failed: boolean;
+	outcome: ManagerRunOutcome;
+	execution?: SubagentExecution;
+	detached?: boolean;
+	startedAt?: number;
+	completedAt?: number;
+}
+
+/** Batch identity: the owning dispatch, or the run's position as a singleton. */
+export function managerBatchKey(descriptor: ManagerRunDescriptor, index: number): string {
+	return descriptor.dispatchId ?? `run:${index}`;
+}
+
+/** Worst-state rollup for a header: blocked > running > paused > failed > canceled > finished. */
+export function rollupBatchOutcome(outcomes: readonly ManagerRunOutcome[]): ManagerRunOutcome {
+	if (outcomes.includes("blocked")) return "blocked";
+	if (outcomes.includes("running")) return "running";
+	if (outcomes.includes("paused")) return "paused";
+	if (outcomes.includes("failed")) return "failed";
+	if (outcomes.includes("canceled")) return "canceled";
+	return "finished";
+}
+
+/**
+ * Group descriptors into dispatches, preserving first-seen order inside each
+ * batch. Active batches come first, then settled batches; callers decide how to
+ * separate the two groups.
+ */
+export function groupManagerBatches(descriptors: readonly ManagerRunDescriptor[]): ManagerBatch[] {
+	const batches = new Map<string, ManagerBatch>();
+	const order: string[] = [];
+	descriptors.forEach((descriptor, index) => {
+		const key = managerBatchKey(descriptor, index);
+		let batch = batches.get(key);
+		if (!batch) {
+			batch = {
+				key,
+				...(descriptor.dispatchId !== undefined ? { dispatchId: descriptor.dispatchId } : {}),
+				itemIndices: [],
+				active: false,
+				failed: false,
+				outcome: "finished",
+			};
+			batches.set(key, batch);
+			order.push(key);
+		}
+		batch.itemIndices.push(index);
+		batch.active = batch.active || descriptor.active;
+		batch.failed = batch.failed || descriptor.failed;
+		if (batch.execution === undefined) batch.execution = descriptor.execution;
+		if (descriptor.detached) batch.detached = true;
+		if (descriptor.startedAt !== undefined) {
+			batch.startedAt = batch.startedAt === undefined ? descriptor.startedAt : Math.min(batch.startedAt, descriptor.startedAt);
+		}
+		if (descriptor.completedAt !== undefined) {
+			batch.completedAt =
+				batch.completedAt === undefined ? descriptor.completedAt : Math.max(batch.completedAt, descriptor.completedAt);
+		}
+	});
+	for (const batch of batches.values()) {
+		batch.outcome = rollupBatchOutcome(batch.itemIndices.map((index) => managerRunOutcome(descriptors[index])));
+	}
+	const active = order.filter((key) => batches.get(key)?.active);
+	const settled = order.filter((key) => !batches.get(key)?.active);
+	return [...active, ...settled].map((key) => batches.get(key)!);
+}
+
+/** A batch earns a header when it is a real dispatch or holds more than one run. */
+export function shouldShowBatchHeader(batch: ManagerBatch): boolean {
+	return batch.dispatchId !== undefined || batch.itemIndices.length > 1;
+}
+
+/** Header left side, glyphs included: `󰚩 dp_7c1 · 󱐋 async · 2 runs · detached`. */
+export function describeManagerBatchHeader(batch: ManagerBatch): string {
+	const parts: string[] = [batch.dispatchId ?? "ad hoc"];
+	if (batch.execution) parts.push(`${MANAGER_ICONS[batch.execution]} ${batch.execution}`);
+	const count = batch.itemIndices.length;
+	parts.push(`${count} run${count === 1 ? "" : "s"}`);
+	if (batch.detached) parts.push("detached");
+	return `${MANAGER_ICONS.batch} ${parts.join(" · ")}`;
+}
+
+/** Elapsed clock for a batch header: live for active batches, total otherwise. */
+export function managerBatchElapsed(batch: ManagerBatch, now = Date.now()): string {
+	const end = batch.active ? now : (batch.completedAt ?? now);
+	const start = batch.startedAt ?? end;
+	return formatManagerClock(end - start);
 }
 
 /** Structural subset of a live registry run needed to build a descriptor. */

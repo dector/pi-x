@@ -6,18 +6,32 @@
  * pure row/shortcut helpers stay testable without a terminal; the component
  * only renders rows and forwards intents through callbacks.
  *
- * Active runs are grouped first, finished runs second, with exactly one blank
+ * Runs are grouped into batches by dispatch: each batch renders a header row
+ * (dispatch id, execution mode, run count, roll-up glyph) followed by its runs.
+ * Active batches come first, settled batches second, with exactly one blank
  * non-selectable line between the two groups when both exist. Arrow keys skip
- * the separator, `enter` opens the run's action menu, `d` attaches/joins the
- * selected run, `D` detaches an attached blocking dispatch, and `esc` closes.
- * An ineligible shortcut keeps the list open and shows a concise inline warning.
+ * the separator and headers, `enter` opens the run's action menu, `d`
+ * attaches/joins the selected run, `D` detaches an attached blocking dispatch,
+ * and `esc` closes. An ineligible shortcut keeps the list open and shows a
+ * concise inline warning.
  */
 
-import { matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
-import { buildManagerPicker, type ManagerRunDescriptor } from "./manager.ts";
+import { matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import {
+	MANAGER_ICONS,
+	MANAGER_OUTCOME_TONE,
+	buildManagerPicker,
+	describeManagerBatchHeader,
+	groupManagerBatches,
+	managerBatchElapsed,
+	managerRunOutcome,
+	shouldShowBatchHeader,
+	type ManagerBatch,
+	type ManagerRunDescriptor,
+} from "./manager.ts";
 
 export const MANAGER_LIST_TITLE = "Subagent manager";
-export const MANAGER_LIST_HELP = "↑↓ move • enter actions • d attach • D detach • esc close";
+export const MANAGER_LIST_HELP = "↑↓ or j/k move • enter actions • d attach • D detach • esc close";
 export const DEFAULT_MANAGER_LIST_VISIBLE = 12;
 
 /** Structural subset the list needs from a manager entry. */
@@ -25,23 +39,36 @@ export interface ManagerListItemLike {
 	descriptor: ManagerRunDescriptor;
 }
 
-/** One rendered list row: either a run or the non-selectable group separator. */
-export type ManagerListRow = { kind: "item"; itemIndex: number } | { kind: "separator" };
+/** One rendered list row: a batch header, a run, or the group separator. */
+export type ManagerListRow =
+	| { kind: "batch"; groupIndex: number }
+	| { kind: "item"; itemIndex: number }
+	| { kind: "separator" };
 
 /**
- * Group active runs before finished runs, inserting one separator row between
- * them only when both groups are present. Relative order inside a group is
- * preserved, and `itemIndex` maps each item row back to the original array.
+ * Group runs by dispatch, keeping active batches before settled ones with one
+ * non-selectable separator when both groups exist. A batch header row is emitted
+ * only for a real dispatch or a multi-run batch, so ad-hoc single runs stay flat.
  */
 export function buildManagerListRows(descriptors: readonly ManagerRunDescriptor[]): ManagerListRow[] {
-	const active: number[] = [];
-	const finished: number[] = [];
-	descriptors.forEach((descriptor, index) => {
-		(descriptor.active ? active : finished).push(index);
-	});
-	const rows: ManagerListRow[] = active.map((itemIndex) => ({ kind: "item", itemIndex }));
-	if (active.length > 0 && finished.length > 0) rows.push({ kind: "separator" });
-	for (const itemIndex of finished) rows.push({ kind: "item", itemIndex });
+	return buildManagerListRowsFromBatches(groupManagerBatches(descriptors));
+}
+
+/** Row builder shared by `buildManagerListRows` and the component. */
+export function buildManagerListRowsFromBatches(batches: readonly ManagerBatch[]): ManagerListRow[] {
+	const activeCount = batches.filter((batch) => batch.active).length;
+	const rows: ManagerListRow[] = [];
+	const emit = (from: number, to: number): void => {
+		for (let groupIndex = from; groupIndex < to; groupIndex += 1) {
+			const batch = batches[groupIndex];
+			if (!batch) continue;
+			if (shouldShowBatchHeader(batch)) rows.push({ kind: "batch", groupIndex });
+			for (const itemIndex of batch.itemIndices) rows.push({ kind: "item", itemIndex });
+		}
+	};
+	emit(0, activeCount);
+	if (activeCount > 0 && activeCount < batches.length) rows.push({ kind: "separator" });
+	emit(activeCount, batches.length);
 	return rows;
 }
 
@@ -111,22 +138,42 @@ export interface ManagerListViewOptions<T extends ManagerListItemLike> {
 export class ManagerListView<T extends ManagerListItemLike> implements Component {
 	private readonly options: ManagerListViewOptions<T>;
 	private readonly labels: string[];
+	private readonly batches: ManagerBatch[];
 	private readonly rows: ManagerListRow[];
 	private readonly selectable: number[];
+	private readonly now: number;
+	private readonly summary: string;
 	private selectedRow: number;
 	private status: string | undefined;
 
 	constructor(options: ManagerListViewOptions<T>) {
 		this.options = options;
-		this.labels = buildManagerPicker(
-			options.items.map((item) => item.descriptor),
-			options.now?.() ?? Date.now(),
-		).labels;
-		this.rows = buildManagerListRows(options.items.map((item) => item.descriptor));
+		this.now = options.now?.() ?? Date.now();
+		const descriptors = options.items.map((item) => item.descriptor);
+		this.labels = buildManagerPicker(descriptors, this.now).labels;
+		this.batches = groupManagerBatches(descriptors);
+		this.rows = buildManagerListRowsFromBatches(this.batches);
 		this.selectable = this.rows
 			.map((row, index) => (row.kind === "item" ? index : -1))
 			.filter((index) => index >= 0);
 		this.selectedRow = this.selectable[0] ?? 0;
+
+		const counts = { active: 0, blocked: 0, failed: 0, finished: 0 };
+		for (const descriptor of descriptors) {
+			const outcome = managerRunOutcome(descriptor);
+			if (outcome === "blocked") counts.blocked += 1;
+			else if (descriptor.active) counts.active += 1;
+			else if (outcome === "failed" || outcome === "canceled") counts.failed += 1;
+			else counts.finished += 1;
+		}
+		this.summary = [
+			counts.active ? `${counts.active} active` : "",
+			counts.blocked ? `${counts.blocked} blocked` : "",
+			counts.failed ? `${counts.failed} failed` : "",
+			counts.finished ? `${counts.finished} finished` : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
 	}
 
 	/** Original item index for the selected run, or undefined if none. */
@@ -151,9 +198,9 @@ export class ManagerListView<T extends ManagerListItemLike> implements Component
 
 	handleInput(data: string): void {
 		const keybindings = this.options.keybindings;
-		if (keybindings.matches(data, "tui.select.up")) {
+		if (keybindings.matches(data, "tui.select.up") || data === "k" || data === "K") {
 			this.move(-1);
-		} else if (keybindings.matches(data, "tui.select.down")) {
+		} else if (keybindings.matches(data, "tui.select.down") || data === "j" || data === "J") {
 			this.move(1);
 		} else if (keybindings.matches(data, "tui.select.confirm")) {
 			const index = this.selectedItemIndex;
@@ -171,12 +218,9 @@ export class ManagerListView<T extends ManagerListItemLike> implements Component
 		const w = Math.max(1, width);
 		const theme = this.options.theme;
 		const border = truncateToWidth(theme.fg("dim", "─".repeat(w)), w);
-		const lines: string[] = [
-			border,
-			"",
-			truncateToWidth(` ${theme.fg("accent", theme.bold(MANAGER_LIST_TITLE))}`, w),
-			"",
-		];
+		const lines: string[] = [border, "", truncateToWidth(` ${theme.fg("accent", theme.bold(MANAGER_LIST_TITLE))}`, w)];
+		if (this.summary) lines.push(truncateToWidth(` ${theme.fg("dim", this.summary)}`, w));
+		lines.push("");
 
 		const { start, end } = this.visibleRange();
 		for (let index = start; index < end; index++) {
@@ -186,11 +230,19 @@ export class ManagerListView<T extends ManagerListItemLike> implements Component
 				lines.push("");
 				continue;
 			}
+			if (row.kind === "batch") {
+				lines.push(this.renderBatch(row.groupIndex, w));
+				continue;
+			}
 			const selected = index === this.selectedRow;
-			const prefix = selected ? " → " : "   ";
+			const descriptor = this.options.items[row.itemIndex]?.descriptor;
+			if (!descriptor) continue;
+			const outcome = managerRunOutcome(descriptor);
+			const icon = theme.fg(MANAGER_OUTCOME_TONE[outcome], MANAGER_ICONS[outcome]);
+			const prefix = selected ? theme.fg("thinkingHigh", " → ") : "   ";
 			const label = this.labels[row.itemIndex] ?? "";
-			const text = prefix + label;
-			lines.push(truncateToWidth(selected ? theme.fg("accent", text) : text, w));
+			const styledLabel = selected ? theme.fg("thinkingHigh", theme.bold(label)) : label;
+			lines.push(truncateToWidth(`${prefix}${icon} ${styledLabel}`, w));
 		}
 
 		if (start > 0 || end < this.rows.length) {
@@ -203,6 +255,19 @@ export class ManagerListView<T extends ManagerListItemLike> implements Component
 		lines.push("");
 		lines.push(border);
 		return lines;
+	}
+
+	/** Header row: glyphs + dispatch/execution/count on the left, rollup + clock on the right. */
+	private renderBatch(groupIndex: number, width: number): string {
+		const theme = this.options.theme;
+		const batch = this.batches[groupIndex];
+		if (!batch) return "";
+		const right = `${MANAGER_ICONS[batch.outcome]} ${managerBatchElapsed(batch, this.now)}`;
+		const leftBudget = Math.max(1, width - visibleWidth(right) - 2);
+		const left = truncateToWidth(` ${describeManagerBatchHeader(batch)}`, leftBudget, "…");
+		const gap = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right) - 1));
+		const line = `${theme.fg("muted", left)}${gap}${theme.fg(MANAGER_OUTCOME_TONE[batch.outcome], right)}`;
+		return truncateToWidth(line, width);
 	}
 
 	/** Move selection by one, wrapping and skipping the group separator. */

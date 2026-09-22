@@ -32,6 +32,7 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 Current dialog items:
 
 - `s - prompt stash...` (opens a stash submenu)
+- `a - subagents` (opens the `/px:agents` batch list)
 - `Ctrl+r - rewire agents (toggle)`
 - `Ctrl+R - rewire agents (menu)`
 - `r - toggle reader mode`
