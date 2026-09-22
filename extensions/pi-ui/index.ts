@@ -54,6 +54,11 @@ const CHIP_FOREGROUND_RESET = "\x1b[39m";
 const CHIP_BACKGROUND_RESET = "\x1b[49m";
 const CHIP_SEPARATOR = " · ";
 const CHIP_DURATION_MS = 1500;
+// The pill chip is kept but not shown; the selected entry is framed with corner marks instead.
+const SHOW_ENTRY_CHIP = false;
+// Corner marks stamped inside the selected entry: top-left, top-right, bottom-left, bottom-right.
+const CORNER_MARKS = ["\u231c", "\u231d", "\u231e", "\u231f"] as const;
+const DECORATED_ENTRY_KEY = "__pi_ui_decorated_entry_v1";
 
 /**
  * Transcript entry components pi renders, used to recognise them by class name.
@@ -663,6 +668,76 @@ function selectionIndex(positions: readonly EntryPosition[]): number {
 	return positions.findIndex((position) => position.component === selected);
 }
 
+interface DecorationState {
+	component: TrackedEntry;
+	originalRender?: (width: number) => string[];
+}
+
+/** Purple tab with a white corner glyph, matching the selection pill palette. */
+function cornerMarkStyle(glyph: string): string {
+	return `${CHIP_PURPLE_BACKGROUND}${CHIP_WHITE_FOREGROUND}${glyph}${CHIP_FOREGROUND_RESET}${CHIP_BACKGROUND_RESET}`;
+}
+
+/** Stamp the four corner marks into the first and last rendered lines. */
+function stampCorners(lines: string[], width: number): string[] {
+	if (lines.length === 0 || width < 2) return lines;
+	const [topLeft, topRight, bottomLeft, bottomRight] = CORNER_MARKS;
+	const stamped = [...lines];
+	stamped[0] = stampCorner(stamped[0] ?? "", topLeft, "left", width);
+	stamped[0] = stampCorner(stamped[0] ?? "", topRight, "right", width);
+	const last = stamped.length - 1;
+	if (last > 0) {
+		stamped[last] = stampCorner(stamped[last] ?? "", bottomLeft, "left", width);
+		stamped[last] = stampCorner(stamped[last] ?? "", bottomRight, "right", width);
+	}
+	return stamped;
+}
+
+/** Put a mark in the first or last cell of a line, keeping the line at `width`. */
+function stampCorner(line: string, glyph: string, side: "left" | "right", width: number): string {
+	const mark = cornerMarkStyle(glyph);
+	const bodyWidth = Math.max(0, width - 1);
+	const body = padToVisibleWidth(truncateToWidth(line, bodyWidth, ""), bodyWidth);
+	return side === "left" ? `${mark}${body}` : `${body}${mark}`;
+}
+
+function requestTuiRender(tui: unknown): void {
+	const candidate = tui as { requestRender?: () => void } | undefined;
+	if (typeof candidate?.requestRender === "function") candidate.requestRender();
+}
+
+/** Entry currently framed with corner marks. */
+export function getDecoratedEntry(): TrackedEntry | undefined {
+	const state = (globalThis as Record<string, unknown>)[DECORATED_ENTRY_KEY] as DecorationState | undefined;
+	return state?.component;
+}
+
+/** Remove the corner marks from the previously framed entry. */
+export function undecorateEntry(): void {
+	const globalAny = globalThis as Record<string, unknown>;
+	const state = globalAny[DECORATED_ENTRY_KEY] as DecorationState | undefined;
+	if (!state) return;
+	if (state.originalRender) state.component.render = state.originalRender;
+	else delete (state.component as { render?: unknown }).render;
+	state.component.invalidate?.();
+	globalAny[DECORATED_ENTRY_KEY] = undefined;
+}
+
+/** Frame the entry with corner marks stamped into its own rendered lines. */
+export function decorateEntry(entry: TrackedEntry): boolean {
+	if (typeof entry.render !== "function") return false;
+	if (getDecoratedEntry() === entry) return true;
+	undecorateEntry();
+
+	const originalRender = entry.render;
+	entry.render = function decoratedRender(this: unknown, width: number): string[] {
+		return stampCorners(originalRender.call(this, width), width);
+	};
+	entry.invalidate?.();
+	(globalThis as Record<string, unknown>)[DECORATED_ENTRY_KEY] = { component: entry, originalRender };
+	return true;
+}
+
 function selectPosition(
 	tui: unknown,
 	scrollView: ScrollViewLike,
@@ -673,11 +748,13 @@ function selectPosition(
 	if (!target) return { status: "empty" };
 	scrollView.scrollTo(target.top);
 	setSelectedEntry(target.component);
+	decorateEntry(target.component);
+	requestTuiRender(tui);
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
 	const label = describeEntry(target.component);
-	showEntryChip(tui, row, { label, index: targetIndex, total: positions.length });
+	if (SHOW_ENTRY_CHIP) showEntryChip(tui, row, { label, index: targetIndex, total: positions.length });
 
 	return {
 		status: "moved",
@@ -751,15 +828,19 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 	const expanded = !isEntryExpanded(entry);
 	entry.setExpanded?.(expanded);
 	entry.invalidate?.();
+	decorateEntry(entry);
+	requestTuiRender(tui);
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = position.top - scrollTop;
-	showEntryChip(tui, row, {
-		label,
-		index,
-		total: positions.length,
-		state: expanded ? "expanded" : "collapsed",
-	});
+	if (SHOW_ENTRY_CHIP) {
+		showEntryChip(tui, row, {
+			label,
+			index,
+			total: positions.length,
+			state: expanded ? "expanded" : "collapsed",
+		});
+	}
 
 	return {
 		status: "toggled",
@@ -1832,6 +1913,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		setSelectedEntry(undefined);
+		undecorateEntry();
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
@@ -1839,6 +1921,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		setSelectedEntry(undefined);
+		undecorateEntry();
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);

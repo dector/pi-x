@@ -129,7 +129,9 @@ Entries with nothing to show are skipped, so navigation follows what you actuall
 - zero-height entries (for example an assistant message with no rendered content)
 - assistant messages that only request tools while thinking is hidden — pi renders those as a `Thinking...` placeholder plus padding
 
-A short chip is drawn at the selected entry's own screen row, right-aligned: an intense purple pill with pure white text, framed by Nerd Font chevrons (`nf-md-chevron_down` / `nf-md-chevron_up`), e.g. `󰅀 tool · 310/312 󰅁`. The entry label is italic. The background is a fixed branded purple (`#5b21b6`) on truecolor terminals and the theme's own purple on 256-colour terminals, with pure white text (bright white on 256-colour). The chip disappears after 1.5 s, and a toggle appends ` · expanded` or ` · collapsed`.
+The selected entry is framed with corner brackets stamped **inside its own lines**: `⌜` / `⌝` in the first and last cell of its first line, `⌞` / `⌟` in the same cells of its last line. They are purple tabs with white glyphs (same palette as the pill below). Because the marks are part of the entry's render, they scroll with it, leave its height unchanged, and touch only that entry; short lines are padded so the right-hand marks stay flush to the edge.
+
+The earlier pill chip (`󰅀 tool · 310/312 󰅁`, a right-aligned intense purple pill with pure white text and italic label) is still implemented but switched **off**: flip `SHOW_ENTRY_CHIP` in `index.ts` to bring it back.
 
 `Alt+End` jumps to the last entry and `Alt+Home` (Alt+Start on keyboards that label the key that way) to the first.
 
@@ -147,7 +149,8 @@ Implementation notes:
 
 - Everything is read-only on pi's side. Entries are found by walking the transcript's layout tree from the primary `ScrollView` and matching known entry component class names; no component prototypes are patched and nothing is registered ahead of time, so session restore and `/reload` need no special handling.
 - Entry line offsets come from the child heights recorded during the last render (`mouseLayout`); navigation then calls `scrollTo(line)`.
-- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. Its background is a fixed intense purple in truecolor mode and the theme's `thinkingHigh` colour reused as a background (`getFgAnsi` → `48;…`) otherwise; without a captured theme it falls back to inverse video, like pi's own flash messages.
+- The corner marks wrap the selected entry's `render(width)` for that instance only (the original is restored when the selection moves, and on `session_start` / `session_tree`). Marks are stamped with `truncateToWidth` + padding, so nothing else changes.
+- The disabled pill is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marked a row without stealing keyboard focus. Its background is a fixed intense purple in truecolor mode and the theme's `thinkingHigh` colour reused as a background (`getFgAnsi` → `48;…`) otherwise; without a captured theme it falls back to inverse video, like pi's own flash messages.
 - The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
 - Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 

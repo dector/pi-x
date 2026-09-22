@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	computeEntryPositions,
+	undecorateEntry,
+	getDecoratedEntry,
+	decorateEntry,
 	describeEntry,
 	findNextEntryTop,
 	findPreviousEntryTop,
@@ -343,6 +346,65 @@ describe("entry chip", () => {
 	});
 });
 
+describe("corner decoration", () => {
+	test("stamps corner marks into the first and last line", () => {
+		const entry = new ToolExecutionComponent(3);
+		expect(decorateEntry(entry)).toBe(true);
+
+		const lines = entry.render(20);
+
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("\u231c");
+		expect(lines[0]).toContain("\u231d");
+		expect(lines[2]).toContain("\u231e");
+		expect(lines[2]).toContain("\u231f");
+		expect(lines[1]).not.toContain("\u231c");
+		// Marks sit in the first and last cell of the line.
+		expect(visibleWidth(lines[0] ?? "")).toBe(20);
+		expect(lines[0]?.startsWith("\x1b[48;2;91;33;182m")).toBe(true);
+		expect(lines[0]?.endsWith("\x1b[39m\x1b[49m")).toBe(true);
+	});
+
+	test("marks a single-line entry once", () => {
+		const entry = new ToolExecutionComponent(1);
+		decorateEntry(entry);
+
+		const lines = entry.render(20);
+
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toContain("\u231c");
+		expect(lines[0]).toContain("\u231d");
+		expect(lines[0]).not.toContain("\u231e");
+	});
+
+	test("restores the previous entry when the selection moves", () => {
+		const first = new ToolExecutionComponent(2);
+		const second = new ToolExecutionComponent(2);
+
+		decorateEntry(first);
+		expect(first.render(20)[0]).toContain("\u231c");
+
+		decorateEntry(second);
+		expect(getDecoratedEntry()).toBe(second);
+		expect(first.render(20)[0]).not.toContain("\u231c");
+
+		undecorateEntry();
+		expect(getDecoratedEntry()).toBeUndefined();
+		expect(second.render(20)[0]).not.toContain("\u231c");
+	});
+
+	test("reports entries without render support", () => {
+		expect(decorateEntry({} as never)).toBe(false);
+	});
+
+	test("leaves narrow lines untouched", () => {
+		const entry = new ToolExecutionComponent(1);
+		decorateEntry(entry);
+
+		expect(entry.render(1)).toEqual([""]);
+	});
+});
+
 describe("selection navigation", () => {
 	test("skips zero-height entries and hidden placeholder messages", () => {
 		const chat = new Container();
@@ -404,7 +466,9 @@ describe("selection navigation", () => {
 		});
 		expect(getSelectedEntry()).toBe(chat.children[1]);
 		expect(scrollView.scrollCalls).toEqual([2]);
-		expect(tui.overlayCalls[0]?.options.row).toBe(0);
+		// The pill chip is currently disabled; the entry is framed with corner marks instead.
+		expect(tui.overlayCalls).toHaveLength(0);
+		expect(getDecoratedEntry()).toBe(chat.children[1]);
 	});
 
 	test("steps strictly through entries once something is selected", () => {
@@ -447,9 +511,7 @@ describe("selection navigation", () => {
 		const first = selectEdgeEntry(tui, "first");
 		expect(first.status === "moved" && first.result).toMatchObject({ index: 0, label: "user", atStart: true });
 		expect(getSelectedEntry()).toBe(chat.children[0]);
-		const firstChip = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
-		expect(firstChip).toContain("user");
-		expect(firstChip).toContain("· 1/3");
+		expect(getDecoratedEntry()).toBe(chat.children[0]);
 	});
 
 	test("reports empty and unavailable transcripts", () => {
@@ -479,8 +541,10 @@ describe("selection toggle", () => {
 		expect(first.status).toBe("toggled");
 		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
 		expect(tool.expanded).toBe(true);
-		expect(tool.invalidations).toBe(1);
-		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("· 2/3 · expanded");
+		// One invalidation from the toggle, one from framing the entry.
+		expect(tool.invalidations).toBeGreaterThanOrEqual(1);
+		expect(tui.overlayCalls).toHaveLength(0);
+		expect(getDecoratedEntry()).toBe(tool);
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);
