@@ -274,6 +274,12 @@ describe("decorateBorderGitStats", () => {
 		);
 	});
 
+	test("colors the group divider with the separator style", () => {
+		expect(decorateBorderGitStats(stats, { separator: (text) => `<sep>${text}</sep>` })).toBe(
+			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m<sep> · </sep>\u001b[32m󰐖 150\u001b[0m \u001b[31m󰍵 200\u001b[0m",
+		);
+	});
+
 	test("drops the changed-line group for narrow frames", () => {
 		expect(decorateBorderGitStats(stats, { includeLineCounts: false })).toBe(
 			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m",

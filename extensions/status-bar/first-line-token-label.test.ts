@@ -39,6 +39,7 @@ describe("buildFrameContextParts", () => {
 		expect(buildFrameContextParts(ctx, frameTheme)).toEqual({
 			usage: "\u001b[38;2;86;76;110m󰊚 15.9% 210k\u001b[39m",
 			cost: "\u001b[38;2;86;76;110m󰇁 0.00\u001b[39m",
+			separator: "\u001b[38;2;86;76;110m · \u001b[39m",
 		});
 	});
 });

@@ -209,6 +209,8 @@ interface FrameContextParts {
 	usage: string;
 	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 Tot󰇁 0.034`. Relocated on narrow frames. */
 	cost: string;
+	/** Separator between usage and cost, colored like the meter so the dot never shows as white. */
+	separator: string;
 }
 
 // Uses the subdued accent for the first bucket; higher usage follows the status-bar context colors.
@@ -240,15 +242,14 @@ export function buildFrameContextParts(
 
 	const usageLabel = `${BORDER_CONTEXT_ICON}${percent} ${tokens}`;
 	const costText = decorateBorderContextCost(costLabel);
-	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
+	const separator = " · ";
+	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText, separator };
 
-	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, (text) =>
-		styleDarkAccent(theme, text),
-	);
-	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, (text) =>
-		styleDarkAccent(theme, text),
-	);
-	return { usage: styledUsage, cost: styledCost };
+	const firstBucket = (text: string) => styleDarkAccent(theme, text);
+	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, firstBucket);
+	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, firstBucket);
+	const styledSeparator = styleContextLabel(theme, Number(percentValue.toFixed(1)), separator, firstBucket);
+	return { usage: styledUsage, cost: styledCost, separator: styledSeparator };
 }
 
 type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefined;
@@ -531,6 +532,7 @@ class FrameStatusEditor extends CustomEditor {
 		if (!hasVisibleText(label)) return "";
 		const decorated = decorateBorderGitStats(sanitizeStatusText(label), {
 			mute: this.subduedColor,
+			separator: (text) => this.borderColor(text),
 		});
 		return `${this.borderColor(FRAME_LABEL_OPEN)}${decorated}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`;
 	}
@@ -694,7 +696,7 @@ class FrameStatusEditor extends CustomEditor {
 		// Full border context is usage + cost; the usage meter always stays on the border.
 		const combinedContext =
 			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
-				? `${usageLabel} · ${costLabel}`
+				? `${usageLabel}${contextParts?.separator ?? " · "}${costLabel}`
 				: usageLabel || costLabel;
 		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
@@ -1820,6 +1822,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const relocatedGit = hasVisibleText(relocatedGitRaw)
 						? decorateBorderGitStats(sanitizeStatusText(relocatedGitRaw), {
 								mute: (value) => styleDarkAccent(theme, value),
+								separator: (value) => theme.fg("thinkingOff", value),
 							})
 						: undefined;
 					const mergeRelocated = (

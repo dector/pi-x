@@ -105,14 +105,20 @@ function readGitCount(chunk: string | undefined, marker: string): number | undef
  *
  * Both groups reuse the addition/removal icons; the modified count only exists
  * in the files group. Zero values use the caller's subdued color (via `mute`);
- * nonzero values keep the producer's ANSI colors. `includeLineCounts: false` drops the line group
- * for narrow frames.
+ * nonzero values keep the producer's ANSI colors. `separator` colors the group
+ * divider (defaults to uncolored). `includeLineCounts: false` drops the line
+ * group for narrow frames.
  */
 export function decorateBorderGitStats(
 	label: string,
-	options: { mute?: (text: string) => string; includeLineCounts?: boolean } = {},
+	options: {
+		mute?: (text: string) => string;
+		separator?: (text: string) => string;
+		includeLineCounts?: boolean;
+	} = {},
 ): string {
 	const mute = options.mute ?? ((text: string) => text);
+	const separator = options.separator ?? ((text: string) => text);
 	const includeLineCounts = options.includeLineCounts ?? true;
 
 	const separatorIndex = label.indexOf("·");
@@ -158,7 +164,7 @@ export function decorateBorderGitStats(
 		renderItem(BORDER_GIT_MARKER_ICONS.removals, readGitCount(lineRemove, "-") ?? 0, firstAnsiSequence(lineRemove ?? "")),
 	].join(" ");
 
-	return `${filesGroup} · ${lineGroup}`;
+	return `${filesGroup}${separator(" · ")}${lineGroup}`;
 }
 
 // Border-only context/cost icons (Nerd Font). Each keeps a trailing space so the
