@@ -368,7 +368,7 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 
 ## Session model rewiring
 
-Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `Rewire   [OFF]` in muted text while disabled and `Rewire   [ON]` in red while enabled; `  Configuration` opens the model, effort, and preset selectors.
+Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `Rewire   [OFF]` in muted text while disabled and `Rewire   [ON]` in red while enabled; `  Configuration` opens the model, effort, and preset selectors. While enabled, a muted bottom row shows `Rewiring to <model> · <effort>`.
 
 Rewire presets are stored globally in `~/.pi/agent/subagent-rewire-presets.json`. Configuration shows `Presets (N)` first, where `N` is the stored preset count. In the preset list, press `n` to create a preset by selecting its model and effort, `d` to delete the preset under the cursor after confirmation, or `enter` to apply one to the current rewire configuration. The most recently applied preset supplies the initial model and effort in later sessions and is preselected when creating another preset.
 
