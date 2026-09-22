@@ -2,9 +2,6 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	computeEntryPositions,
-	undecorateEntry,
-	getDecoratedEntry,
-	decorateEntry,
 	describeEntry,
 	findNextEntryTop,
 	findPreviousEntryTop,
@@ -17,6 +14,9 @@ import {
 	selectAdjacentEntry,
 	selectEdgeEntry,
 	setSelectedEntry,
+	setSelectionMarker,
+	getSelectionMarker,
+	listSelectionMarkers,
 	showEntryChip,
 	toggleSelectedEntry,
 	type ScrollViewLike,
@@ -144,7 +144,7 @@ function createChat(offsets?: Array<{ component: Container["children"][number]; 
 
 beforeEach(() => {
 	setSelectedEntry(undefined);
-	undecorateEntry();
+	setSelectionMarker("chip");
 });
 
 describe("entry classification", () => {
@@ -347,62 +347,29 @@ describe("entry chip", () => {
 	});
 });
 
-describe("corner decoration", () => {
-	test("stamps corner marks into the first and last line", () => {
-		const entry = new ToolExecutionComponent(3);
-		expect(decorateEntry(entry)).toBe(true);
+describe("selection markers", () => {
+	test("lists the available markers and switches between them", () => {
+		expect(listSelectionMarkers()).toContain("chip");
+		expect(listSelectionMarkers()).toContain("none");
+		expect(getSelectionMarker()).toBe("chip");
 
-		const lines = entry.render(20);
+		expect(setSelectionMarker("none")).toBe(true);
+		expect(getSelectionMarker()).toBe("none");
 
-		expect(lines).toHaveLength(3);
-		expect(lines[0]).toContain("\u231c");
-		expect(lines[0]).toContain("\u231d");
-		expect(lines[2]).toContain("\u231e");
-		expect(lines[2]).toContain("\u231f");
-		expect(lines[1]).not.toContain("\u231c");
-		// Marks sit in the first and last cell of the line.
-		expect(visibleWidth(lines[0] ?? "")).toBe(20);
-		expect(lines[0]?.startsWith("\x1b[48;2;91;33;182m")).toBe(true);
-		expect(lines[0]?.endsWith("\x1b[39m\x1b[49m")).toBe(true);
+		expect(setSelectionMarker("nope")).toBe(false);
+		expect(getSelectionMarker()).toBe("none");
 	});
 
-	test("marks a single-line entry once", () => {
-		const entry = new ToolExecutionComponent(1);
-		decorateEntry(entry);
+	test("the none marker draws nothing", () => {
+		const chat = createChat();
+		const tui = createTui(createScrollView(chat));
+		setSelectionMarker("none");
 
-		const lines = entry.render(20);
+		const outcome = selectAdjacentEntry(tui, 1);
 
-		expect(lines).toHaveLength(1);
-		expect(lines[0]).toContain("\u231c");
-		expect(lines[0]).toContain("\u231d");
-		expect(lines[0]).not.toContain("\u231e");
-	});
-
-	test("restores the previous entry when the selection moves", () => {
-		const first = new ToolExecutionComponent(2);
-		const second = new ToolExecutionComponent(2);
-
-		decorateEntry(first);
-		expect(first.render(20)[0]).toContain("\u231c");
-
-		decorateEntry(second);
-		expect(getDecoratedEntry()).toBe(second);
-		expect(first.render(20)[0]).not.toContain("\u231c");
-
-		undecorateEntry();
-		expect(getDecoratedEntry()).toBeUndefined();
-		expect(second.render(20)[0]).not.toContain("\u231c");
-	});
-
-	test("reports entries without render support", () => {
-		expect(decorateEntry({} as never)).toBe(false);
-	});
-
-	test("leaves narrow lines untouched", () => {
-		const entry = new ToolExecutionComponent(1);
-		decorateEntry(entry);
-
-		expect(entry.render(1)).toEqual([""]);
+		expect(outcome.status).toBe("moved");
+		expect(tui.overlayCalls).toHaveLength(0);
+		expect(getSelectedEntry()).toBe(chat.children[1]);
 	});
 });
 
@@ -468,8 +435,6 @@ describe("selection navigation", () => {
 		expect(getSelectedEntry()).toBe(chat.children[1]);
 		expect(scrollView.scrollCalls).toEqual([2]);
 		expect(tui.overlayCalls[0]?.options.row).toBe(0);
-		// Corner marks are currently switched off.
-		expect(getDecoratedEntry()).toBeUndefined();
 	});
 
 	test("steps strictly through entries once something is selected", () => {
@@ -546,7 +511,6 @@ describe("selection toggle", () => {
 		expect(tool.expanded).toBe(true);
 		expect(tool.invalidations).toBeGreaterThanOrEqual(1);
 		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("· 2/3 · expanded");
-		expect(getDecoratedEntry()).toBeUndefined();
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);

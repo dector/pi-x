@@ -25,7 +25,8 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
-const TOGGLE_SELECTED_SHORTCUT = Key.alt("o");
+const SELECT_LATEST_SHORTCUT = Key.alt("o");
+const TOGGLE_SELECTED_SHORTCUT = Key.ctrlAlt("o");
 const NAV_NEXT_SHORTCUT = Key.alt("j");
 const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
 // Alt+Start on keyboards that label Home as Start.
@@ -54,13 +55,9 @@ const CHIP_FOREGROUND_RESET = "\x1b[39m";
 const CHIP_BACKGROUND_RESET = "\x1b[49m";
 const CHIP_SEPARATOR = " · ";
 const CHIP_DURATION_MS = 1500;
-// The pill chip is the active selection marker.
-const SHOW_ENTRY_CHIP = true;
-// Corner marks stamped inside the selected entry (kept, currently switched off).
-const SHOW_CORNER_MARKS = false;
-// Corner marks stamped inside the selected entry: top-left, top-right, bottom-left, bottom-right.
-const CORNER_MARKS = ["\u231c", "\u231d", "\u231e", "\u231f"] as const;
-const DECORATED_ENTRY_KEY = "__pi_ui_decorated_entry_v1";
+// Selection marker used by default; see SELECTION_MARKERS for the options.
+const DEFAULT_SELECTION_MARKER = "chip";
+const SELECTION_MARKER_ENV = "PI_UI_SELECTION_MARKER";
 
 /**
  * Transcript entry components pi renders, used to recognise them by class name.
@@ -670,74 +667,50 @@ function selectionIndex(positions: readonly EntryPosition[]): number {
 	return positions.findIndex((position) => position.component === selected);
 }
 
-interface DecorationState {
-	component: TrackedEntry;
-	originalRender?: (width: number) => string[];
+/** Context passed to a selection marker. */
+export interface SelectionMarkerContext {
+	tui: unknown;
+	row: number;
+	label: string;
+	index: number;
+	total: number;
+	state?: string;
 }
 
-/** Purple tab with a white corner glyph, matching the selection pill palette. */
-function cornerMarkStyle(glyph: string): string {
-	return `${CHIP_PURPLE_BACKGROUND}${CHIP_WHITE_FOREGROUND}${glyph}${CHIP_FOREGROUND_RESET}${CHIP_BACKGROUND_RESET}`;
+/**
+ * Selection markers. Add an entry here to make a new marker available through
+ * `PI_UI_SELECTION_MARKER` and `/px:pi-ui-marker`.
+ */
+export const SELECTION_MARKERS: Record<string, (context: SelectionMarkerContext) => void> = {
+	/** Right-aligned purple pill with the entry label and position. */
+	chip: ({ tui, row, label, index, total, state }) => {
+		showEntryChip(tui, row, { label, index, total, state });
+	},
+	/** No marker at all. */
+	none: () => {},
+};
+
+let activeSelectionMarker = DEFAULT_SELECTION_MARKER;
+
+/** Names of the available selection markers. */
+export function listSelectionMarkers(): string[] {
+	return Object.keys(SELECTION_MARKERS);
 }
 
-/** Stamp the four corner marks into the first and last rendered lines. */
-function stampCorners(lines: string[], width: number): string[] {
-	if (lines.length === 0 || width < 2) return lines;
-	const [topLeft, topRight, bottomLeft, bottomRight] = CORNER_MARKS;
-	const stamped = [...lines];
-	stamped[0] = stampCorner(stamped[0] ?? "", topLeft, "left", width);
-	stamped[0] = stampCorner(stamped[0] ?? "", topRight, "right", width);
-	const last = stamped.length - 1;
-	if (last > 0) {
-		stamped[last] = stampCorner(stamped[last] ?? "", bottomLeft, "left", width);
-		stamped[last] = stampCorner(stamped[last] ?? "", bottomRight, "right", width);
-	}
-	return stamped;
+/** Currently active selection marker name. */
+export function getSelectionMarker(): string {
+	return activeSelectionMarker;
 }
 
-/** Put a mark in the first or last cell of a line, keeping the line at `width`. */
-function stampCorner(line: string, glyph: string, side: "left" | "right", width: number): string {
-	const mark = cornerMarkStyle(glyph);
-	const bodyWidth = Math.max(0, width - 1);
-	const body = padToVisibleWidth(truncateToWidth(line, bodyWidth, ""), bodyWidth);
-	return side === "left" ? `${mark}${body}` : `${body}${mark}`;
-}
-
-function requestTuiRender(tui: unknown): void {
-	const candidate = tui as { requestRender?: () => void } | undefined;
-	if (typeof candidate?.requestRender === "function") candidate.requestRender();
-}
-
-/** Entry currently framed with corner marks. */
-export function getDecoratedEntry(): TrackedEntry | undefined {
-	const state = (globalThis as Record<string, unknown>)[DECORATED_ENTRY_KEY] as DecorationState | undefined;
-	return state?.component;
-}
-
-/** Remove the corner marks from the previously framed entry. */
-export function undecorateEntry(): void {
-	const globalAny = globalThis as Record<string, unknown>;
-	const state = globalAny[DECORATED_ENTRY_KEY] as DecorationState | undefined;
-	if (!state) return;
-	if (state.originalRender) state.component.render = state.originalRender;
-	else delete (state.component as { render?: unknown }).render;
-	state.component.invalidate?.();
-	globalAny[DECORATED_ENTRY_KEY] = undefined;
-}
-
-/** Frame the entry with corner marks stamped into its own rendered lines. */
-export function decorateEntry(entry: TrackedEntry): boolean {
-	if (typeof entry.render !== "function") return false;
-	if (getDecoratedEntry() === entry) return true;
-	undecorateEntry();
-
-	const originalRender = entry.render;
-	entry.render = function decoratedRender(this: unknown, width: number): string[] {
-		return stampCorners(originalRender.call(this, width), width);
-	};
-	entry.invalidate?.();
-	(globalThis as Record<string, unknown>)[DECORATED_ENTRY_KEY] = { component: entry, originalRender };
+/** Switch the selection marker; returns false for unknown names. */
+export function setSelectionMarker(name: string): boolean {
+	if (!(name in SELECTION_MARKERS)) return false;
+	activeSelectionMarker = name;
 	return true;
+}
+
+function applySelectionMarker(context: SelectionMarkerContext): void {
+	SELECTION_MARKERS[activeSelectionMarker]?.(context);
 }
 
 function selectPosition(
@@ -750,15 +723,11 @@ function selectPosition(
 	if (!target) return { status: "empty" };
 	scrollView.scrollTo(target.top);
 	setSelectedEntry(target.component);
-	if (SHOW_CORNER_MARKS) {
-		decorateEntry(target.component);
-		requestTuiRender(tui);
-	}
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
 	const label = describeEntry(target.component);
-	if (SHOW_ENTRY_CHIP) showEntryChip(tui, row, { label, index: targetIndex, total: positions.length });
+	applySelectionMarker({ tui, row, label, index: targetIndex, total: positions.length });
 
 	return {
 		status: "moved",
@@ -832,21 +801,17 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 	const expanded = !isEntryExpanded(entry);
 	entry.setExpanded?.(expanded);
 	entry.invalidate?.();
-	if (SHOW_CORNER_MARKS) {
-		decorateEntry(entry);
-		requestTuiRender(tui);
-	}
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = position.top - scrollTop;
-	if (SHOW_ENTRY_CHIP) {
-		showEntryChip(tui, row, {
-			label,
-			index,
-			total: positions.length,
-			state: expanded ? "expanded" : "collapsed",
-		});
-	}
+	applySelectionMarker({
+		tui,
+		row,
+		label,
+		index,
+		total: positions.length,
+		state: expanded ? "expanded" : "collapsed",
+	});
 
 	return {
 		status: "toggled",
@@ -1851,6 +1816,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	const intervalMs = Math.max(5, parseIntEnv("PI_UI_WORKING_INTERVAL_MS", DEFAULT_INTERVAL_MS));
 	setGlobalHueStep(parseFloatEnv("PI_UI_WORKING_HUE_STEP_DEG", DEFAULT_HUE_STEP_DEG));
 
+	const requestedMarker = (process.env[SELECTION_MARKER_ENV] ?? "").trim().toLowerCase();
+	if (requestedMarker) setSelectionMarker(requestedMarker);
+
 	let bellEnabled = parseBooleanEnv("PI_UI_BELL", DEFAULT_BELL_ENABLED);
 	setGlobalBellEnabled(bellEnabled);
 	setGlobalBellDebounceMs(
@@ -1919,7 +1887,6 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		setSelectedEntry(undefined);
-		undecorateEntry();
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
@@ -1927,7 +1894,6 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		setSelectedEntry(undefined);
-		undecorateEntry();
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
@@ -1998,6 +1964,25 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerCommand("px:pi-ui-marker", {
+		description: `Selection marker (${listSelectionMarkers().join("|")}): /px:pi-ui-marker [name|status]`,
+		handler: async (args, ctx) => {
+			const trimmed = (args ?? "").trim().toLowerCase();
+			if (!trimmed || trimmed === "status") {
+				notify(
+					ctx,
+					`pi-ui selection marker: ${getSelectionMarker()} (env: ${SELECTION_MARKER_ENV}, options: ${listSelectionMarkers().join(", ")})`,
+				);
+				return;
+			}
+			if (!setSelectionMarker(trimmed)) {
+				notify(ctx, `Usage: /px:pi-ui-marker [${listSelectionMarkers().join("|")}]`);
+				return;
+			}
+			notify(ctx, `pi-ui selection marker: ${getSelectionMarker()}`);
+		},
+	});
+
 	pi.registerCommand("px:pi-ui-bell", {
 		description: "Control bell notifications when pi waits for user input: /px:pi-ui-bell [on|off|toggle|status]",
 		handler: async (args, ctx) => {
@@ -2026,6 +2011,15 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			setGlobalBellEnabled(bellEnabled);
 			notify(ctx, `pi-ui bell ${bellEnabled ? "enabled" : "disabled"}`);
 			if (bellEnabled) ringBell(true);
+		},
+	});
+
+	pi.registerShortcut(SELECT_LATEST_SHORTCUT, {
+		description: "Select the latest transcript entry (same as Alt+End)",
+		handler: async (ctx) => {
+			const outcome = selectEdgeEntry(captureTuiReference(ctx), "last");
+			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
 		},
 	});
 

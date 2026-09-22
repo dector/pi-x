@@ -129,13 +129,11 @@ Entries with nothing to show are skipped, so navigation follows what you actuall
 - zero-height entries (for example an assistant message with no rendered content)
 - assistant messages that only request tools while thinking is hidden — pi renders those as a `Thinking...` placeholder plus padding
 
-A short chip marks the selected entry: a right-aligned intense purple pill with pure white text, framed by Nerd Font chevrons (`nf-md-chevron_down` / `nf-md-chevron_up`), e.g. `󰅀 tool · 310/312 󰅁`. The entry label is italic. The background is a fixed branded purple (`#5b21b6`) on truecolor terminals and the theme's own purple on 256-colour terminals. The chip is drawn at the entry's own screen row, disappears after 1.5 s, and a toggle appends ` · expanded` or ` · collapsed`.
+The selected entry is marked by the active **selection marker** (`PI_UI_SELECTION_MARKER`, or `/px:pi-ui-marker` at runtime). The default `chip` marker draws a right-aligned intense purple pill with pure white text, framed by Nerd Font chevrons (`nf-md-chevron_down` / `nf-md-chevron_up`), e.g. `󰅀 tool · 310/312 󰅁`: the entry label is italic, the background is a fixed branded purple (`#5b21b6`) on truecolor terminals and the theme's own purple on 256-colour terminals, it appears at the entry's own screen row, and it disappears after 1.5 s. The `none` marker draws nothing. Adding a marker is a single entry in `SELECTION_MARKERS` in `index.ts`.
 
-An alternative marker — corner brackets stamped inside the entry's own lines (`⌜ ⌝` on its first line, `⌞ ⌟` on its last) — is implemented but switched **off** because it looked worse in practice: flip `SHOW_CORNER_MARKS` in `index.ts` to try it.
+`Alt+End` and `Alt+O` select the last entry; `Alt+Home` (Alt+Start on keyboards that label the key that way) selects the first.
 
-`Alt+End` jumps to the last entry and `Alt+Home` (Alt+Start on keyboards that label the key that way) to the first.
-
-`Alt+O` toggles **the selected entry** — nothing else, and it never falls back to "the latest entry". It behaves like clicking that entry's result area:
+`Ctrl+Alt+O` toggles **the selected entry** — nothing else, and it never falls back to "the latest entry". It behaves like clicking that entry's result area:
 
 - tool calls (read/bash/edit/write/grep/find/ls and extension tools)
 - `!` bash mode executions
@@ -149,8 +147,7 @@ Implementation notes:
 
 - Everything is read-only on pi's side. Entries are found by walking the transcript's layout tree from the primary `ScrollView` and matching known entry component class names; no component prototypes are patched and nothing is registered ahead of time, so session restore and `/reload` need no special handling.
 - Entry line offsets come from the child heights recorded during the last render (`mouseLayout`); navigation then calls `scrollTo(line)`.
-- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. Its background is a fixed intense purple in truecolor mode and the theme's `thinkingHigh` colour reused as a background (`getFgAnsi` → `48;…`) otherwise; without a captured theme it falls back to inverse video, like pi's own flash messages.
-- The disabled corner marks wrap the selected entry's `render(width)` for that instance only (the original is restored when the selection moves, and on `session_start` / `session_tree`). Marks are stamped with `truncateToWidth` + padding, so nothing else changes.
+- The `chip` marker is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus. Its background is a fixed intense purple in truecolor mode and the theme's `thinkingHigh` colour reused as a background (`getFgAnsi` → `48;…`) otherwise; without a captured theme it falls back to inverse video, like pi's own flash messages.
 - The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
 - Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 
@@ -161,6 +158,7 @@ Implementation notes:
 - `PI_UI_WORKING_LENGTH` — minimum track length (default: `15`, range: `15-400`) (kept for compatibility; full-width mode still uses terminal width)
 - `PI_UI_WORKING_INTERVAL_MS` — animation speed in ms (default: `16`, minimum: `5`)
 - `PI_UI_WORKING_HUE_STEP_DEG` — hue change per frame in degrees (default: `8`)
+- `PI_UI_SELECTION_MARKER` — selection marker: `chip` (default) or `none`
 - `PI_UI_BELL` — enable/disable bell notifications (default: `true`)
 - `PI_UI_BELL_DEBOUNCE_MS` — minimum milliseconds between bells (default: `250`, range: `0-5000`)
 
@@ -174,13 +172,14 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 - `/px:pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
 - `/px:pi-ui-bell [on|off|toggle|status]` — control bell notifications
+- `/px:pi-ui-marker [chip|none|status]` — choose the selection marker
 - `/px:pi-ui-nav` — show transcript entry count, the current selection, and scroll-view state
 
 ### Shortcut
 
 - `Alt+J` / `Alt+K` — select and scroll to the next / previous transcript entry
-- `Alt+End` — select the last transcript entry; `Alt+Home` (Alt+Start) — the first
-- `Alt+O` — toggle the selected transcript entry (same as clicking it)
+- `Alt+End` / `Alt+O` — select the last transcript entry; `Alt+Home` (Alt+Start) — the first
+- `Ctrl+Alt+O` — toggle the selected transcript entry (same as clicking it)
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action
