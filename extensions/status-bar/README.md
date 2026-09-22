@@ -55,8 +55,8 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
   mode keeps the plain `~/pi-x (trunk)` form.
 - When session rewiring is enabled, the first-line right section shows a red
-  `󰒍 <provider>/<model> · <effort>` immediately before the skills counter. Provider
-  and model aliases are applied, for example `󰒍 cdx/5.6-sol · high`.
+  `󰚩 󰒟 <provider>/<model> · <effort>` immediately before the skills counter. Provider
+  and model aliases are applied, for example `󰚩 󰒟 cdx/5.6-sol · high`.
 - `new` display mode appends the context token breakdown to the first-line right
   section, after the producer items (that is, after the skills `󰐱 n/m` counter
   when present). It is prefixed with the total-usage icon and omits the cost

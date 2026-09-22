@@ -199,7 +199,7 @@ export function hasVisibleText(value?: string): value is string {
 // unadorned token breakdown.
 export const BORDER_BRANCH_ICON = "\ueafe ";
 export const BORDER_TOTAL_USAGE_ICON = "\u{000f04e1} ";
-export const REWIRE_ICON = "󰒍 ";
+export const REWIRE_ICON = "󰚩 󰒟 ";
 
 /** Format the active subagent rewire target with the status bar's exact-name aliases. */
 export function formatRewireStatusLabel(

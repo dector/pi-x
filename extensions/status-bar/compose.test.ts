@@ -68,15 +68,15 @@ describe("pure text helpers", () => {
 				{ "openai-codex": "cdx" },
 				{ "gpt-5.6-sol": "5.6-sol" },
 			),
-		).toBe("󰒍 cdx/5.6-sol · high");
+		).toBe("󰚩 󰒟 cdx/5.6-sol · high");
 	});
 
 	test("keeps full unaliased model names and supports provider-less ids", () => {
 		expect(formatRewireStatusLabel("anthropic/claude-sonnet", "medium")).toBe(
-			"󰒍 anthropic/claude-sonnet · medium",
+			"󰚩 󰒟 anthropic/claude-sonnet · medium",
 		);
 		expect(formatRewireStatusLabel("local-model", "off", {}, { "local-model": "local" })).toBe(
-			"󰒍 local · off",
+			"󰚩 󰒟 local · off",
 		);
 	});
 
