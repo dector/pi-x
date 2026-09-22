@@ -120,6 +120,22 @@ Integration contract (important):
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
+### 4) Toggle newest transcript entry (Alt+O)
+
+`Alt+O` toggles the newest collapsible transcript entry — the same effect as clicking that entry's result area. Nothing else is affected, unlike pi's built-in `Ctrl+O`, which expands or collapses every tool output at once.
+
+Toggleable entries are the transcript components pi renders with an expanded/collapsed state:
+
+- tool calls (read/bash/edit/write/grep/find/ls and extension tools)
+- `!` bash mode executions
+- custom messages and custom entries from other extensions
+- compaction and branch summaries
+- skill invocation messages
+
+Plain user and assistant text messages have no collapsed state in pi, so they are skipped: `Alt+O` always targets the newest toggleable entry above the editor. An entry can be toggled either way (expanded ⇄ collapsed), and a notification is shown only when no toggleable entry exists yet.
+
+Implementation note: pi only exposes a single global expand flag to extensions, so `pi-ui` tracks collapsible entries by wrapping `Container.addChild`/`removeChild`/`clear` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. If pi renames those components, the shortcut stops finding entries (use `/px:pi-ui-expandable` to inspect what is tracked).
+
 ## Configuration
 
 ### Env vars
@@ -140,9 +156,11 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 - `/px:pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
 - `/px:pi-ui-bell [on|off|toggle|status]` — control bell notifications
+- `/px:pi-ui-expandable` — show how many collapsible transcript entries are tracked, and the five newest
 
 ### Shortcut
 
+- `Alt+O` — toggle the newest collapsible transcript entry (same as clicking it)
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action

@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -25,6 +25,27 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
+const TOGGLE_NEWEST_SHORTCUT = Key.alt("o");
+
+const EXPANDABLE_TRACKING_FLAG = "__pi_ui_expandable_tracking_v1";
+const EXPANDABLE_REGISTRY_KEY = "__pi_ui_expandable_registry_v1";
+const MAX_TRACKED_EXPANDABLES = 1000;
+
+/**
+ * Transcript entry components that pi renders with a collapsed/expanded state.
+ * `isExpandable()` in interactive mode only checks for `setExpanded()`, which is
+ * not enough to tell these entries apart from the startup header, so the known
+ * component class names are used instead.
+ */
+const EXPANDABLE_COMPONENT_NAMES = new Set([
+	"ToolExecutionComponent",
+	"BashExecutionComponent",
+	"CustomMessageComponent",
+	"CustomEntryComponent",
+	"CompactionSummaryMessageComponent",
+	"BranchSummaryMessageComponent",
+	"SkillInvocationMessageComponent",
+]);
 
 const RESET_FG = "\x1b[39m";
 const BELL_CHAR = "\x07";
@@ -246,6 +267,123 @@ function padToVisibleWidth(text: string, width: number): string {
 	const textWidth = visibleWidth(finalText);
 	if (textWidth >= width) return finalText;
 	return `${finalText}${" ".repeat(width - textWidth)}`;
+}
+
+interface ExpandableEntry {
+	setExpanded(expanded: boolean): void;
+	invalidate?(): void;
+}
+
+interface ExpandableRegistry {
+	entries: ExpandableEntry[];
+	seen: WeakSet<object>;
+}
+
+function getExpandableRegistry(): ExpandableRegistry {
+	const globalAny = globalThis as Record<string, unknown>;
+	const existing = globalAny[EXPANDABLE_REGISTRY_KEY] as ExpandableRegistry | undefined;
+	if (existing) return existing;
+	const created: ExpandableRegistry = { entries: [], seen: new WeakSet() };
+	globalAny[EXPANDABLE_REGISTRY_KEY] = created;
+	return created;
+}
+
+function componentClassName(component: object): string | undefined {
+	return (component as { constructor?: { name?: string } }).constructor?.name;
+}
+
+function isTrackedExpandable(component: unknown): component is ExpandableEntry {
+	if (!component || typeof component !== "object") return false;
+	if (typeof (component as { setExpanded?: unknown }).setExpanded !== "function") return false;
+	const name = componentClassName(component);
+	return name !== undefined && EXPANDABLE_COMPONENT_NAMES.has(name);
+}
+
+function registerExpandable(component: unknown): void {
+	if (!isTrackedExpandable(component)) return;
+	const registry = getExpandableRegistry();
+	if (registry.seen.has(component)) return;
+	registry.seen.add(component);
+	registry.entries.push(component);
+	const overflow = registry.entries.length - MAX_TRACKED_EXPANDABLES;
+	if (overflow > 0) registry.entries.splice(0, overflow);
+}
+
+function unregisterExpandables(components: readonly unknown[]): void {
+	const registry = getExpandableRegistry();
+	if (registry.entries.length === 0) return;
+	const dropped = new Set(components.filter(isTrackedExpandable));
+	if (dropped.size === 0) return;
+	for (const entry of dropped) registry.seen.delete(entry);
+	registry.entries = registry.entries.filter((entry) => !dropped.has(entry));
+}
+
+/** Forget tracked entries (used when a new session starts). */
+export function resetExpandableTracking(): void {
+	const globalAny = globalThis as Record<string, unknown>;
+	globalAny[EXPANDABLE_REGISTRY_KEY] = { entries: [], seen: new WeakSet() } satisfies ExpandableRegistry;
+}
+
+/**
+ * Track transcript entries pi can collapse/expand, in append order.
+ *
+ * pi keeps expansion state per entry but only exposes a single global toggle to
+ * extensions, so entries are observed as containers add and drop their children.
+ */
+export function installExpandableTracking(): void {
+	const globalAny = globalThis as Record<string, unknown>;
+	if (globalAny[EXPANDABLE_TRACKING_FLAG]) return;
+	globalAny[EXPANDABLE_TRACKING_FLAG] = true;
+
+	type PatchableContainer = {
+		addChild(component: unknown): void;
+		removeChild(component: unknown): void;
+		clear(): void;
+	};
+
+	const prototype = Container.prototype as unknown as PatchableContainer;
+	const originalAddChild = prototype.addChild;
+	const originalRemoveChild = prototype.removeChild;
+	const originalClear = prototype.clear;
+
+	prototype.addChild = function patchedAddChild(this: unknown, component: unknown) {
+		registerExpandable(component);
+		return originalAddChild.call(this, component);
+	};
+
+	prototype.removeChild = function patchedRemoveChild(this: unknown, component: unknown) {
+		unregisterExpandables([component]);
+		return originalRemoveChild.call(this, component);
+	};
+
+	prototype.clear = function patchedClear(this: unknown) {
+		const children = (this as { children?: unknown[] }).children;
+		if (Array.isArray(children) && children.length > 0) unregisterExpandables(children);
+		return originalClear.call(this);
+	};
+}
+
+function isEntryExpanded(entry: ExpandableEntry): boolean {
+	const record = entry as unknown as Record<string, unknown>;
+	if (typeof record.expanded === "boolean") return record.expanded;
+	if (typeof record._expanded === "boolean") return record._expanded;
+	return false;
+}
+
+/** Names of tracked entries, oldest → newest (debug helper). */
+export function listTrackedExpandables(): string[] {
+	return getExpandableRegistry().entries.map((entry) => componentClassName(entry) ?? "entry");
+}
+
+/** Toggle the newest tracked transcript entry, the same way clicking it would. */
+export function toggleNewestExpandable(): { name: string; expanded: boolean } | undefined {
+	const registry = getExpandableRegistry();
+	const entry = registry.entries[registry.entries.length - 1];
+	if (!entry) return undefined;
+	const expanded = !isEntryExpanded(entry);
+	entry.setExpanded(expanded);
+	entry.invalidate?.();
+	return { name: componentClassName(entry) ?? "entry", expanded };
 }
 
 function patchLoaderWorkingSpinner(): void {
@@ -1229,6 +1367,7 @@ async function showHiDialog(
 export default function piUiExtension(pi: ExtensionAPI): void {
 	// Disabled: use pi's default busy indicator instead of pi-ui custom loader.
 	// patchLoaderWorkingSpinner();
+	installExpandableTracking();
 
 	let minimumTrackLength = clamp(
 		parseIntEnv("PI_UI_WORKING_LENGTH", DEFAULT_MIN_TRACK_LENGTH),
@@ -1307,6 +1446,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		resetExpandableTracking();
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
@@ -1409,6 +1549,24 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 			setGlobalBellEnabled(bellEnabled);
 			notify(ctx, `pi-ui bell ${bellEnabled ? "enabled" : "disabled"}`);
 			if (bellEnabled) ringBell(true);
+		},
+	});
+
+	pi.registerShortcut(TOGGLE_NEWEST_SHORTCUT, {
+		description: "Toggle the newest expandable transcript entry (same as clicking it)",
+		handler: async (ctx) => {
+			const result = toggleNewestExpandable();
+			if (!result) notify(ctx, "pi-ui: no expandable entry to toggle");
+		},
+	});
+
+	pi.registerCommand("px:pi-ui-expandable", {
+		description: "Show the newest tracked expandable transcript entries: /px:pi-ui-expandable",
+		handler: async (_args, ctx) => {
+			const tracked = listTrackedExpandables();
+			const recent = tracked.slice(-5);
+			const suffix = recent.length > 0 ? ` (oldest → newest: ${recent.join(", ")})` : "";
+			notify(ctx, `pi-ui expandable: ${tracked.length} tracked${suffix}`);
 		},
 	});
 
