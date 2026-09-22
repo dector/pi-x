@@ -160,6 +160,30 @@ describe("progress tool start", () => {
 		expect(text).toContain(result.details.trackerToken);
 	});
 
+	test("forwards hierarchical definitions and requires parents to occur earlier", async () => {
+		const bus = createFakeBus();
+		installHub(bus);
+		await runProgressAction(bus, {
+			...startParams(),
+			unit: "Milestone",
+			chunks: [
+				{ id: "m1", label: "Foundation", childUnit: "Stage" },
+				{ id: "auth", label: "Authentication", parentId: "m1" },
+			],
+		});
+		expect(mutationFor(bus, CH.create).chunks).toEqual([
+			{ id: "m1", label: "Foundation", childUnit: "Stage" },
+			{ id: "auth", label: "Authentication", parentId: "m1" },
+		]);
+
+		const invalidBus = createFakeBus();
+		await expect(runProgressAction(invalidBus, {
+			...startParams(),
+			chunks: [{ id: "child", parentId: "parent" }, { id: "parent" }],
+		})).rejects.toThrow("must appear earlier");
+		expect(invalidBus.emitted).toHaveLength(0);
+	});
+
 	test("preserves a supplied tracker id while still generating a fresh token", async () => {
 		const firstBus = createFakeBus();
 		installHub(firstBus);

@@ -92,6 +92,8 @@ function copyProgressSnapshot(snapshot: ProgressSnapshot): ProgressSnapshot {
 			updatedAt: tracker.updatedAt,
 			chunks: tracker.chunks.map((chunk) => {
 				const copy: ProgressChunkSnapshot = { index: chunk.index, state: chunk.state };
+				if (chunk.label !== undefined) copy.label = chunk.label;
+				if (chunk.path !== undefined) copy.path = chunk.path.map((segment) => ({ ...segment }));
 				if (chunk.phase !== undefined) copy.phase = chunk.phase;
 				return copy;
 			}),
@@ -99,9 +101,14 @@ function copyProgressSnapshot(snapshot: ProgressSnapshot): ProgressSnapshot {
 	};
 }
 
-/** Count chunks in one lifecycle state. */
+function progressLeaves(record: ProgressTrackerRecord): ProgressChunkRecord[] {
+	const parents = new Set(record.chunks.flatMap((chunk) => chunk.parentId ? [chunk.parentId] : []));
+	return record.chunks.filter((chunk) => !parents.has(chunk.id));
+}
+
+/** Count leaves in one lifecycle state. */
 function countProgressChunks(record: ProgressTrackerRecord, state: ProgressChunkState): number {
-	return record.chunks.reduce((total, chunk) => (chunk.state === state ? total + 1 : total), 0);
+	return progressLeaves(record).reduce((total, chunk) => (chunk.state === state ? total + 1 : total), 0);
 }
 
 /**
@@ -111,7 +118,7 @@ function countProgressChunks(record: ProgressTrackerRecord, state: ProgressChunk
 function formatProgressSummary(record: ProgressTrackerRecord): string {
 	const title = sanitizeDisplayText(record.title) || "(untitled)";
 	const status = record.outcome ?? "active";
-	const total = record.chunks.length;
+	const total = progressLeaves(record).length;
 	const parts = [`${countProgressChunks(record, "done")}/${total} done`];
 
 	const failed = countProgressChunks(record, "failed");
@@ -122,12 +129,20 @@ function formatProgressSummary(record: ProgressTrackerRecord): string {
 	return `${title} [${status}] — ${parts.join(", ")}`;
 }
 
-/** One chunk detail line, for example `1. [active/reviewing] Database schema`. */
-function formatProgressChunk(chunk: ProgressChunkRecord): string {
+/** One node detail line; hierarchical records are indented by depth. */
+function formatProgressChunk(chunk: ProgressChunkRecord, record: ProgressTrackerRecord): string {
 	const label = sanitizeDisplayText(chunk.label ?? chunk.id) || "(unnamed)";
-	const state =
-		chunk.phase !== undefined && chunk.phase.length > 0 ? `${chunk.state}/${chunk.phase}` : chunk.state;
-	return `${chunk.index}. [${sanitizeDisplayText(state)}] ${label}`;
+	const isContainer = record.chunks.some((candidate) => candidate.parentId === chunk.id);
+	const state = isContainer
+		? "container"
+		: chunk.phase !== undefined && chunk.phase.length > 0 ? `${chunk.state}/${chunk.phase}` : chunk.state;
+	let depth = 0;
+	let parentId = chunk.parentId;
+	while (parentId !== undefined) {
+		depth += 1;
+		parentId = record.chunks.find((candidate) => candidate.id === parentId)?.parentId;
+	}
+	return `${"  ".repeat(depth)}${chunk.index}. [${sanitizeDisplayText(state)}] ${label}`;
 }
 
 type PendingRequest = {
@@ -601,7 +616,7 @@ export default function hubExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				const lines = [formatProgressSummary(record)];
-				for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk));
+				for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk, record));
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;
 			}
@@ -622,7 +637,7 @@ export default function hubExtension(pi: ExtensionAPI): void {
 
 			const record = matches[0] as ProgressTrackerRecord;
 			const lines = [formatProgressSummary(record)];
-			for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk));
+			for (const chunk of record.chunks.slice(0, MAX_PROGRESS_CHUNKS)) lines.push(formatProgressChunk(chunk, record));
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});

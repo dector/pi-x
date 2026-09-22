@@ -222,8 +222,10 @@ describe("parseProgressCreate", () => {
 		expect(parseProgressCreate(createPayload({ chunks: tooMany }))).toBeUndefined();
 	});
 
-	test("rejects duplicate chunk IDs", () => {
+	test("rejects duplicate chunk IDs and parents that do not occur earlier", () => {
 		expect(parseProgressCreate(createPayload({ chunks: [{ id: "a" }, { id: "a" }] }))).toBeUndefined();
+		expect(parseProgressCreate(createPayload({ chunks: [{ id: "child", parentId: "parent" }, { id: "parent" }] }))).toBeUndefined();
+		expect(parseProgressCreate(createPayload({ chunks: [{ id: "self", parentId: "self" }] }))).toBeUndefined();
 	});
 
 	test("rejects malformed chunk entries", () => {
@@ -384,6 +386,43 @@ describe("ProgressRegistry create", () => {
 		expect(record?.chunks.map((chunk) => chunk.index)).toEqual([1, 2]);
 	});
 
+	test("projects hierarchical leaves with root-to-leaf paths", () => {
+		const { registry } = clocked();
+		registry.create(createPayload({
+			unit: "Milestone",
+			chunks: [
+				{ id: "m1", childUnit: "Stage" },
+				{ id: "auth", parentId: "m1", label: "Authentication", childUnit: "Task" },
+				{ id: "review", parentId: "auth", label: "Review" },
+				{ id: "api", parentId: "m1", label: "API" },
+				{ id: "m2" },
+			],
+		}));
+
+		expect(registry.snapshot().trackers[0]?.chunks).toEqual([
+			{
+				index: 1,
+				state: "pending",
+				label: "Review",
+				path: [
+					{ index: 1, total: 2, unit: "Milestone" },
+					{ index: 1, total: 2, unit: "Stage", label: "Authentication" },
+					{ index: 1, total: 1, unit: "Task", label: "Review" },
+				],
+			},
+			{
+				index: 2,
+				state: "pending",
+				label: "API",
+				path: [
+					{ index: 1, total: 2, unit: "Milestone" },
+					{ index: 2, total: 2, unit: "Stage", label: "API" },
+				],
+			},
+			{ index: 3, state: "pending", path: [{ index: 2, total: 2, unit: "Milestone" }] },
+		]);
+	});
+
 	test("rejects a malformed payload without touching state", () => {
 		const { registry } = clocked();
 		expect(registry.create({ requestId: "r" })).toBeUndefined();
@@ -467,6 +506,17 @@ describe("ProgressRegistry create", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProgressRegistry update", () => {
+	test("container updates are rejected and completed validation uses leaves", () => {
+		const { registry } = clocked();
+		registry.create(createPayload({ chunks: [
+			{ id: "milestone", childUnit: "Stage" },
+			{ id: "leaf", parentId: "milestone" },
+		] }));
+		expect(registry.update(updatePayload({ chunkId: "milestone", state: "active" }))?.error).toBe("not-leaf");
+		expect(registry.update(updatePayload({ chunkId: "leaf", state: "done" }))?.ok).toBe(true);
+		expect(registry.finish(finishPayload({ outcome: "completed" }))?.ok).toBe(true);
+	});
+
 	test("pending -> active -> done succeeds", () => {
 		const { registry } = clocked();
 		registry.create(createPayload());

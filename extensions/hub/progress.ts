@@ -59,6 +59,8 @@ export interface ProgressChunkRecord {
 	id: string;
 	index: number;
 	label?: string;
+	parentId?: string;
+	childUnit?: string;
 	state: ProgressChunkState;
 	phase?: string;
 	detail?: string;
@@ -145,12 +147,19 @@ export function parseProgressCreate(payload: unknown): ProgressCreatePayload | u
 		if (!isRecord(raw)) return undefined;
 		const id = requiredString(raw.id, MAX_PROGRESS_CHUNK_ID_LENGTH);
 		if (!id || seen.has(id)) return undefined;
-		seen.add(id);
 
 		const label = boundedString(raw.label, MAX_PROGRESS_LABEL_LENGTH);
-		if (label === null) return undefined;
+		const parentId = boundedString(raw.parentId, MAX_PROGRESS_CHUNK_ID_LENGTH);
+		const childUnit = boundedString(raw.childUnit, MAX_PROGRESS_UNIT_LENGTH);
+		if (label === null || parentId === null || childUnit === null) return undefined;
+		if (parentId !== undefined && (!parentId || !seen.has(parentId))) return undefined;
 
-		chunks.push(label === undefined ? { id } : { id, label });
+		const chunk: ProgressChunkDefinition = { id };
+		if (label !== undefined) chunk.label = label;
+		if (parentId !== undefined) chunk.parentId = parentId;
+		if (childUnit !== undefined) chunk.childUnit = childUnit;
+		chunks.push(chunk);
+		seen.add(id);
 	}
 
 	return { requestId, trackerId, trackerToken, owner, title, unit, chunks };
@@ -280,7 +289,13 @@ function snapshotsEqual(a: ProgressSnapshot, b: ProgressSnapshot): boolean {
 		for (let j = 0; j < left.chunks.length; j++) {
 			const lc = left.chunks[j]!;
 			const rc = right.chunks[j]!;
-			if (lc.index !== rc.index || lc.state !== rc.state || lc.phase !== rc.phase) return false;
+			if (
+				lc.index !== rc.index ||
+				lc.state !== rc.state ||
+				lc.label !== rc.label ||
+				lc.phase !== rc.phase ||
+				JSON.stringify(lc.path) !== JSON.stringify(rc.path)
+			) return false;
 		}
 	}
 
@@ -295,6 +310,8 @@ function cloneChunk(chunk: ProgressChunkRecord): ProgressChunkRecord {
 		updatedAt: chunk.updatedAt,
 	};
 	if (chunk.label !== undefined) clone.label = chunk.label;
+	if (chunk.parentId !== undefined) clone.parentId = chunk.parentId;
+	if (chunk.childUnit !== undefined) clone.childUnit = chunk.childUnit;
 	if (chunk.phase !== undefined) clone.phase = chunk.phase;
 	if (chunk.detail !== undefined) clone.detail = chunk.detail;
 	return clone;
@@ -311,6 +328,8 @@ function sameCreateDefinition(record: ProgressTrackerRecord, payload: ProgressCr
 		const incoming = payload.chunks[i]!;
 		if (existing.id !== incoming.id) return false;
 		if (existing.label !== incoming.label) return false;
+		if (existing.parentId !== incoming.parentId) return false;
+		if (existing.childUnit !== incoming.childUnit) return false;
 	}
 
 	return true;
@@ -369,6 +388,8 @@ export class ProgressRegistry {
 			chunks: parsed.chunks.map((chunk, i) => {
 				const stored: ProgressChunkRecord = { id: chunk.id, index: i + 1, state: "pending", updatedAt: now };
 				if (chunk.label !== undefined) stored.label = chunk.label;
+				if (chunk.parentId !== undefined) stored.parentId = chunk.parentId;
+				if (chunk.childUnit !== undefined) stored.childUnit = chunk.childUnit;
 				return stored;
 			}),
 			createdAt: now,
@@ -392,6 +413,9 @@ export class ProgressRegistry {
 
 		const chunk = record.chunks.find((entry) => entry.id === parsed.chunkId);
 		if (!chunk) return this.result(previous, false, "not-found");
+		if (record.chunks.some((entry) => entry.parentId === chunk.id)) {
+			return this.result(previous, false, "not-leaf");
+		}
 
 		const nextPhase = parsed.phase;
 		const nextDetail = parsed.detail;
@@ -448,7 +472,7 @@ export class ProgressRegistry {
 
 		if (
 			parsed.outcome === "completed" &&
-			!record.chunks.every((chunk) => chunk.state === "done" || chunk.state === "skipped")
+			!this.leaves(record).every((chunk) => chunk.state === "done" || chunk.state === "skipped")
 		) {
 			return this.result(previous, false, "incomplete");
 		}
@@ -529,21 +553,25 @@ export class ProgressRegistry {
 	}
 
 	/**
-	 * Deep-detached aggregate snapshot of active trackers only. Sorted by
-	 * `updatedAt` descending, then `owner` ascending, then `trackerId` ascending.
+	 * Deep-detached aggregate snapshot of active trackers only. Chunks are the
+	 * immutable leaf projection; hierarchical leaves also carry a root-to-leaf path.
 	 */
 	snapshot(): ProgressSnapshot {
 		const trackers: ProgressTrackerSnapshot[] = [];
 		for (const byId of this.byOwner.values()) {
 			for (const record of byId.values()) {
 				if (record.outcome !== undefined) continue;
+				const hierarchical = record.chunks.some((chunk) => chunk.parentId !== undefined);
+				const leaves = this.leaves(record);
 				trackers.push({
 					trackerId: record.trackerId,
 					owner: record.owner,
 					title: record.title,
 					unit: record.unit,
-					chunks: record.chunks.map((chunk) => {
-						const copy: ProgressChunkSnapshot = { index: chunk.index, state: chunk.state };
+					chunks: leaves.map((chunk, index) => {
+						const copy: ProgressChunkSnapshot = { index: index + 1, state: chunk.state };
+						if (chunk.label !== undefined) copy.label = chunk.label;
+						if (hierarchical) copy.path = this.chunkPath(record, chunk);
 						if (chunk.phase !== undefined) copy.phase = chunk.phase;
 						return copy;
 					}),
@@ -557,6 +585,32 @@ export class ProgressRegistry {
 	}
 
 	// -- internals ------------------------------------------------------------
+
+	private leaves(record: ProgressTrackerRecord): ProgressChunkRecord[] {
+		const parents = new Set(record.chunks.flatMap((chunk) => chunk.parentId ? [chunk.parentId] : []));
+		return record.chunks.filter((chunk) => !parents.has(chunk.id));
+	}
+
+	private chunkPath(record: ProgressTrackerRecord, leaf: ProgressChunkRecord): ProgressChunkSnapshot["path"] {
+		const byId = new Map(record.chunks.map((chunk) => [chunk.id, chunk]));
+		const nodes: ProgressChunkRecord[] = [];
+		let current: ProgressChunkRecord | undefined = leaf;
+		while (current) {
+			nodes.unshift(current);
+			current = current.parentId === undefined ? undefined : byId.get(current.parentId);
+		}
+
+		return nodes.map((node, depth) => {
+			const parent = depth === 0 ? undefined : nodes[depth - 1];
+			const siblings = record.chunks.filter((candidate) => candidate.parentId === parent?.id);
+			const segment = {
+				index: siblings.findIndex((candidate) => candidate.id === node.id) + 1,
+				total: siblings.length,
+				unit: depth === 0 ? record.unit : parent?.childUnit || DEFAULT_PROGRESS_UNIT,
+			};
+			return node.label === undefined ? segment : { ...segment, label: node.label };
+		});
+	}
 
 	private find(owner: string, trackerId: string): ProgressTrackerRecord | undefined {
 		return this.byOwner.get(owner)?.get(trackerId);

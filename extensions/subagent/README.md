@@ -177,10 +177,10 @@ When the parent hub has the `progress` tool registered, a restricted-tool
 agent gets `progress` appended to its explicit `--tools` list, so a child can
 report semantic milestone progress even with a narrow tool set. Every child
 also receives shared system-prompt guidance: only use progress when its task
-explicitly supplies `trackerId`, `trackerToken`, and an assigned `chunkId`;
-mark that chunk active and then terminal; never mutate another chunk or
-start/finish/clear the parent tracker; and describe relay delivery as
-best-effort rather than claiming parent acceptance. Without all three IDs the
+explicitly supplies `trackerId`, `trackerToken`, and an assigned leaf `chunkId`;
+mark that leaf active and then terminal; never mutate a container or another
+leaf, and never start/finish/clear the parent tracker; and describe relay
+delivery as best-effort rather than claiming parent acceptance. Without all three IDs the
 child does not report parent progress. Without the parent tool the original
 tool list and system prompt are unchanged, and installing `subagent` does not
 depend on hub.
@@ -196,12 +196,12 @@ applies its normal validation and acknowledgement.
   that a valid envelope reached the parent transport. It never learns whether
   the parent hub accepted the transition, and must not claim parent acceptance.
 - **Not cleared on child exit**: relayed data is semantic milestone state, not
-  child presence. A child may mark a chunk `done` immediately before exiting and
-  run cleanup must not erase it. If a child fails while its chunk is still
-  `active`, the coordinating parent reports that chunk `blocked` or `failed`
+  child presence. A child may mark a leaf `done` immediately before exiting and
+  run cleanup must not erase it. If a child fails while its leaf is still
+  `active`, the coordinating parent reports that leaf `blocked` or `failed`
   after observing the result.
 - **Immediate child only**: a grandchild relays to its own parent process, never
-  to the root. The middle agent reports the assigned root chunk after its nested
+  to the root. The middle agent reports its assigned leaf after its nested
   work settles.
 - Malformed JSON, wrong version, non-allowlisted channels, and oversized text
   (over 256 KiB UTF-8) are ignored; at most one concise diagnostic is recorded

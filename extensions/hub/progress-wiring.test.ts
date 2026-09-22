@@ -176,9 +176,9 @@ describe("hub progress event wiring", () => {
 							unit: "Stage",
 							updatedAt: expect.any(Number),
 							chunks: [
-								{ index: 1, state: "pending" },
-								{ index: 2, state: "pending" },
-								{ index: 3, state: "pending" },
+								{ index: 1, state: "pending", label: "Database schema" },
+								{ index: 2, state: "pending", label: "API" },
+								{ index: 3, state: "pending", label: "UI" },
 							],
 						},
 					],
@@ -274,7 +274,12 @@ describe("hub progress event wiring", () => {
 		});
 
 		const changed = eventsNamed(bus.emitted, CH.changed).at(-1)?.payload as ProgressSnapshot;
-		expect(changed.trackers[0]?.chunks[0]).toEqual({ index: 1, state: "active", phase: "reviewing" });
+		expect(changed.trackers[0]?.chunks[0]).toEqual({
+			index: 1,
+			state: "active",
+			label: "Database schema",
+			phase: "reviewing",
+		});
 		expect(eventsNamed(bus.emitted, CH.ack).at(-1)?.payload).toEqual({
 			requestId: "req-2",
 			trackerId: "t1",
@@ -384,9 +389,9 @@ describe("hub progress event wiring", () => {
 					unit: "Stage",
 					updatedAt: expect.any(Number),
 					chunks: [
-						{ index: 1, state: "pending" },
-						{ index: 2, state: "pending" },
-						{ index: 3, state: "pending" },
+						{ index: 1, state: "pending", label: "Database schema" },
+						{ index: 2, state: "pending", label: "API" },
+						{ index: 3, state: "pending", label: "UI" },
 					],
 				},
 			],

@@ -330,6 +330,13 @@ function renderBorderLine(
 	return `${leftSegment}${borderColor(filler)}${rightSegment}`;
 }
 
+/** Truncate an ANSI-styled progress line, then center it without trailing padding. */
+export function centerProgressLine(line: string, width: number): string {
+	const truncated = truncateToWidth(line, width, "");
+	const padding = Math.max(0, Math.floor((width - visibleWidth(truncated)) / 2));
+	return `${" ".repeat(padding)}${truncated}`;
+}
+
 /**
  * Default editor with heavy borders and rounded arc corners, plus status labels
  * rendered in the frame corners. In `new` display mode the top-left corner shows
@@ -569,7 +576,7 @@ class FrameStatusEditor extends CustomEditor {
 	private renderProgressLine(width: number): string | undefined {
 		const styled = formatProgressEditorLine(this.progressRowProvider?.(), this.progressColor ?? ((text) => text));
 		if (styled === undefined || !hasVisibleText(styled)) return undefined;
-		return truncateToWidth(styled, width, "");
+		return centerProgressLine(styled, width);
 	}
 
 	private getRenderedAutocompleteHeight(): number {
@@ -1866,7 +1873,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
 			progressRow: () => progressRow,
-			progressColor: (text) => activeContext().ui.theme.fg("customMessageLabel", text),
+			progressColor: (text) => activeContext().ui.theme.getThinkingBorderColor(pi.getThinkingLevel())(text),
 			interruptConfirmation: new InterruptConfirmationGuard({
 				getOperationToken: () => activeContext().signal,
 				confirm: () => activeContext().ui.confirm("Interrupt agent?", "Stop the current agent operation?"),

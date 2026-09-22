@@ -110,8 +110,10 @@ export interface ProgressToolEventBus {
 // ---------------------------------------------------------------------------
 
 const ProgressChunkSchema = Type.Object({
-	id: Type.String({ description: "Stable unique chunk id within the tracker." }),
-	label: Type.Optional(Type.String({ description: "Optional human-readable chunk label." })),
+	id: Type.String({ description: "Stable unique node id within the tracker." }),
+	label: Type.Optional(Type.String({ description: "Optional human-readable node label." })),
+	parentId: Type.Optional(Type.String({ description: "Optional earlier parent node id; omission creates a root." })),
+	childUnit: Type.Optional(Type.String({ description: "Optional singular noun for this node's direct children." })),
 });
 
 export const ProgressToolParams = Type.Object({
@@ -120,7 +122,7 @@ export const ProgressToolParams = Type.Object({
 			"start creates a tracker; update reports one chunk; finish sets a terminal outcome; clear removes the tracker.",
 	}),
 	title: Type.Optional(Type.String({ description: "start: tracker title, for example the milestone name." })),
-	unit: Type.Optional(Type.String({ description: "start: singular display noun, for example Stage or File." })),
+	unit: Type.Optional(Type.String({ description: "start: singular display noun for root nodes, preferably Milestone." })),
 	trackerId: Type.Optional(
 		Type.String({ description: "start: optional stable id; update/finish/clear: required id from start." }),
 	),
@@ -128,7 +130,7 @@ export const ProgressToolParams = Type.Object({
 		Type.String({ description: "Opaque token from start; required for update, finish, and clear." }),
 	),
 	chunks: Type.Optional(
-		Type.Array(ProgressChunkSchema, { description: "start: ordered, non-empty list of known chunks." }),
+		Type.Array(ProgressChunkSchema, { description: "start: ordered, non-empty node list; every parent must appear before its children." }),
 	),
 	chunkId: Type.Optional(Type.String({ description: "update: chunk id to report." })),
 	state: Type.Optional(
@@ -152,15 +154,17 @@ export const ProgressToolParams = Type.Object({
 
 export const PROGRESS_TOOL_DESCRIPTION = [
 	"Report semantic progress for a multi-step plan through the hub.",
-	"Chunks are an immutable ordered list created once; report chunk lifecycle and finish the tracker explicitly.",
+	"Chunks are an immutable ordered tree created once; parentId refers to an earlier node and childUnit names its direct children.",
 	"",
 	"Guidance:",
 	"1. Start a tracker only when there are multiple known chunks; do not use it for a single trivial task.",
 	"2. Report meaningful transitions, not every tool call.",
 	"3. Use `phase` for workflow words such as `reviewing`, `implementing`, or `testing` while a chunk is active.",
-	"4. Mark each chunk terminal (`done`, `failed`, or `skipped`) when its work settles.",
-	"5. Call `finish` once the whole tracker has an outcome; `completed` requires every chunk done or skipped.",
-	"6. Pass `trackerId`, `trackerToken`, and `chunkId` in a subagent task when that subagent owns a chunk.",
+	"4. Update leaves only; container nodes aggregate their descendant leaves automatically.",
+	"5. Mark each leaf terminal (`done`, `failed`, or `skipped`) when its work settles.",
+	"6. Call `finish` once the whole tracker has an outcome; `completed` requires every leaf done or skipped.",
+	"7. Prefer Milestone for root `unit` and Stage for a milestone's `childUnit`; deeper nesting is supported.",
+	"8. Pass `trackerId`, `trackerToken`, and a leaf `chunkId` in a subagent task when that subagent owns the leaf.",
 ].join("\n");
 
 // ---------------------------------------------------------------------------
@@ -258,7 +262,7 @@ function prepareStart(record: Record<string, unknown>, requestId: string): Prepa
 
 	const rawChunks = record.chunks;
 	if (!Array.isArray(rawChunks) || rawChunks.length === 0) {
-		throw new Error("progress start: `chunks` must be a non-empty array of { id, label? } objects.");
+		throw new Error("progress start: `chunks` must be a non-empty array of node objects.");
 	}
 
 	const chunks: ProgressChunkDefinition[] = [];
@@ -268,10 +272,19 @@ function prepareStart(record: Record<string, unknown>, requestId: string): Prepa
 		if (!chunk) throw new Error("progress start: each chunk must be an object with an `id`.");
 		const id = requireStringField(chunk, "id", "start");
 		if (seen.has(id)) throw new Error(`progress start: duplicate chunk id \`${id}\`.`);
-		seen.add(id);
 
 		const label = optionalStringField(chunk, "label", "start");
-		chunks.push(label === undefined ? { id } : { id, label });
+		const parentId = optionalStringField(chunk, "parentId", "start");
+		const childUnit = optionalStringField(chunk, "childUnit", "start");
+		if (parentId !== undefined && (!parentId || !seen.has(parentId))) {
+			throw new Error(`progress start: parent \`${parentId}\` for \`${id}\` must appear earlier.`);
+		}
+		const definition: ProgressChunkDefinition = { id };
+		if (label !== undefined) definition.label = label;
+		if (parentId !== undefined) definition.parentId = parentId;
+		if (childUnit !== undefined) definition.childUnit = childUnit;
+		chunks.push(definition);
+		seen.add(id);
 	}
 
 	const unit = optionalStringField(record, "unit", "start");

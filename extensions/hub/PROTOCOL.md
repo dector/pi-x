@@ -254,18 +254,20 @@ detached aggregate snapshots. The public types live in [`contract.ts`](contract.
 ### Mutation
 
 A tracker is keyed by `owner` + `trackerId` and guarded by an opaque
-`trackerToken` generated per incarnation. `create` supplies the immutable,
-ordered chunk list; `update` replaces one chunk's state/phase/detail (`update`
-is a full replacement, so an omitted `phase` or `detail` clears it); `finish`
+`trackerToken` generated per incarnation. `create` supplies an immutable,
+ordered node list; `parentId` must refer to an earlier node, preventing cycles.
+Containers cannot be updated. `update` replaces one leaf's state/phase/detail
+(`update` is a full replacement, so an omitted `phase` or `detail` clears it); `finish`
 sets a terminal `outcome` and freezes the tracker; `remove` drops an owned
 tracker. The token is a concurrency identity, not a secret: it stops a delayed
 update for a removed tracker from hitting a recreated `owner` + `trackerId`.
 Every mutation carries a correlation `requestId`.
 
 ```ts
-// create: immutable ordered chunks; unit defaults to "Item"
-{ requestId, trackerId, trackerToken, owner, title, unit?, chunks: { id, label? }[] }
-// update: full chunk replacement; omitted phase/detail clears them
+// create: unit names roots; childUnit names direct children; both default to "Item"
+{ requestId, trackerId, trackerToken, owner, title, unit?,
+  chunks: { id, label?, parentId?, childUnit? }[] }
+// update: full leaf replacement; omitted phase/detail clears them
 { requestId, trackerId, trackerToken, owner, chunkId, state, phase?, detail? }
 // finish: terminal outcome, optional summary
 { requestId, trackerId, trackerToken, owner, outcome, summary? }
@@ -276,7 +278,8 @@ Every mutation carries a correlation `requestId`.
 Chunk states are `pending | active | blocked | done | failed | skipped`;
 outcomes are `completed | failed | cancelled`. `reviewing` is a `phase` on an
 `active` chunk, never a state. Non-empty `phase` is rejected on any other state;
-`done`/`failed`/`skipped` are terminal.
+`done`/`failed`/`skipped` are terminal. Counts and `completed` validation use leaves only;
+updating a container returns `not-leaf`.
 
 ### Acknowledgement
 
@@ -292,8 +295,10 @@ and knows the result before `emit` returns.
 ### Observe
 
 `hub:progress:changed` carries a `ProgressSnapshot`
-`{ active, count, trackers[] }` containing unfinished trackers only. Chunk
-order is creation order; `index` is one-based. Snapshot order is `updatedAt`
+`{ active, count, trackers[] }` containing unfinished trackers only. Snapshot
+chunks are the leaf projection in creation order; `index` is one-based and
+`label?` is retained. Hierarchical leaves also carry root-to-leaf `path`
+segments shaped as `{ index, total, unit, label? }`. Snapshot order is `updatedAt`
 descending, then `owner` and `trackerId` ascending. `changed` is emitted only
 when the lightweight active snapshot actually changes.
 
@@ -301,7 +306,7 @@ To read current state, subscribe to `hub:progress:snapshot` **before** emitting
 `hub:progress:query` `{ requestId }`; the synchronous reply
 `{ requestId, snapshot }` is correlated by `requestId`. Subscribe to `changed`
 separately for later mutations. Snapshots are detached from registry state and
-the observer protocol exposes no `detail`, labels, outcomes, or history.
+the observer protocol exposes no `detail`, outcomes, or history.
 
 ### Child processes
 
@@ -322,9 +327,9 @@ width). The named constants live in `progress.ts`.
 | active trackers | 8 (`MAX_ACTIVE_PROGRESS_TRACKERS`) |
 | finished history records | 16 (`MAX_FINISHED_PROGRESS_TRACKERS`) |
 | chunks per tracker | 100 (`MAX_PROGRESS_CHUNKS`) |
-| `requestId` / `owner` / `trackerId` / `trackerToken` / `chunkId` | 128 chars each |
+| `requestId` / `owner` / `trackerId` / `trackerToken` / `chunkId` / `parentId` | 128 chars each |
 | `title` / `label` | 200 chars |
-| `unit` | 40 chars |
+| `unit` / `childUnit` | 40 chars |
 | `phase` | 80 chars |
 | `detail` / `summary` | 500 chars |
 | relayed `setStatus` text | 256 KiB UTF-8 (`MAX_PROGRESS_RELAY_BYTES`) |

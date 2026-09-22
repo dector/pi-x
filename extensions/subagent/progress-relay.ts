@@ -138,7 +138,7 @@ export function withProgressTool(tools: string[] | undefined, hasProgress: boole
 }
 
 /**
- * Teach every child when it owns a parent progress chunk without requiring the
+ * Teach every child when it owns a parent progress leaf without requiring the
  * coordinator to repeat lifecycle rules in each task. The guidance is present
  * only when the parent exposes `progress`; otherwise children must not be told
  * to call a tool that may not exist.
@@ -149,10 +149,10 @@ export function withProgressGuidance(systemPrompt: string, hasProgress: boolean)
 	const guidance = [
 		"## Delegated progress reporting",
 		"",
-		"When your task explicitly provides `trackerId`, `trackerToken`, and `chunkId`, you own that parent progress chunk:",
-		"- Call `progress update` to mark only that chunk `active` when meaningful work begins. Add a short phase such as `reviewing`, `implementing`, or `testing` when useful.",
+		"When your task explicitly provides `trackerId`, `trackerToken`, and `chunkId`, you own that parent progress leaf:",
+		"- Call `progress update` to mark only that leaf `active` when meaningful work begins. Add a short phase such as `reviewing`, `implementing`, or `testing` when useful.",
 		"- Mark it `done` after successful completion, `failed` after permanent failure, or `blocked` when an external change is required before work can continue.",
-		"- Do not start, finish, or clear the parent tracker. Do not update other chunks.",
+		"- Do not start, finish, or clear the parent tracker. Do not update containers or other leaves.",
 		"- Child delivery is best-effort. Report the tool result accurately and never claim that the parent accepted an update.",
 		"- If any of the three identifiers is absent, do not use `progress` for the parent task.",
 	].join("\n");

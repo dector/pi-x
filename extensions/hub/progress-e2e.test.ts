@@ -190,10 +190,13 @@ describe("hub progress end-to-end smoke", () => {
 		expect(changedSnapshots.at(-1)?.trackers[0]?.chunks[0]).toEqual({
 			index: 1,
 			state: "active",
+			label: "Database schema",
 			phase: "reviewing",
 		});
-		expect(observer.content).toBe("Authentication · Stage 1/3 (reviewing)");
-		expect(formatProgressRow(changedSnapshots.at(-1))).toBe("Authentication · Stage 1/3 (reviewing)");
+		expect(observer.content).toBe("Authentication · Stage 1/3: Database schema · reviewing");
+		expect(formatProgressRow(changedSnapshots.at(-1))).toBe(
+			"Authentication · Stage 1/3: Database schema · reviewing",
+		);
 
 		// 4. Parallel work: a done, b and c active -> aggregate row.
 		relay(bus, "hub:progress:update", {
@@ -288,7 +291,7 @@ describe("hub progress end-to-end smoke", () => {
 			phase: "reviewing",
 		});
 
-		expect(observer.content).toBe("Authentication · Item 1/3 (reviewing)");
+		expect(observer.content).toBe("Authentication · Item 1/3: Database schema · reviewing");
 		observer.dispose();
 	});
 });

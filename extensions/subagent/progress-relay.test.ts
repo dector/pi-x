@@ -170,7 +170,8 @@ describe("withProgressGuidance", () => {
 
 		expect(result).toStartWith("You are a worker.\n\n## Delegated progress reporting\n");
 		expect(result).toContain("`trackerId`, `trackerToken`, and `chunkId`");
-		expect(result).toContain("mark only that chunk `active`");
+		expect(result).toContain("mark only that leaf `active`");
+		expect(result).toContain("Do not update containers or other leaves");
 		expect(result).toContain("Do not start, finish, or clear the parent tracker");
 		expect(result).toContain("best-effort");
 		expect(result).toContain("never claim that the parent accepted");

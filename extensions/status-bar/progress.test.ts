@@ -106,19 +106,19 @@ describe("sanitizeUntrustedProgressText", () => {
 // ---------------------------------------------------------------------------
 
 describe("focused progress format", () => {
-	test("one active chunk without a phase falls back to working", () => {
+	test("one active chunk naturally omits an absent phase", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "active" })]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13 (working)");
+		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13");
 	});
 
 	test("one active chunk renders its sanitized phase", () => {
 		const snapshot = makeSnapshot([thirteen({ 1: "active" }, "reviewing")]);
-		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13 (reviewing)");
+		expect(formatProgressRow(snapshot)).toBe("Authentication · Stage 1/13 · reviewing");
 	});
 
 	test("one blocked chunk always renders blocked even with a phase", () => {
 		const tracker = makeTracker({ states: ["blocked"], phases: ["reviewing"] });
-		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Authentication · Stage 1/1 (blocked)");
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Authentication · Stage 1/1 · blocked");
 	});
 
 	test("sanitizes title, unit, and phase before rendering", () => {
@@ -128,7 +128,26 @@ describe("focused progress format", () => {
 			states: ["active"],
 			phases: ["\u001b]0;x\u0007reviewing"],
 		});
-		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Auth · Stage 1/1 (reviewing)");
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe("Auth · Stage 1/1 · reviewing");
+	});
+
+	test("flat focus includes the leaf label", () => {
+		const tracker = makeTracker({ states: ["active"], phases: ["reviewing"] });
+		tracker.chunks[0]!.label = "Database schema";
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe(
+			"Authentication · Stage 1/1: Database schema · reviewing",
+		);
+	});
+
+	test("hierarchical focus renders arbitrary path depth without the tracker title", () => {
+		const tracker = makeTracker({ states: ["active"], phases: ["reviewing"] });
+		tracker.chunks[0]!.path = [
+			{ index: 1, total: 3, unit: "Milestone" },
+			{ index: 2, total: 4, unit: "Stage", label: "Authentication" },
+		];
+		expect(formatProgressRow(makeSnapshot([tracker]))).toBe(
+			"Milestone 1/3 · Stage 2/4: Authentication · reviewing",
+		);
 	});
 });
 
@@ -191,7 +210,7 @@ describe("tracker selection", () => {
 		const older = makeTracker({ trackerId: "old", title: "Older", states: ["active"], updatedAt: 1 });
 		const newer = makeTracker({ trackerId: "new", title: "Newer", states: ["active"], updatedAt: 2 });
 		expect(selectMostRecentTracker([older, newer])?.trackerId).toBe("new");
-		expect(formatProgressRow(makeSnapshot([older, newer]))).toBe("Newer · Stage 1/1 (working) · +1 trackers");
+		expect(formatProgressRow(makeSnapshot([older, newer]))).toBe("Newer · Stage 1/1 · +1 trackers");
 	});
 
 	test("breaks updatedAt ties by owner then trackerId", () => {
@@ -243,6 +262,8 @@ describe("parseProgressSnapshot", () => {
 		expect(parseProgressSnapshot(makeSnapshot([{ ...base, chunks: [] }]))).toBeUndefined();
 		expect(parseProgressSnapshot(makeSnapshot([{ ...base, title: "" }]))).toBeUndefined();
 		expect(parseProgressSnapshot(makeSnapshot([{ ...base, updatedAt: Number.NaN }]))).toBeUndefined();
+		expect(parseProgressSnapshot(makeSnapshot([{ ...base, chunks: [{ index: 1, state: "active", path: [{ index: 1, total: 101, unit: "Stage" }] }] }]))).toBeUndefined();
+		expect(parseProgressSnapshot(makeSnapshot([{ ...base, chunks: [{ index: 1, state: "active", path: [{ index: 1, total: Number.MAX_SAFE_INTEGER + 1, unit: "Stage" }] }] }]))).toBeUndefined();
 	});
 
 	test("drops a phase on a non-active chunk instead of rendering it", () => {
@@ -291,8 +312,8 @@ describe("ProgressObserver", () => {
 		await store.refresh({ timeoutMs: 50 });
 
 		expect(store.current).toEqual(expected);
-		expect(store.content).toBe("Authentication · Stage 1/1 (reviewing)");
-		expect(lastRow).toBe("Authentication · Stage 1/1 (reviewing)");
+		expect(store.content).toBe("Authentication · Stage 1/1 · reviewing");
+		expect(lastRow).toBe("Authentication · Stage 1/1 · reviewing");
 		store.dispose();
 	});
 

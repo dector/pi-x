@@ -66,14 +66,16 @@ direct `herdr:blocked` emission is a fallback for an absent or old hub only
 ## Progress
 
 Hub brokers explicit **semantic progress** for a coordinating agent and its
-subagents. The `progress` tool creates a tracker with a fixed, ordered list of
-chunks, reports each chunk's lifecycle state, and finishes the tracker. Hub
+subagents. The `progress` tool creates a tracker with a fixed, ordered tree,
+reports each leaf's lifecycle state, and finishes the tracker. A node may name
+an earlier `parentId`; a branch's `childUnit` names its direct children. Hub
 publishes detached aggregate snapshots on `hub:progress:changed`; `status-bar`
 renders one footer row and `/px:progress` shows a detailed view. Progress is
 reported state, never inferred from tool calls or subagent runtime state.
 
 States are `pending`, `active`, `blocked`, `done`, `failed`, and `skipped`.
-`reviewing` is a `phase` on an active chunk, not a state. `start` returns a
+Containers cannot be updated; lifecycle and completion operate on leaves.
+`reviewing` is a `phase` on an active leaf, not a state. `start` returns a
 `trackerId` and an opaque `trackerToken`; later calls and delegated children
 must pass both.
 
@@ -98,10 +100,25 @@ Start a tracker, mark one chunk active with a phase, then done:
   "chunkId": "schema", "state": "done" }
 ```
 
+### Hierarchical example
+
+Parents must occur before children. `unit` names roots and `childUnit` names a
+branch's direct children (recommended: Milestone > Stage):
+
+```json
+{ "action": "start", "title": "Release", "unit": "Milestone",
+  "chunks": [ { "id": "m1", "label": "Foundation", "childUnit": "Stage" },
+              { "id": "auth", "parentId": "m1", "label": "Authentication" } ] }
+```
+
+A focused hierarchical leaf renders as
+`Milestone 1/1: Foundation · Stage 1/1: Authentication · reviewing`.
+Arbitrary depth is supported.
+
 ### Parallel example
 
 Several chunks may be in flight at once; the footer switches from the focused
-`Stage 1/3 (reviewing)` form to the aggregate counts:
+`Authentication · Stage 1/3: Database schema · reviewing` form to aggregate counts:
 
 ```json
 { "action": "update", "trackerId": "progress-...", "trackerToken": "pt-...",

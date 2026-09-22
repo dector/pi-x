@@ -89,19 +89,22 @@ listener. The line is hidden while no tracker is active.
 
 - Contract mirror: `status-bar` does not import hub runtime files; channels and
   snapshot types are mirrored locally in `progress.ts`.
-- Every text field (`title`, `unit`, `phase`) is stripped of ANSI/OSC escapes
-  and all C0/C1 controls by `sanitizeUntrustedProgressText` before rendering.
-  The existing per-line truncation to terminal width is the final bound.
-- The line is colored `customMessageLabel` using the active theme.
-- Chunk labels are not part of the observer snapshot and are not rendered.
+- Every text field (`title`, `unit`, `label`, `phase`) is stripped of ANSI/OSC
+  escapes and all C0/C1 controls by `sanitizeUntrustedProgressText` before
+  rendering. The line is truncated, then centered across the full editor width
+  without trailing padding.
+- The line uses the editor frame's thinking-level border color (purple in the default style).
 - Formats:
-  - one active/blocked chunk: `Authentication · Stage 1/13 (reviewing)`
-    (active fallback `working`; blocked always `(blocked)`);
+  - one flat active/blocked leaf:
+    `Authentication · Stage 1/13: Database schema · reviewing`;
+  - one hierarchical leaf:
+    `Milestone 1/3 · Stage 2/4: Authentication · reviewing`;
+    absent labels, path levels, and phases are omitted naturally;
   - several active/blocked: `Authentication · 4/13 done · 2 active · 1 blocked`
     (optional `blocked`/`failed`/`skipped` counts only when non-zero);
   - none active/blocked but pending remains:
     `Authentication · 4/13 done · 9 pending`;
-  - all chunks terminal but unfinished:
+  - all leaves terminal but unfinished:
     `Authentication · 13/13 settled · awaiting finish`.
 - With several active trackers, the most recently updated tracker is rendered
   and ` · +N trackers` is appended.

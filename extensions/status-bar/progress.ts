@@ -43,10 +43,19 @@ export const PROGRESS_CHUNK_STATES = [
 
 export type ProgressChunkState = (typeof PROGRESS_CHUNK_STATES)[number];
 
+export interface ProgressPathSegment {
+	index: number;
+	total: number;
+	unit: string;
+	label?: string;
+}
+
 export interface ProgressChunkSnapshot {
-	/** One-based and immutable. Derived from create order. */
+	/** One-based index in the immutable leaf projection. */
 	index: number;
 	state: ProgressChunkState;
+	label?: string;
+	path?: ProgressPathSegment[];
 	phase?: string;
 }
 
@@ -94,6 +103,7 @@ const MAX_TRACKER_ID_LENGTH = 128;
 const MAX_TITLE_LENGTH = 200;
 const MAX_UNIT_LENGTH = 40;
 const MAX_PHASE_LENGTH = 80;
+const MAX_LABEL_LENGTH = 200;
 
 const TERMINAL_STATES: ReadonlySet<ProgressChunkState> = new Set(["done", "failed", "skipped"]);
 
@@ -152,11 +162,26 @@ function parseChunk(value: unknown, expectedIndex: number): ProgressChunkSnapsho
 	if (!isRecord(value)) return undefined;
 	if (!Number.isInteger(value.index) || value.index !== expectedIndex) return undefined;
 	if (!isOneOf(value.state, PROGRESS_CHUNK_STATES)) return undefined;
+	if (!isOptionalString(value.label, MAX_LABEL_LENGTH)) return undefined;
 	if (!isOptionalString(value.phase, MAX_PHASE_LENGTH)) return undefined;
 
 	const chunk: ProgressChunkSnapshot = { index: value.index, state: value.state };
-	// Phase is only meaningful while the chunk is active; drop it otherwise so a
-	// malformed producer cannot make a blocked chunk render a phase.
+	if (value.label !== undefined) chunk.label = value.label;
+	if (value.path !== undefined) {
+		if (!Array.isArray(value.path) || value.path.length === 0 || value.path.length > MAX_CHUNKS) return undefined;
+		chunk.path = [];
+		for (const raw of value.path) {
+			if (!isRecord(raw)) return undefined;
+			if (!Number.isSafeInteger(raw.index) || (raw.index as number) < 1 || (raw.index as number) > MAX_CHUNKS) return undefined;
+			if (!Number.isSafeInteger(raw.total) || (raw.total as number) < (raw.index as number) || (raw.total as number) > MAX_CHUNKS) return undefined;
+			if (!isRequiredString(raw.unit, MAX_UNIT_LENGTH)) return undefined;
+			if (!isOptionalString(raw.label, MAX_LABEL_LENGTH)) return undefined;
+			const segment: ProgressPathSegment = { index: raw.index as number, total: raw.total as number, unit: raw.unit };
+			if (raw.label !== undefined) segment.label = raw.label;
+			chunk.path.push(segment);
+		}
+	}
+	// Phase is only meaningful while the chunk is active; drop it otherwise.
 	if (value.phase !== undefined && value.state === "active") chunk.phase = value.phase;
 	return chunk;
 }
@@ -285,8 +310,7 @@ function safeText(value: string | undefined): string {
 
 /**
  * Render the single footer line for a snapshot, or `undefined` when there is
- * nothing active to show. Every text field is sanitized first. Chunk labels are
- * intentionally absent from the observer snapshot and are never rendered.
+ * nothing active to show. Every producer-supplied text field is sanitized first.
  */
 export function formatProgressRow(snapshot: ProgressSnapshot | undefined): string | undefined {
 	if (!snapshot || !snapshot.active || snapshot.count === 0 || snapshot.trackers.length === 0) {
@@ -309,10 +333,18 @@ export function formatProgressRow(snapshot: ProgressSnapshot | undefined): strin
 	let base: string;
 	if (inFlight === 1) {
 		const focused = tracker.chunks.find((chunk) => chunk.state === "active" || chunk.state === "blocked");
-		// parse guarantees a chunk exists when inFlight === 1.
 		const chunk = focused ?? tracker.chunks[0]!;
-		const phase = chunk.state === "blocked" ? "blocked" : safeText(chunk.phase) || "working";
-		base = `${title} · ${unit} ${chunk.index}/${total} (${phase})`;
+		const phase = chunk.state === "blocked" ? "blocked" : safeText(chunk.phase);
+		if (chunk.path) {
+			const segments = chunk.path.map((segment) => {
+				const label = safeText(segment.label);
+				return `${safeText(segment.unit) || "Item"} ${segment.index}/${segment.total}${label ? `: ${label}` : ""}`;
+			});
+			base = [...segments, ...(phase ? [phase] : [])].join(" · ");
+		} else {
+			const label = safeText(chunk.label);
+			base = `${title} · ${unit} ${chunk.index}/${total}${label ? `: ${label}` : ""}${phase ? ` · ${phase}` : ""}`;
+		}
 	} else if (inFlight > 1) {
 		const parts = [`${counts.done}/${total} done`];
 		if (activeCount > 0) parts.push(`${activeCount} active`);

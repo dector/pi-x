@@ -84,17 +84,31 @@ export const PROGRESS_OUTCOMES = ["completed", "failed", "cancelled"] as const;
 
 export type ProgressOutcome = (typeof PROGRESS_OUTCOMES)[number];
 
-/** One chunk supplied at create time. `id` is unique within the tracker. */
+/** One node supplied at create time. `id` is unique within the tracker. */
 export interface ProgressChunkDefinition {
 	id: string;
 	label?: string;
+	/** Earlier node whose direct child this is. Omission makes this a root node. */
+	parentId?: string;
+	/** Singular display noun for this node's direct children. */
+	childUnit?: string;
 }
 
-/** Lightweight per-chunk observer shape. */
+export interface ProgressPathSegment {
+	index: number;
+	total: number;
+	unit: string;
+	label?: string;
+}
+
+/** Lightweight leaf observer shape. */
 export interface ProgressChunkSnapshot {
-	/** One-based and immutable. Derived from create order. */
+	/** One-based index in the immutable leaf projection. */
 	index: number;
 	state: ProgressChunkState;
+	label?: string;
+	/** Root-to-leaf location, emitted only for hierarchical trackers. */
+	path?: ProgressPathSegment[];
 	phase?: string;
 }
 
@@ -171,6 +185,7 @@ export type ProgressAckError =
 	| "limit-exceeded"
 	| "stale-tracker"
 	| "tracker-finished"
+	| "not-leaf"
 	| "chunk-terminal"
 	| "invalid-transition"
 	| "incomplete"
