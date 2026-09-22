@@ -96,6 +96,13 @@ export interface AttachViewOptions {
 	/** Draw a rounded purple frame with the agent id as its title. */
 	bordered?: boolean;
 	/**
+	 * Host-imposed cap on the overlay's total rendered lines (pi's
+	 * `overlayOptions.maxHeight`). When set, the view shrinks its frame and
+	 * viewport to fit the budget instead of letting pi truncate the bottom
+	 * (bottom border, status, and help) away.
+	 */
+	maxHeight?: number;
+	/**
 	 * Deliver a steering message to the given run. Resolves on success and
 	 * rejects with a user-facing message on failure. Addressing the run by id
 	 * keeps the transport honest about which child was steered.
@@ -224,8 +231,14 @@ export class AttachView implements Component, Focusable {
 		const statusLines = this.renderStatusLines(w, readOnly);
 		const editorLines = this.renderEditor(w, readOnly);
 
-		// A border adds a row at the top and bottom, plus one padding row each.
-		const totalRows = Math.max(8, (this.options.terminalRows?.() ?? 24) - 2 - (border ? 4 : 0));
+		// A centered overlay keeps one terminal cell of margin, and pi truncates
+		// anything taller than `maxHeight` from the bottom. Reserve the frame rows
+		// up front so the bottom border, status, and help stay visible.
+		const terminalRows = this.options.terminalRows?.() ?? 24;
+		const outerBudget = this.options.maxHeight !== undefined
+			? Math.min(this.options.maxHeight, Math.max(1, terminalRows - 2))
+			: Math.max(1, terminalRows - 2);
+		const totalRows = Math.max(this.options.maxHeight !== undefined ? 4 : 8, outerBudget - (border ? 4 : 0));
 		// Header + task + two separators + help + status; keep at least one
 		// transcript row before the editor claims the rest.
 		const reserved = 1 + taskLines.length + 2 + 1 + statusLines.length;

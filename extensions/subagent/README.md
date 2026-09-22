@@ -406,7 +406,7 @@ Status glyphs are Nerd Font Material Design, shared by the list and the above-ed
 
 Select a run to:
 
-- watch a live transcript/progress stream in a read-only floating panel without changing dispatch ownership or execution mode. The panel draws a rounded purple frame titled with the agent id, with one terminal-background cell of spacing outside the frame; `j`/`k` scroll one line and `Shift+j`/`Shift+k` scroll five;
+- watch a live transcript/progress stream in a read-only floating panel without changing dispatch ownership or execution mode. The panel draws a rounded purple frame titled with the agent id, with one terminal-background cell of spacing outside the frame, and sizes itself to the 70%-of-terminal cap the host applies so the frame is never truncated; `j`/`k` scroll one line and `Shift+j`/`Shift+k` scroll five;
 - attach to the full transcript with steering and run controls;
 - inspect its task, PID, state, working directory, diagnostics, execution mode, dispatch id, and inherited/effective mode;
 - configure that child's safe mode and outer access;
@@ -444,8 +444,10 @@ placement: "aboveEditor" })`. The stable widget id is `px-subagents-active`.
 Detached async children keep the widget visible until their dispatch settles.
 The widget is cleared when the last child finishes and on `session_shutdown`.
 Press `Alt+P` to collapse it to a single summary line (and press again to
-expand). This reclaims its rows, for example while a floating Watch panel would
-otherwise overlap it.
+expand). Opening a floating Watch panel collapses the widget automatically and
+restores the user's prior state when the panel closes, so the two surfaces do
+not compete for the same rows. `Alt+P` remains the manual control for any other
+case.
 
 ```text
 󰚩 Subagents (1 active, 1 finished)

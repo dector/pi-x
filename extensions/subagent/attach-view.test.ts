@@ -137,6 +137,7 @@ function makeView(options: {
 	forceReadOnly?: boolean;
 	watchOnly?: boolean;
 	bordered?: boolean;
+	maxHeight?: number;
 } = {}) {
 	const result = options.result ?? makeResult();
 	const startedAt = Date.now() - 42_000;
@@ -158,6 +159,7 @@ function makeView(options: {
 		forceReadOnly: options.forceReadOnly,
 		watchOnly: options.watchOnly,
 		bordered: options.bordered,
+		maxHeight: options.maxHeight,
 	});
 	return { view, result };
 }
@@ -619,6 +621,24 @@ describe("AttachView", () => {
 		expect(lines[2]?.startsWith(" │")).toBe(true);
 		expect(lines[2]?.endsWith("│ ")).toBe(true);
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(60);
+	});
+
+	test("bordered watch mode fits the host maxHeight so the bottom frame survives", () => {
+		const maxHeight = 11;
+		const { view } = makeView({ watchOnly: true, bordered: true, rows: 16, maxHeight, result: makeLongResult() });
+		const lines = view.render(60);
+		expect(lines.length).toBeLessThanOrEqual(maxHeight);
+		// The truncated bottom of the frame is exactly the bug this guards against.
+		expect(lines[lines.length - 1]?.trim()).toBe("");
+		expect(lines[lines.length - 2]).toContain("╰");
+		expect(lines[lines.length - 2]).toContain("╯");
+	});
+
+	test("bordered watch mode keeps the frame when maxHeight exceeds the terminal margin", () => {
+		const { view } = makeView({ watchOnly: true, bordered: true, rows: 24, maxHeight: 100, result: makeLongResult() });
+		const lines = view.render(60);
+		expect(lines.length).toBeLessThanOrEqual(22);
+		expect(lines[lines.length - 2]).toContain("╰");
 	});
 
 	test("bordered watch mode never overflows narrow widths", () => {

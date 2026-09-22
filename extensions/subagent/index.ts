@@ -1129,8 +1129,30 @@ export default function (pi: ExtensionAPI) {
 		watchOnly?: boolean;
 	}
 
+	/**
+	 * Fraction of the terminal a floating Watch panel may occupy. The view sizes
+	 * its frame to the same budget so pi never truncates the bottom border away.
+	 */
+	const WATCH_OVERLAY_HEIGHT_RATIO = 0.7;
+
+	/**
+	 * Collapse the active-subagents widget for the duration of a watch panel so
+	 * the two surfaces do not compete for the same rows, then restore the prior
+	 * state. Returns a no-op restore when the widget was already collapsed.
+	 */
+	function collapseWidgetForWatch(): () => void {
+		const wasCollapsed = activeWidget.isCollapsed;
+		if (!wasCollapsed) activeWidget.setCollapsed(true);
+		return () => {
+			if (!wasCollapsed) activeWidget.setCollapsed(false);
+		};
+	}
+
 	async function openAttachOverlay(target: AttachOverlayTarget, ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) return;
+		// Watch floats over the editor, so keep the widget out of its way while it
+		// is open and put it back exactly as the user left it afterwards.
+		const restoreWidget = target.watchOnly ? collapseWidgetForWatch() : undefined;
 		try {
 			const buildView = (tui: TUI, theme: Theme, done: (result: null) => void) => {
 				const editorTheme: EditorTheme = {
@@ -1154,6 +1176,14 @@ export default function (pi: ExtensionAPI) {
 					requestRender: () => tui.requestRender(),
 					done: (result) => done(result),
 					terminalRows: () => tui.terminal.rows,
+					// Match pi's resolved maxHeight (floor of the ratio, clamped to the
+					// margin-reduced terminal) so the view fits instead of being cut.
+					maxHeight: target.watchOnly
+						? Math.min(
+							Math.floor(tui.terminal.rows * WATCH_OVERLAY_HEIGHT_RATIO),
+							Math.max(1, tui.terminal.rows - 4),
+						)
+						: undefined,
 					watchOnly: target.watchOnly,
 					bordered: target.watchOnly,
 					// A recovered persisted transcript has no child to control, so it is
@@ -1179,7 +1209,13 @@ export default function (pi: ExtensionAPI) {
 				{
 					overlay: true,
 					overlayOptions: target.watchOnly
-						? { anchor: "center", width: "80%", minWidth: 40, maxHeight: "70%", margin: 2 }
+						? {
+							anchor: "center",
+							width: "80%",
+							minWidth: 40,
+							maxHeight: `${Math.round(WATCH_OVERLAY_HEIGHT_RATIO * 100)}%`,
+							margin: 2,
+						}
 						: { anchor: "center", width: "100%", minWidth: 40, maxHeight: "100%", margin: 1 },
 				},
 			);
@@ -1187,6 +1223,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 		} finally {
 			closeActiveAttach = undefined;
+			restoreWidget?.();
 		}
 	}
 
