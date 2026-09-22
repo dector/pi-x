@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { MANAGER_ICONS } from "./manager-icons.ts";
 import * as statusRow from "./status-row.ts";
 import {
@@ -8,6 +9,7 @@ import {
 	ACTIVE_SUBAGENT_WIDGET_MAX_LINES,
 	ActiveSubagentWidget,
 	formatActiveSubagentWidget,
+	renderActiveSubagentWidgetContent,
 	type ActiveSubagentWidgetRun,
 	type ActiveSubagentWidgetTimers,
 } from "./status-row.ts";
@@ -209,6 +211,30 @@ test("the task line includes its border in the line budget", () => {
 	const taskLine = lines?.[3] ?? "";
 	expect(codePointLength(taskLine)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
 	expect(taskLine).toContain("…");
+});
+
+test("width-aware rendering gives wrapped tasks a continuation border", () => {
+	const logical = formatActiveSubagentWidget([
+		makeRun({
+			task: "Fix the two remaining critical Stage 4 reachability issues and amend 52e2f5fa preserving subject/sc…",
+		}),
+	], NOW) ?? [];
+	const rendered = renderActiveSubagentWidgetContent(logical, 76);
+	expect(rendered[3]?.trimEnd()).toBe("  │ Fix the two remaining critical Stage 4 reachability issues and amend");
+	expect(rendered[4]?.trimEnd()).toBe("  | 52e2f5fa preserving subject/sc…");
+	for (const line of rendered) expect(visibleWidth(line)).toBe(76);
+});
+
+test("width-aware rendering caps lines after wrapping", () => {
+	const logical = formatActiveSubagentWidget([
+		makeRun({ task: "word ".repeat(20) }),
+		makeRun({ runId: "sa-two", task: "word ".repeat(20) }),
+		makeRun({ runId: "sa-three", task: "word ".repeat(20) }),
+	], NOW) ?? [];
+	const rendered = renderActiveSubagentWidgetContent(logical, 24);
+	expect(rendered).toHaveLength(ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
+	expect(rendered[rendered.length - 1]).toContain("… widget truncated");
+	for (const line of rendered) expect(visibleWidth(line)).toBe(24);
 });
 
 test("effort is shown on the identity line before a model is known", () => {

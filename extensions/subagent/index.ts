@@ -151,7 +151,11 @@ import {
 	SUBAGENT_REMAINING_DEPTH_ENV,
 } from "./delegation-depth.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
-import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
+import {
+	ACTIVE_SUBAGENT_WIDGET_ID,
+	ActiveSubagentWidget,
+	renderActiveSubagentWidgetContent,
+} from "./status-row.ts";
 import { SubagentTimingTracker } from "./timing.ts";
 import { withUserWait, type UserWaitEventBus } from "./user-wait.ts";
 import type {
@@ -876,7 +880,15 @@ export default function (pi: ExtensionAPI) {
 		setWidget: (content) => {
 			if (!sessionContext?.hasUI) return;
 			try {
-				sessionContext.ui.setWidget(ACTIVE_SUBAGENT_WIDGET_ID, content, { placement: "aboveEditor" });
+				const component = content
+					? (_tui: TUI, theme: Theme) => ({
+						render: (width: number) => renderActiveSubagentWidgetContent(content, width, {
+							dim: (text) => theme.fg("dim", text),
+						}),
+						invalidate: () => {},
+					})
+					: undefined;
+				sessionContext.ui.setWidget(ACTIVE_SUBAGENT_WIDGET_ID, component, { placement: "aboveEditor" });
 			} catch {
 				// Ignore a stale or closing UI; run cleanup must still complete.
 			}

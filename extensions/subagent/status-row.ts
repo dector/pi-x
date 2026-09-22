@@ -12,6 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { MANAGER_ICONS, MANAGER_OUTCOME_TONE } from "./manager-icons.ts";
 import { isAbortedResult, isFailedResult } from "./result-output.ts";
 import type { SubagentRunState, UsageStats } from "./types.ts";
@@ -101,6 +102,67 @@ const PLAIN_STYLES: ActiveSubagentWidgetStyles = {
 export interface ActiveSubagentWidgetFormatOptions {
 	styles?: ActiveSubagentWidgetStyles;
 	contextWindowForModel?: (model?: string) => number | undefined;
+}
+
+export interface ActiveSubagentWidgetRenderOptions {
+	/** Styles the continuation marker and rendered overflow notice. */
+	dim?: (text: string) => string;
+}
+
+/**
+ * Render logical widget lines at the current terminal width.
+ *
+ * Pi's string-array widget path wraps each line independently, so task
+ * continuations lose their visual border. Run blocks are three logical lines;
+ * every third line is therefore a task. Wrap its body separately and add a
+ * hanging ` | ` marker to every continuation line.
+ */
+export function renderActiveSubagentWidgetContent(
+	content: readonly string[],
+	width: number,
+	options: ActiveSubagentWidgetRenderOptions = {},
+): string[] {
+	const outerWidth = Math.max(1, width);
+	const paddingX = Math.min(1, Math.max(0, Math.floor((outerWidth - 1) / 2)));
+	const contentWidth = Math.max(1, outerWidth - paddingX * 2);
+	const dim = options.dim ?? identity;
+	const rendered: string[] = [];
+
+	for (let index = 0; index < content.length; index += 1) {
+		const line = content[index] ?? "";
+		const isTaskLine = index > 0 && index % 3 === 0;
+		const markerIndex = isTaskLine ? line.indexOf(" │ ") : -1;
+		if (markerIndex < 0 || contentWidth <= 3) {
+			rendered.push(...wrapTextWithAnsi(line, contentWidth));
+			continue;
+		}
+
+		// Theme styling wraps the complete logical line, so everything before the
+		// visible marker is ANSI state that must also prefix the separately wrapped body.
+		const ansiPrefix = line.slice(0, markerIndex);
+		const prefix = `${ansiPrefix} │ `;
+		const body = `${ansiPrefix}${line.slice(markerIndex + 3)}`;
+		const wrappedBody = wrapTextWithAnsi(body, Math.max(1, contentWidth - 3));
+		for (let part = 0; part < wrappedBody.length; part += 1) {
+			rendered.push(`${part === 0 ? prefix : dim(" | ")}${wrappedBody[part] ?? ""}`);
+		}
+	}
+
+	if (rendered.length > ACTIVE_SUBAGENT_WIDGET_MAX_LINES) {
+		rendered.splice(
+			ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1,
+			rendered.length,
+			dim("… widget truncated"),
+		);
+	}
+
+	const leftMargin = " ".repeat(paddingX);
+	const rightMargin = " ".repeat(paddingX);
+	return rendered.map((line) => {
+		const fitted = truncateToWidth(line, contentWidth, "…");
+		const fill = " ".repeat(Math.max(0, contentWidth - visibleWidth(fitted)));
+		return `${leftMargin}${fitted}${fill}${rightMargin}`;
+	});
 }
 
 /**
