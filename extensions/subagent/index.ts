@@ -1255,13 +1255,16 @@ export default function (pi: ExtensionAPI) {
 				if (!ctx.hasUI) return;
 				rewireConfig ??= defaultRewireConfig(ctx);
 				while (true) {
-					const toggleIcon = rewireConfig?.enabled ? "\uf205" : "\uf204";
+					const rewireBadge = rewireConfig?.enabled
+						? ctx.ui.theme.fg("error", "[ON]")
+						: ctx.ui.theme.fg("muted", "[OFF]");
+					const rewireChoice = `Rewire   ${rewireBadge}`;
 					const choice = await ctx.ui.select("Subagent rewiring", [
-						`${toggleIcon}  Rewire subagents`,
+						rewireChoice,
 						"\ue615  Configuration",
 					]);
 					if (!choice) return;
-					if (choice.endsWith("Rewire subagents")) {
+					if (choice === rewireChoice) {
 						if (!rewireConfig) {
 							ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
 							continue;

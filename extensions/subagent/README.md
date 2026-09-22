@@ -368,7 +368,7 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 
 ## Session model rewiring
 
-Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `  Rewire subagents` while disabled and `  Rewire subagents` while enabled; `  Configuration` opens the model and effort selectors.
+Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `Rewire   [OFF]` in muted text while disabled and `Rewire   [ON]` in red while enabled; `  Configuration` opens the model and effort selectors.
 
 When enabled, the configured values override each agent file's `model` and `thinking` fields. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
 
