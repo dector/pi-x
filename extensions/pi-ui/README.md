@@ -120,13 +120,13 @@ Integration contract (important):
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
-### 4) Transcript toggle and navigation (Alt+O, Alt+J, Alt+K)
+### 4) Transcript selection, toggle, and navigation (Alt+J, Alt+K, Alt+O)
 
-`Alt+O` toggles the newest collapsible transcript entry — the same effect as clicking that entry's result area. Nothing else is affected, unlike pi's built-in `Ctrl+O`, which expands or collapses every tool output at once.
+`Alt+J` / `Alt+K` move a transcript selection one entry down / up and scroll that entry to the top of the viewport. Every entry counts, collapsed or not: user messages, assistant messages, tool calls, `!` bash runs, custom messages and entries, summaries, and skill invocations.
 
-`Alt+J` and `Alt+K` scroll the transcript so the next or previous entry sits at the top of the viewport. Navigation covers every entry, collapsed or not. At the last entry `Alt+J` jumps to the transcript end, and at the first entry `Alt+K` jumps to the very top.
+A short chip is drawn over the selected entry (inverse video, e.g. ` 480/482 tool `) and disappears after 1.5 s. The chip sits at the entry's own screen row, so it marks the concrete message rather than a corner of the screen.
 
-Toggleable entries are the transcript components pi renders with an expanded/collapsed state:
+`Alt+O` toggles **the selected entry** — nothing else, and it never falls back to "the latest entry". It behaves like clicking that entry's result area:
 
 - tool calls (read/bash/edit/write/grep/find/ls and extension tools)
 - `!` bash mode executions
@@ -134,14 +134,15 @@ Toggleable entries are the transcript components pi renders with an expanded/col
 - compaction and branch summaries
 - skill invocation messages
 
-Plain user and assistant text messages have no collapsed state in pi, so `Alt+O` skips them and always targets the newest toggleable entry; they are still reachable with `Alt+J`/`Alt+K`. An entry can be toggled either way (expanded ⇄ collapsed), and a notification is shown only when no toggleable entry exists yet.
+Entries without a collapsed state (plain user and assistant messages) answer with a notification instead. After a reload, nothing is selected: press `Alt+K` once to select the newest entry, then `Alt+O`.
 
 Implementation notes:
 
-- pi only exposes a single global expand flag to extensions, so `pi-ui` tracks entries by wrapping `Container.addChild`/`removeChild`/`clear`/`render` on the `@earendil-works/pi-tui` `Container` prototype and matching the known entry component class names. Rendering backfills entries that already existed when the extension loaded (startup, session restore, `/reload`).
-- Navigation needs the transcript's `ScrollView`. `pi-ui` reads it through the alt-screen's primary scroll view (falling back to a walk of the layout tree) and computes each entry's line offset from the child heights recorded during the last render (`mouseLayout`), then calls `scrollTo(line)`.
-- The TUI reference comes from a hidden zero-height widget registered with `setWidget`, so no rendering changes.
-- Both features are coupled to pi internals: if pi renames those components or moves the scroll view, they degrade to a notification instead of doing the wrong thing (use `/px:pi-ui-expandable` to inspect tracked entries and scroll-view state). Fullscreen TUI mode is required for navigation.
+- Everything is read-only on pi's side. Entries are found by walking the transcript's layout tree from the primary `ScrollView` and matching known entry component class names; no component prototypes are patched and nothing is registered ahead of time, so session restore and `/reload` need no special handling.
+- Entry line offsets come from the child heights recorded during the last render (`mouseLayout`); navigation then calls `scrollTo(line)`.
+- The chip is an overlay (`showOverlay` with `row`, `col`, `width`, `nonCapturing`), so it marks a row without stealing keyboard focus.
+- The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
+- Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 
 ## Configuration
 
@@ -163,12 +164,12 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 - `/px:pi-ui-working-length <15-400>` — set compatibility minimum length (full-width mode still uses terminal width)
 - `/px:pi-ui-bell [on|off|toggle|status]` — control bell notifications
-- `/px:pi-ui-expandable` — show how many transcript entries are tracked, the five newest, and whether the transcript scroll view was found
+- `/px:pi-ui-nav` — show transcript entry count, the current selection, and scroll-view state
 
 ### Shortcut
 
-- `Alt+O` — toggle the newest collapsible transcript entry (same as clicking it)
-- `Alt+J` / `Alt+K` — scroll to the next / previous transcript entry
+- `Alt+J` / `Alt+K` — select and scroll to the next / previous transcript entry
+- `Alt+O` — toggle the selected transcript entry (same as clicking it)
 - `Ctrl+,` — toggle the `pi-ui` action dialog
   - `↑/↓` (or `k/j`) — move selection
   - `Enter` — run selected action

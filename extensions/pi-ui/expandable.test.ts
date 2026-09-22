@@ -2,15 +2,18 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Container } from "@earendil-works/pi-tui";
 import {
 	computeEntryPositions,
+	describeEntry,
 	findNextEntryTop,
 	findPreviousEntryTop,
-	installEntryTracking,
+	getSelectedEntry,
+	getTuiReference,
+	captureTuiReference,
 	isExpandableEntry,
 	isTrackedEntry,
-	listTrackedEntries,
-	resetEntryTracking,
-	scrollToEntry,
-	toggleNewestExpandable,
+	selectAdjacentEntry,
+	setSelectedEntry,
+	showEntryChip,
+	toggleSelectedEntry,
 	type ScrollViewLike,
 } from "./index";
 
@@ -39,13 +42,6 @@ class CustomMessageComponent extends FakeEntry {
 	}
 }
 
-class BashExecutionComponent extends FakeEntry {
-	expanded = false;
-	setExpanded(expanded: boolean): void {
-		this.expanded = expanded;
-	}
-}
-
 class AssistantMessageComponent extends FakeEntry {}
 class UserMessageComponent extends FakeEntry {}
 
@@ -59,164 +55,109 @@ class ExpandableText extends FakeEntry {
 
 class PlainText extends FakeEntry {}
 
+interface OverlayCall {
+	component: { render(width: number): string[] };
+	options: Record<string, unknown>;
+}
+
+interface FakeTui {
+	terminal: { columns: number };
+	getPrimaryScrollView(): ScrollViewLike | undefined;
+	showOverlay(component: unknown, options?: Record<string, unknown>): { hide(): void };
+	overlayCalls: OverlayCall[];
+	hidden: number;
+}
+
 interface FakeScrollView extends ScrollViewLike {
 	scrollCalls: number[];
 }
 
 function createScrollView(content: Container, scrollTop = 0): FakeScrollView {
 	const contentHeight = (content.children ?? []).reduce((total, child) => {
-		const rendered = typeof (child as { render?: (width: number) => string[] }).render === "function"
-			? (child as { render: (width: number) => string[] }).render(80).length
-			: 0;
+		const rendered =
+			typeof (child as { render?: (width: number) => string[] }).render === "function"
+				? (child as { render: (width: number) => string[] }).render(80).length
+				: 0;
 		return total + rendered;
 	}, 0);
-	const view: FakeScrollView = {
+	return {
 		scrollTop,
 		viewportHeight: 1,
 		primary: true,
 		child: content,
 		scrollCalls: [],
-		scrollTo(top: number): void {
+		scrollTo(this: FakeScrollView, top: number): void {
 			this.scrollCalls.push(top);
 			this.scrollTop = Math.max(0, Math.min(top, contentHeight - this.viewportHeight));
 		},
 		scrollBy(): void {},
 	};
-	return view;
 }
 
-installEntryTracking();
+function createTui(scrollView: ScrollViewLike | undefined): FakeTui {
+	const tui: FakeTui = {
+		terminal: { columns: 80 },
+		overlayCalls: [],
+		hidden: 0,
+		getPrimaryScrollView: () => scrollView,
+		showOverlay(component: unknown, options?: Record<string, unknown>) {
+			tui.overlayCalls.push({
+				component: component as OverlayCall["component"],
+				options: options ?? {},
+			});
+			return {
+				hide: () => {
+					tui.hidden += 1;
+				},
+			};
+		},
+	};
+	return tui;
+}
+
+/** Chat container with a tool entry followed by entries of the given heights. */
+function createChat(offsets?: Array<{ component: Container["children"][number]; height: number }>): Container {
+	const chat = new Container();
+	if (!offsets) {
+		chat.addChild(new UserMessageComponent(2));
+		chat.addChild(new ToolExecutionComponent(5));
+		chat.addChild(new AssistantMessageComponent(1));
+	}
+	chat.mouseLayout = {
+		width: 80,
+		children: (offsets ?? [
+			{ component: chat.children[0], height: 2 },
+			{ component: chat.children[1], height: 5 },
+			{ component: chat.children[2], height: 1 },
+		]) as Array<{ component: unknown; height: number }>,
+	};
+	return chat;
+}
 
 beforeEach(() => {
-	resetEntryTracking();
+	setSelectedEntry(undefined);
 });
 
-describe("entry tracking", () => {
-	test("tracks entries in append order and ignores other components", () => {
-		const container = new Container();
-		container.addChild(new PlainText());
-		container.addChild(new ExpandableText());
-		container.addChild(new ToolExecutionComponent());
-		container.addChild(new CustomMessageComponent());
-		container.addChild(new AssistantMessageComponent());
-		container.addChild(new UserMessageComponent());
+describe("entry classification", () => {
+	test("recognises transcript entries and expandable ones", () => {
+		expect(isTrackedEntry(new ToolExecutionComponent())).toBe(true);
+		expect(isTrackedEntry(new AssistantMessageComponent())).toBe(true);
+		expect(isTrackedEntry(new UserMessageComponent())).toBe(true);
+		expect(isTrackedEntry(new PlainText())).toBe(false);
+		expect(isTrackedEntry(new ExpandableText())).toBe(false);
+		expect(isTrackedEntry("text")).toBe(false);
 
-		expect(listTrackedEntries()).toEqual([
-			"ToolExecutionComponent",
-			"CustomMessageComponent",
-			"AssistantMessageComponent",
-			"UserMessageComponent",
-		]);
+		expect(isExpandableEntry(new ToolExecutionComponent())).toBe(true);
+		expect(isExpandableEntry(new CustomMessageComponent())).toBe(true);
+		expect(isExpandableEntry(new AssistantMessageComponent())).toBe(false);
+		expect(isExpandableEntry(new ExpandableText())).toBe(false);
 	});
 
-	test("classifies entries as expandable or not", () => {
-		const tool = new ToolExecutionComponent();
-		const custom = new CustomMessageComponent();
-		const assistant = new AssistantMessageComponent();
-		const header = new ExpandableText();
-
-		expect(isTrackedEntry(tool)).toBe(true);
-		expect(isTrackedEntry(assistant)).toBe(true);
-		expect(isTrackedEntry(header)).toBe(false);
-		expect(isExpandableEntry(tool)).toBe(true);
-		expect(isExpandableEntry(custom)).toBe(true);
-		expect(isExpandableEntry(assistant)).toBe(false);
-	});
-
-	test("ignores non-container additions", () => {
-		const container = new Container();
-		container.addChild(undefined);
-		container.addChild("text");
-		container.addChild({ setExpanded: () => {} });
-
-		expect(listTrackedEntries()).toEqual([]);
-	});
-
-	test("registers each component once", () => {
-		const container = new Container();
-		const tool = new ToolExecutionComponent();
-		container.addChild(tool);
-		container.addChild(tool);
-
-		expect(listTrackedEntries()).toEqual(["ToolExecutionComponent"]);
-	});
-
-	test("drops entries removed from their container", () => {
-		const container = new Container();
-		container.addChild(new ToolExecutionComponent());
-		const bash = new BashExecutionComponent();
-		container.addChild(bash);
-
-		container.removeChild(bash);
-
-		expect(listTrackedEntries()).toEqual(["ToolExecutionComponent"]);
-	});
-
-	test("drops entries when the container is cleared", () => {
-		const container = new Container();
-		container.addChild(new ToolExecutionComponent());
-		container.addChild(new BashExecutionComponent());
-
-		container.clear();
-
-		expect(listTrackedEntries()).toEqual([]);
-		expect(toggleNewestExpandable()).toBeUndefined();
-	});
-
-	test("backfills entries that existed before tracking started", () => {
-		const container = new Container();
-		container.addChild(new ToolExecutionComponent());
-		container.addChild(new AssistantMessageComponent());
-
-		// Simulates `/reload`: the transcript is already rendered, nothing is re-added.
-		resetEntryTracking();
-		expect(listTrackedEntries()).toEqual([]);
-
-		container.render(80);
-
-		expect(listTrackedEntries()).toEqual(["ToolExecutionComponent", "AssistantMessageComponent"]);
-	});
-
-	test("installing twice does not double-track", () => {
-		installEntryTracking();
-
-		const container = new Container();
-		container.addChild(new ToolExecutionComponent());
-
-		expect(listTrackedEntries()).toEqual(["ToolExecutionComponent"]);
-	});
-});
-
-describe("toggle newest expandable", () => {
-	test("skips entries that cannot be toggled", () => {
-		const container = new Container();
-		const tool = new ToolExecutionComponent();
-		container.addChild(tool);
-		container.addChild(new AssistantMessageComponent());
-		container.addChild(new UserMessageComponent());
-
-		expect(toggleNewestExpandable()).toEqual({ name: "ToolExecutionComponent", expanded: true });
-		expect(tool.expanded).toBe(true);
-		expect(tool.invalidations).toBe(1);
-
-		expect(toggleNewestExpandable()).toEqual({ name: "ToolExecutionComponent", expanded: false });
-		expect(tool.expanded).toBe(false);
-	});
-
-	test("reads the _expanded field used by custom messages", () => {
-		const container = new Container();
-		const custom = new CustomMessageComponent();
-		container.addChild(custom);
-
-		expect(toggleNewestExpandable()?.expanded).toBe(true);
-		expect(custom._expanded).toBe(true);
-	});
-
-	test("returns undefined without tracked expandable entries", () => {
-		const container = new Container();
-		container.addChild(new AssistantMessageComponent());
-
-		expect(toggleNewestExpandable()).toBeUndefined();
+	test("describes entries with short labels", () => {
+		expect(describeEntry(new ToolExecutionComponent())).toBe("tool");
+		expect(describeEntry(new AssistantMessageComponent())).toBe("assistant");
+		expect(describeEntry({ constructor: { name: "SomethingElseComponent" } })).toBe("SomethingElse");
+		expect(describeEntry(undefined)).toBe("entry");
 	});
 });
 
@@ -231,9 +172,7 @@ describe("entry positions", () => {
 		document.addChild(new ExpandableText(3));
 		document.addChild(chat);
 
-		const positions = computeEntryPositions(document, 80);
-
-		expect(positions.map((position) => [position.top, position.height])).toEqual([
+		expect(computeEntryPositions(document, 80).map((position) => [position.top, position.height])).toEqual([
 			[3, 2],
 			[5, 5],
 			[10, 1],
@@ -254,9 +193,7 @@ describe("entry positions", () => {
 			],
 		};
 
-		const positions = computeEntryPositions(chat, 80);
-
-		expect(positions.map((position) => [position.top, position.height])).toEqual([
+		expect(computeEntryPositions(chat, 80).map((position) => [position.top, position.height])).toEqual([
 			[0, 4],
 			[4, 7],
 		]);
@@ -268,7 +205,7 @@ describe("entry positions", () => {
 	});
 });
 
-describe("entry navigation", () => {
+describe("entry lookup", () => {
 	const positions = [
 		{ component: new UserMessageComponent(), top: 0, height: 2 },
 		{ component: new ToolExecutionComponent(), top: 2, height: 5 },
@@ -288,69 +225,182 @@ describe("entry navigation", () => {
 		expect(findPreviousEntryTop(positions, 2)).toBe(0);
 		expect(findPreviousEntryTop(positions, 0)).toBeUndefined();
 	});
+});
 
-	test("scrollToEntry aligns entries and clamps at the ends", () => {
-		const chat = new Container();
-		chat.addChild(new UserMessageComponent(2));
-		chat.addChild(new ToolExecutionComponent(5));
-		chat.addChild(new AssistantMessageComponent(1));
-		chat.mouseLayout = {
-			width: 80,
-			children: [
-				{ component: chat.children[0], height: 2 },
-				{ component: chat.children[1], height: 5 },
-				{ component: chat.children[2], height: 1 },
-			],
+describe("tui capture", () => {
+	test("captures the tui through the widget factory", () => {
+		const fakeTui = createTui(undefined);
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget: (_key: string, factory: (tui: unknown, theme: unknown) => unknown) => {
+					factory(fakeTui, {});
+				},
+			},
 		};
 
-		const scrollView = createScrollView(chat);
-		const tui = { getPrimaryScrollView: () => scrollView, terminal: { columns: 80 } };
-
-		expect(scrollToEntry(tui, 1)).toEqual({ index: 1, total: 3, name: "ToolExecutionComponent", top: 2 });
-		expect(scrollToEntry(tui, 1)).toEqual({ index: 2, total: 3, name: "AssistantMessageComponent", top: 7 });
-
-		// Past the last entry: request the document end.
-		expect(scrollToEntry(tui, 1)).toEqual({ index: -1, total: 3, name: "start/end", top: Number.MAX_SAFE_INTEGER });
-
-		// Back up to the first entry, then to the very top.
-		expect(scrollToEntry(tui, -1)).toEqual({ index: 1, total: 3, name: "ToolExecutionComponent", top: 2 });
-		expect(scrollToEntry(tui, -1)).toEqual({ index: 0, total: 3, name: "UserMessageComponent", top: 0 });
-		expect(scrollToEntry(tui, -1)).toEqual({ index: -1, total: 3, name: "start/end", top: 0 });
-
-		expect(scrollView.scrollCalls).toEqual([2, 7, Number.MAX_SAFE_INTEGER, 2, 0, 0]);
+		expect(captureTuiReference(ctx as never)).toBe(fakeTui as never);
+		expect(getTuiReference()).toBe(fakeTui as never);
 	});
 
-	test("scrollToEntry finds the scroll view by walking the layout tree", () => {
-		const chat = new Container();
-		chat.addChild(new UserMessageComponent(1));
-		chat.addChild(new ToolExecutionComponent(3));
-		chat.addChild(new AssistantMessageComponent(3));
-		chat.mouseLayout = {
-			width: 80,
-			children: [
-				{ component: chat.children[0], height: 1 },
-				{ component: chat.children[1], height: 3 },
-				{ component: chat.children[2], height: 3 },
-			],
+	test("keeps the previous reference when there is no ui", () => {
+		const fakeTui = createTui(undefined);
+		let widgetCalls = 0;
+		const withUi = {
+			hasUI: true,
+			ui: {
+				setWidget: (_key: string, factory: (tui: unknown, theme: unknown) => unknown) => {
+					widgetCalls += 1;
+					factory(fakeTui, {});
+				},
+			},
 		};
+		captureTuiReference(withUi as never);
 
-		const scrollView = createScrollView(chat);
-		const tui = {
-			mode: "fullscreen",
-			layoutRoot: { children: [{ children: [scrollView] }] },
-			terminal: { columns: 80 },
-		};
+		expect(captureTuiReference({ hasUI: false, ui: {} } as never)).toBe(fakeTui as never);
+		expect(widgetCalls).toBe(1);
+	});
+});
 
-		expect(scrollToEntry(tui, 1)?.name).toBe("ToolExecutionComponent");
-		expect(scrollToEntry(tui, 1)?.name).toBe("AssistantMessageComponent");
+describe("entry chip", () => {
+	test("draws a non-capturing overlay at the given row", () => {
+		const tui = createTui(undefined);
+
+		expect(showEntryChip(tui, 7, "12/379 tool")).toBe(true);
+		expect(tui.overlayCalls).toHaveLength(1);
+
+		const call = tui.overlayCalls[0];
+		expect(call?.options).toMatchObject({ row: 7, col: 0, nonCapturing: true });
+		expect(call?.options.width).toBe(" 12/379 tool ".length);
+		expect(call?.component.render(80)[0]).toContain("12/379 tool");
 	});
 
-	test("scrollToEntry reports unavailability instead of throwing", () => {
-		expect(scrollToEntry(undefined, 1)).toBeUndefined();
-		expect(scrollToEntry({ terminal: { columns: 80 } }, 1)).toBeUndefined();
+	test("replaces the previous chip and hides it", () => {
+		const tui = createTui(undefined);
 
-		const empty = new Container();
-		const scrollView = createScrollView(empty);
-		expect(scrollToEntry({ getPrimaryScrollView: () => scrollView }, 1)).toBeUndefined();
+		showEntryChip(tui, 1, "first");
+		showEntryChip(tui, 2, "second");
+
+		expect(tui.hidden).toBe(1);
+		expect(tui.overlayCalls).toHaveLength(2);
+	});
+
+	test("is unavailable without overlay support", () => {
+		expect(showEntryChip(undefined, 0, "chip")).toBe(false);
+		expect(showEntryChip({ terminal: { columns: 80 } }, 0, "chip")).toBe(false);
+	});
+});
+
+describe("selection navigation", () => {
+	test("selects the entry below the current scroll offset first", () => {
+		const chat = createChat();
+		const scrollView = createScrollView(chat);
+		const tui = createTui(scrollView);
+
+		const outcome = selectAdjacentEntry(tui, 1);
+
+		expect(outcome.status).toBe("moved");
+		expect(outcome.status === "moved" && outcome.result).toMatchObject({
+			index: 1,
+			total: 3,
+			label: "tool",
+			top: 2,
+			row: 0,
+			atStart: false,
+			atEnd: false,
+		});
+		expect(getSelectedEntry()).toBe(chat.children[1]);
+		expect(scrollView.scrollCalls).toEqual([2]);
+		expect(tui.overlayCalls[0]?.options.row).toBe(0);
+	});
+
+	test("steps strictly through entries once something is selected", () => {
+		const chat = createChat();
+		const scrollView = createScrollView(chat);
+		const tui = createTui(scrollView);
+
+		selectAdjacentEntry(tui, 1);
+		const second = selectAdjacentEntry(tui, 1);
+		const third = selectAdjacentEntry(tui, 1);
+
+		expect(second.status === "moved" && second.result.index).toBe(2);
+		expect(second.status === "moved" && second.result.label).toBe("assistant");
+		expect(third.status === "moved" && third.result.atEnd).toBe(true);
+		expect(getSelectedEntry()).toBe(chat.children[2]);
+
+		const back = selectAdjacentEntry(tui, -1);
+		expect(back.status === "moved" && back.result.index).toBe(1);
+		expect(getSelectedEntry()).toBe(chat.children[1]);
+	});
+
+	test("falls back to the scroll position when the selection is gone", () => {
+		const chat = createChat();
+		const scrollView = createScrollView(chat, 2);
+		const tui = createTui(scrollView);
+		setSelectedEntry(new ToolExecutionComponent());
+
+		const outcome = selectAdjacentEntry(tui, 1);
+
+		expect(outcome.status === "moved" && outcome.result.index).toBe(2);
+	});
+
+	test("reports empty and unavailable transcripts", () => {
+		const emptyChat = createChat([]);
+		emptyChat.mouseLayout = { width: 80, children: [] };
+		expect(selectAdjacentEntry(createTui(createScrollView(emptyChat)), 1).status).toBe("empty");
+		expect(selectAdjacentEntry(undefined, 1).status).toBe("unavailable");
+		expect(selectAdjacentEntry(createTui(undefined), 1).status).toBe("unavailable");
+	});
+});
+
+describe("selection toggle", () => {
+	test("requires a selection", () => {
+		const tui = createTui(createScrollView(createChat()));
+
+		expect(toggleSelectedEntry(tui).status).toBe("no-selection");
+	});
+
+	test("toggles the selected expandable entry", () => {
+		const chat = createChat();
+		const scrollView = createScrollView(chat);
+		const tui = createTui(scrollView);
+		const tool = chat.children[1] as ToolExecutionComponent;
+		setSelectedEntry(tool);
+
+		const first = toggleSelectedEntry(tui);
+		expect(first.status).toBe("toggled");
+		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
+		expect(tool.expanded).toBe(true);
+		expect(tool.invalidations).toBe(1);
+		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("→ expanded");
+
+		const second = toggleSelectedEntry(tui);
+		expect(second.status === "toggled" && second.expanded).toBe(false);
+		expect(tool.expanded).toBe(false);
+	});
+
+	test("reports entries that cannot be collapsed", () => {
+		const chat = createChat();
+		const tui = createTui(createScrollView(chat));
+		setSelectedEntry(chat.children[2]);
+
+		const outcome = toggleSelectedEntry(tui);
+
+		expect(outcome.status).toBe("not-expandable");
+		expect(outcome.status === "not-expandable" && outcome.label).toBe("assistant");
+	});
+
+	test("reports a stale selection", () => {
+		const tui = createTui(createScrollView(createChat()));
+		setSelectedEntry(new ToolExecutionComponent());
+
+		expect(toggleSelectedEntry(tui).status).toBe("no-selection");
+	});
+
+	test("reports an unavailable transcript", () => {
+		const tui = createTui(undefined);
+		setSelectedEntry(new ToolExecutionComponent());
+
+		expect(toggleSelectedEntry(tui).status).toBe("unavailable");
 	});
 });

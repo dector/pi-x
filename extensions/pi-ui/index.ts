@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -25,15 +25,17 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
-const TOGGLE_NEWEST_SHORTCUT = Key.alt("o");
+const TOGGLE_SELECTED_SHORTCUT = Key.alt("o");
 const NAV_NEXT_SHORTCUT = Key.alt("j");
 const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
 
-const EXPANDABLE_REGISTRY_KEY = "__pi_ui_expandable_registry_v1";
-const EXPANDABLE_PATCHED_METHODS_KEY = "__pi_ui_expandable_patched_methods_v1";
+const SELECTION_KEY = "__pi_ui_selection_v1";
+const CHIP_STATE_KEY = "__pi_ui_chip_state_v1";
 const TUI_REFERENCE_KEY = "__pi_ui_tui_reference_v1";
 const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
-const MAX_TRACKED_EXPANDABLES = 1000;
+const CHIP_REVERSE = "\x1b[7m";
+const CHIP_REVERSE_OFF = "\x1b[27m";
+const CHIP_DURATION_MS = 1500;
 
 /**
  * Transcript entry components pi renders, used to recognise them by class name.
@@ -62,6 +64,19 @@ const EXPANDABLE_ENTRY_COMPONENT_NAMES = new Set([
 	"BranchSummaryMessageComponent",
 	"SkillInvocationMessageComponent",
 ]);
+
+/** Short labels for chips and notifications. */
+const ENTRY_LABELS: Record<string, string> = {
+	ToolExecutionComponent: "tool",
+	BashExecutionComponent: "bash",
+	CustomMessageComponent: "custom message",
+	CustomEntryComponent: "custom entry",
+	CompactionSummaryMessageComponent: "compaction summary",
+	BranchSummaryMessageComponent: "branch summary",
+	SkillInvocationMessageComponent: "skill",
+	AssistantMessageComponent: "assistant",
+	UserMessageComponent: "user",
+};
 
 const RESET_FG = "\x1b[39m";
 const BELL_CHAR = "\x07";
@@ -294,11 +309,6 @@ interface TrackedEntry {
 	constructor?: { name?: string };
 }
 
-interface EntryRegistry {
-	entries: TrackedEntry[];
-	seen: WeakSet<object>;
-}
-
 /** The slice of pi-tui's `ScrollView` used to move the transcript. */
 export interface ScrollViewLike {
 	scrollTop: number;
@@ -315,13 +325,31 @@ export interface EntryPosition {
 	height: number;
 }
 
-function getEntryRegistry(): EntryRegistry {
-	const globalAny = globalThis as Record<string, unknown>;
-	const existing = globalAny[EXPANDABLE_REGISTRY_KEY] as EntryRegistry | undefined;
-	if (existing) return existing;
-	const created: EntryRegistry = { entries: [], seen: new WeakSet() };
-	globalAny[EXPANDABLE_REGISTRY_KEY] = created;
-	return created;
+export interface EntryNavigationResult {
+	index: number;
+	total: number;
+	name: string;
+	label: string;
+	top: number;
+	row: number;
+	atStart: boolean;
+	atEnd: boolean;
+}
+
+export type NavigationOutcome =
+	| { status: "moved"; result: EntryNavigationResult }
+	| { status: "empty" }
+	| { status: "unavailable" };
+
+export type ToggleOutcome =
+	| { status: "toggled"; name: string; label: string; index: number; total: number; expanded: boolean; row: number }
+	| { status: "no-selection" }
+	| { status: "not-expandable"; label: string }
+	| { status: "unavailable" };
+
+interface ChipState {
+	handle?: { hide(): void };
+	timer?: NodeJS.Timeout;
 }
 
 function componentClassName(component: object): string | undefined {
@@ -343,97 +371,6 @@ export function isExpandableEntry(component: unknown): component is TrackedEntry
 	return name !== undefined && EXPANDABLE_ENTRY_COMPONENT_NAMES.has(name);
 }
 
-function registerEntry(component: unknown): void {
-	if (!isTrackedEntry(component)) return;
-	const registry = getEntryRegistry();
-	if (registry.seen.has(component)) return;
-	registry.seen.add(component);
-	registry.entries.push(component);
-	const overflow = registry.entries.length - MAX_TRACKED_EXPANDABLES;
-	if (overflow > 0) registry.entries.splice(0, overflow);
-}
-
-function registerEntries(components: readonly unknown[]): void {
-	for (const component of components) registerEntry(component);
-}
-
-function unregisterEntries(components: readonly unknown[]): void {
-	const registry = getEntryRegistry();
-	if (registry.entries.length === 0) return;
-	const dropped = new Set(components.filter(isTrackedEntry));
-	if (dropped.size === 0) return;
-	for (const entry of dropped) registry.seen.delete(entry);
-	registry.entries = registry.entries.filter((entry) => !dropped.has(entry));
-}
-
-/** Forget tracked entries. */
-export function resetEntryTracking(): void {
-	const globalAny = globalThis as Record<string, unknown>;
-	globalAny[EXPANDABLE_REGISTRY_KEY] = { entries: [], seen: new WeakSet() } satisfies EntryRegistry;
-}
-
-/**
- * Track transcript entries in display order.
- *
- * pi keeps expansion state and transcript positions internally but only exposes
- * a single global toggle to extensions, so entries are observed as containers
- * add, drop, and render their children. Rendering is what backfills entries that
- * already existed when this extension loaded (startup, session restore, `/reload`).
- */
-export function installEntryTracking(): void {
-	const globalAny = globalThis as Record<string, unknown>;
-	const installedRaw = globalAny[EXPANDABLE_PATCHED_METHODS_KEY];
-	const installed = installedRaw instanceof Set ? (installedRaw as Set<string>) : new Set<string>();
-	globalAny[EXPANDABLE_PATCHED_METHODS_KEY] = installed;
-
-	type PatchableContainer = {
-		addChild(component: unknown): void;
-		removeChild(component: unknown): void;
-		clear(): void;
-		render(width: number): string[];
-	};
-
-	const prototype = Container.prototype as unknown as PatchableContainer;
-
-	if (!installed.has("addChild")) {
-		const originalAddChild = prototype.addChild;
-		prototype.addChild = function patchedAddChild(this: unknown, component: unknown) {
-			registerEntry(component);
-			return originalAddChild.call(this, component);
-		};
-		installed.add("addChild");
-	}
-
-	if (!installed.has("removeChild")) {
-		const originalRemoveChild = prototype.removeChild;
-		prototype.removeChild = function patchedRemoveChild(this: unknown, component: unknown) {
-			unregisterEntries([component]);
-			return originalRemoveChild.call(this, component);
-		};
-		installed.add("removeChild");
-	}
-
-	if (!installed.has("clear")) {
-		const originalClear = prototype.clear;
-		prototype.clear = function patchedClear(this: unknown) {
-			const children = (this as { children?: unknown[] }).children;
-			if (Array.isArray(children) && children.length > 0) unregisterEntries(children);
-			return originalClear.call(this);
-		};
-		installed.add("clear");
-	}
-
-	if (!installed.has("render")) {
-		const originalRender = prototype.render;
-		prototype.render = function patchedRender(this: unknown, width: number) {
-			const children = (this as { children?: unknown[] }).children;
-			if (Array.isArray(children) && children.length > 0) registerEntries(children);
-			return originalRender.call(this, width);
-		};
-		installed.add("render");
-	}
-}
-
 function isEntryExpanded(entry: TrackedEntry): boolean {
 	const record = entry as unknown as Record<string, unknown>;
 	if (typeof record.expanded === "boolean") return record.expanded;
@@ -441,23 +378,83 @@ function isEntryExpanded(entry: TrackedEntry): boolean {
 	return false;
 }
 
-/** Class names of tracked entries, oldest → newest (debug helper). */
-export function listTrackedEntries(): string[] {
-	return getEntryRegistry().entries.map((entry) => componentClassName(entry) ?? "entry");
+/** Short label used for chips and notifications. */
+export function describeEntry(component: unknown): string {
+	const name = component && typeof component === "object" ? componentClassName(component) : undefined;
+	if (!name) return "entry";
+	return ENTRY_LABELS[name] ?? name.replace(/Component$/, "");
 }
 
-/** Toggle the newest tracked expandable entry, the same way clicking it would. */
-export function toggleNewestExpandable(): { name: string; expanded: boolean } | undefined {
-	const registry = getEntryRegistry();
-	for (let index = registry.entries.length - 1; index >= 0; index -= 1) {
-		const entry = registry.entries[index];
-		if (!isExpandableEntry(entry)) continue;
-		const expanded = !isEntryExpanded(entry);
-		entry.setExpanded?.(expanded);
-		entry.invalidate?.();
-		return { name: componentClassName(entry) ?? "entry", expanded };
+/** Transcript entry currently selected with Alt+J / Alt+K. */
+export function getSelectedEntry(): TrackedEntry | undefined {
+	const state = (globalThis as Record<string, unknown>)[SELECTION_KEY] as { component: TrackedEntry } | undefined;
+	return state?.component;
+}
+
+export function setSelectedEntry(component: TrackedEntry | undefined): void {
+	(globalThis as Record<string, unknown>)[SELECTION_KEY] = component ? { component } : undefined;
+}
+
+/** TUI reference captured from a widget factory (see captureTuiReference). */
+export function getTuiReference(): unknown {
+	return (globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY];
+}
+
+/**
+ * Capture the live TUI instance through `setWidget`, whose factory receives it.
+ * The widget renders nothing; it only exists to obtain the reference.
+ */
+export function captureTuiReference(ctx: ExtensionContext): unknown {
+	if (ctx.hasUI) {
+		ctx.ui.setWidget(TUI_CAPTURE_WIDGET_KEY, (tui) => {
+			(globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY] = tui;
+			return { render: () => [], invalidate: () => {} };
+		});
+	}
+	return getTuiReference();
+}
+
+function isScrollViewLike(candidate: unknown): candidate is ScrollViewLike {
+	if (!candidate || typeof candidate !== "object") return false;
+	const record = candidate as Record<string, unknown>;
+	return (
+		typeof record.scrollTo === "function" &&
+		typeof record.scrollBy === "function" &&
+		typeof record.scrollTop === "number"
+	);
+}
+
+function findScrollViewLike(node: unknown, depth: number): ScrollViewLike | undefined {
+	if (!node || typeof node !== "object" || depth > 6) return undefined;
+	const children = (node as { children?: unknown[] }).children;
+	if (!Array.isArray(children)) return undefined;
+	for (const child of children) {
+		if (isScrollViewLike(child) && child.primary) return child;
+	}
+	for (const child of children) {
+		const found = findScrollViewLike(child, depth + 1);
+		if (found) return found;
 	}
 	return undefined;
+}
+
+/** Locate the primary transcript scroll view (fullscreen alt-screen mode). */
+export function getTranscriptScrollView(tui: unknown): ScrollViewLike | undefined {
+	if (!tui || typeof tui !== "object") return undefined;
+	const candidate = tui as { getPrimaryScrollView?: () => unknown; layoutRoot?: unknown; children?: unknown[] };
+	if (typeof candidate.getPrimaryScrollView === "function") {
+		const primary = candidate.getPrimaryScrollView();
+		if (isScrollViewLike(primary)) return primary;
+	}
+	return findScrollViewLike(candidate.layoutRoot ?? candidate, 0);
+}
+
+function scrollContentWidth(scrollView: ScrollViewLike, tui: unknown): number {
+	const content = scrollView.child as TrackedEntry | undefined;
+	const recorded = content?.mouseLayout?.width;
+	if (typeof recorded === "number" && recorded > 0) return recorded;
+	const columns = (tui as { terminal?: { columns?: number } } | undefined)?.terminal?.columns;
+	return Math.max(1, (typeof columns === "number" ? columns : 80) - 1);
 }
 
 function childRenderedHeight(component: TrackedEntry, width: number): number {
@@ -527,96 +524,131 @@ export function findPreviousEntryTop(
 	return previous;
 }
 
-/** The TUI reference captured from a widget factory (see captureTuiReference). */
-export function getTuiReference(): unknown {
-	return (globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY];
+function hideEntryChip(): void {
+	const globalAny = globalThis as Record<string, unknown>;
+	const state = globalAny[CHIP_STATE_KEY] as ChipState | undefined;
+	if (!state) return;
+	if (state.timer) clearTimeout(state.timer);
+	state.handle?.hide();
+	globalAny[CHIP_STATE_KEY] = undefined;
 }
 
 /**
- * Capture the live TUI instance through `setWidget`, whose factory receives it.
- * The widget renders nothing; it only exists to obtain the reference.
+ * Draw a transient chip at a transcript row, over the selected entry.
+ * Overlays are composited by the alt-screen renderer at absolute rows and
+ * `nonCapturing` keeps keyboard focus in the editor.
  */
-export function captureTuiReference(ctx: ExtensionContext): unknown {
-	if (ctx.hasUI) {
-		ctx.ui.setWidget(TUI_CAPTURE_WIDGET_KEY, (tui) => {
-			(globalThis as Record<string, unknown>)[TUI_REFERENCE_KEY] = tui;
-			return { render: () => [], invalidate: () => {} };
-		});
-	}
-	return getTuiReference();
-}
+export function showEntryChip(tui: unknown, row: number, text: string, durationMs = CHIP_DURATION_MS): boolean {
+	hideEntryChip();
+	const candidate = tui as
+		| { showOverlay?: (component: unknown, options?: unknown) => { hide(): void } | undefined }
+		| undefined;
+	if (typeof candidate?.showOverlay !== "function") return false;
 
-function isScrollViewLike(candidate: unknown): candidate is ScrollViewLike {
-	if (!candidate || typeof candidate !== "object") return false;
-	const record = candidate as Record<string, unknown>;
-	return (
-		typeof record.scrollTo === "function" &&
-		typeof record.scrollBy === "function" &&
-		typeof record.scrollTop === "number"
+	const line = `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
+	const width = Math.max(1, visibleWidth(line));
+	const handle = candidate.showOverlay(
+		{ render: () => [line], invalidate: () => {} },
+		{ row: Math.max(0, Math.round(row)), col: 0, width, nonCapturing: true },
 	);
+	const state: ChipState = {};
+	if (handle) state.handle = handle;
+	state.timer = setTimeout(() => hideEntryChip(), Math.max(0, durationMs));
+	state.timer.unref?.();
+	(globalThis as Record<string, unknown>)[CHIP_STATE_KEY] = state;
+	return true;
 }
 
-function findScrollViewLike(node: unknown, depth: number): ScrollViewLike | undefined {
-	if (!node || typeof node !== "object" || depth > 6) return undefined;
-	const children = (node as { children?: unknown[] }).children;
-	if (!Array.isArray(children)) return undefined;
-	for (const child of children) {
-		if (isScrollViewLike(child) && child.primary) return child;
-	}
-	for (const child of children) {
-		const found = findScrollViewLike(child, depth + 1);
-		if (found) return found;
-	}
-	return undefined;
-}
-
-/** Locate the primary transcript scroll view (fullscreen alt-screen mode). */
-export function getTranscriptScrollView(tui: unknown): ScrollViewLike | undefined {
-	if (!tui || typeof tui !== "object") return undefined;
-	const candidate = tui as { getPrimaryScrollView?: () => unknown; layoutRoot?: unknown; children?: unknown[] };
-	if (typeof candidate.getPrimaryScrollView === "function") {
-		const primary = candidate.getPrimaryScrollView();
-		if (isScrollViewLike(primary)) return primary;
-	}
-	return findScrollViewLike(candidate.layoutRoot ?? candidate, 0);
-}
-
-function scrollContentWidth(scrollView: ScrollViewLike, tui: unknown): number {
-	const content = scrollView.child as TrackedEntry | undefined;
-	const recorded = content?.mouseLayout?.width;
-	if (typeof recorded === "number" && recorded > 0) return recorded;
-	const columns = (tui as { terminal?: { columns?: number } } | undefined)?.terminal?.columns;
-	return Math.max(1, (typeof columns === "number" ? columns : 80) - 1);
+function selectionIndex(positions: readonly EntryPosition[]): number {
+	const selected = getSelectedEntry();
+	if (!selected) return -1;
+	return positions.findIndex((position) => position.component === selected);
 }
 
 /**
- * Move the transcript so the next (direction 1) or previous (direction -1) entry
- * starts at the top of the viewport. Clamps to the document start and end.
+ * Select the next (direction 1) or previous (direction -1) transcript entry,
+ * scroll it to the top of the viewport, and mark it with a chip.
  */
-export function scrollToEntry(
-	tui: unknown,
-	direction: 1 | -1,
-): { index: number; total: number; name: string; top: number } | undefined {
+export function selectAdjacentEntry(tui: unknown, direction: 1 | -1): NavigationOutcome {
 	const scrollView = getTranscriptScrollView(tui);
-	if (!scrollView || !scrollView.child) return undefined;
+	if (!scrollView || !scrollView.child) return { status: "unavailable" };
 	const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
-	if (positions.length === 0) return undefined;
+	if (positions.length === 0) return { status: "empty" };
 
-	const currentTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
-	const target = direction === 1 ? findNextEntryTop(positions, currentTop) : findPreviousEntryTop(positions, currentTop);
-	const top = target ?? (direction === 1 ? Number.MAX_SAFE_INTEGER : 0);
-	scrollView.scrollTo(top);
-
-	const index = positions.findIndex((position) => position.top === target);
-	if (index >= 0) {
-		return {
-			index,
-			total: positions.length,
-			name: componentClassName(positions[index]?.component ?? {}) ?? "entry",
-			top: target ?? top,
-		};
+	const selectedIndex = selectionIndex(positions);
+	let targetIndex: number;
+	if (selectedIndex >= 0) {
+		targetIndex = Math.max(0, Math.min(positions.length - 1, selectedIndex + direction));
+	} else {
+		const currentTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
+		const targetTop =
+			direction === 1 ? findNextEntryTop(positions, currentTop) : findPreviousEntryTop(positions, currentTop);
+		const fallbackIndex = direction === 1 ? 0 : positions.length - 1;
+		const foundIndex = targetTop === undefined
+			? -1
+			: positions.findIndex((position) => position.top === targetTop);
+		targetIndex = foundIndex >= 0 ? foundIndex : fallbackIndex;
 	}
-	return { index: -1, total: positions.length, name: "start/end", top };
+
+	const target = positions[targetIndex];
+	if (!target) return { status: "empty" };
+	scrollView.scrollTo(target.top);
+	setSelectedEntry(target.component);
+
+	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
+	const row = target.top - scrollTop;
+	const label = describeEntry(target.component);
+	showEntryChip(tui, row, `${targetIndex + 1}/${positions.length} ${label}`);
+
+	return {
+		status: "moved",
+		result: {
+			index: targetIndex,
+			total: positions.length,
+			name: componentClassName(target.component) ?? "entry",
+			label,
+			top: target.top,
+			row,
+			atStart: targetIndex === 0,
+			atEnd: targetIndex === positions.length - 1,
+		},
+	};
+}
+
+/** Toggle the selected transcript entry, the same way clicking it would. */
+export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
+	const selected = getSelectedEntry();
+	if (!selected) return { status: "no-selection" };
+
+	const scrollView = getTranscriptScrollView(tui);
+	if (!scrollView || !scrollView.child) return { status: "unavailable" };
+	const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+	const index = selectionIndex(positions);
+	if (index < 0) return { status: "no-selection" };
+
+	const position = positions[index];
+	if (!position) return { status: "no-selection" };
+	const entry = position.component;
+	const label = describeEntry(entry);
+	if (!isExpandableEntry(entry)) return { status: "not-expandable", label };
+
+	const expanded = !isEntryExpanded(entry);
+	entry.setExpanded?.(expanded);
+	entry.invalidate?.();
+
+	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
+	const row = position.top - scrollTop;
+	showEntryChip(tui, row, `${index + 1}/${positions.length} ${label} → ${expanded ? "expanded" : "collapsed"}`);
+
+	return {
+		status: "toggled",
+		name: componentClassName(entry) ?? "entry",
+		label,
+		index,
+		total: positions.length,
+		expanded,
+		row,
+	};
 }
 
 function patchLoaderWorkingSpinner(): void {
@@ -1600,7 +1632,6 @@ async function showHiDialog(
 export default function piUiExtension(pi: ExtensionAPI): void {
 	// Disabled: use pi's default busy indicator instead of pi-ui custom loader.
 	// patchLoaderWorkingSpinner();
-	installEntryTracking();
 
 	let minimumTrackLength = clamp(
 		parseIntEnv("PI_UI_WORKING_LENGTH", DEFAULT_MIN_TRACK_LENGTH),
@@ -1679,12 +1710,14 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		setSelectedEntry(undefined);
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		setSelectedEntry(undefined);
 		captureTuiReference(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
@@ -1786,39 +1819,52 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(TOGGLE_NEWEST_SHORTCUT, {
-		description: "Toggle the newest expandable transcript entry (same as clicking it)",
+	pi.registerShortcut(TOGGLE_SELECTED_SHORTCUT, {
+		description: "Toggle the selected transcript entry (Alt+J/Alt+K to select)",
 		handler: async (ctx) => {
-			const result = toggleNewestExpandable();
-			if (!result) notify(ctx, "pi-ui: no expandable entry to toggle");
+			const outcome = toggleSelectedEntry(captureTuiReference(ctx));
+			if (outcome.status === "no-selection") {
+				notify(ctx, "pi-ui: nothing selected — use Alt+J/Alt+K to select an entry");
+			} else if (outcome.status === "not-expandable") {
+				notify(ctx, `pi-ui: ${outcome.label} has nothing to collapse`);
+			} else if (outcome.status === "unavailable") {
+				notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			}
 		},
 	});
 
 	pi.registerShortcut(NAV_NEXT_SHORTCUT, {
-		description: "Scroll the transcript to the next entry",
+		description: "Select and scroll to the next transcript entry",
 		handler: async (ctx) => {
-			const result = scrollToEntry(captureTuiReference(ctx), 1);
-			if (!result) notify(ctx, "pi-ui: transcript navigation unavailable");
+			const outcome = selectAdjacentEntry(captureTuiReference(ctx), 1);
+			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
 		},
 	});
 
 	pi.registerShortcut(NAV_PREVIOUS_SHORTCUT, {
-		description: "Scroll the transcript to the previous entry",
+		description: "Select and scroll to the previous transcript entry",
 		handler: async (ctx) => {
-			const result = scrollToEntry(captureTuiReference(ctx), -1);
-			if (!result) notify(ctx, "pi-ui: transcript navigation unavailable");
+			const outcome = selectAdjacentEntry(captureTuiReference(ctx), -1);
+			if (outcome.status === "unavailable") notify(ctx, "pi-ui: transcript unavailable (fullscreen mode required)");
+			if (outcome.status === "empty") notify(ctx, "pi-ui: no transcript entries yet");
 		},
 	});
 
-	pi.registerCommand("px:pi-ui-expandable", {
-		description: "Show tracked transcript entries and scroll-view status: /px:pi-ui-expandable",
+	pi.registerCommand("px:pi-ui-nav", {
+		description: "Show transcript entry positions, selection, and scroll-view status: /px:pi-ui-nav",
 		handler: async (_args, ctx) => {
-			const tracked = listTrackedEntries();
-			const recent = tracked.slice(-5);
-			const suffix = recent.length > 0 ? ` (newest: ${recent.join(", ")})` : "";
-			const scrollView = getTranscriptScrollView(captureTuiReference(ctx));
-			const scrollInfo = scrollView ? `scroll view ok (top ${Math.round(scrollView.scrollTop)})` : "no scroll view";
-			notify(ctx, `pi-ui entries: ${tracked.length} tracked${suffix} · ${scrollInfo}`);
+			const tui = captureTuiReference(ctx);
+			const scrollView = getTranscriptScrollView(tui);
+			if (!scrollView || !scrollView.child) {
+				notify(ctx, `pi-ui nav: no transcript scroll view (tui ${tui ? "ok" : "missing"})`);
+				return;
+			}
+			const positions = computeEntryPositions(scrollView.child, scrollContentWidth(scrollView, tui));
+			const selected = getSelectedEntry();
+			const index = selected ? positions.findIndex((position) => position.component === selected) : -1;
+			const selection = index >= 0 ? ` · selected ${index + 1}/${positions.length} ${describeEntry(positions[index]?.component)}` : " · nothing selected";
+			notify(ctx, `pi-ui nav: ${positions.length} entries · top ${Math.round(scrollView.scrollTop)}${selection}`);
 		},
 	});
 
