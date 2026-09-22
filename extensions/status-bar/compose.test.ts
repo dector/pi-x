@@ -168,6 +168,18 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET?"]);
 	});
 
+	test("renders the subagent depth immediately after network", () => {
+		const out = composeBorderBottomLeft({
+			statusLabel: "SMART",
+			networkLabel: "NET?",
+			subagentLabel: "󰚩 ✓",
+			borderColor: border,
+		});
+
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET?« · »󰚩 ✓« »");
+		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("󰚩 ✓"));
+	});
+
 	test("tapers the context bridge so its light halves face the labels", () => {
 		const out = composeBorderBottomLeft({
 			contextLabel: "15.9% 210k",
@@ -321,6 +333,19 @@ describe("composeLegacyLeftSection (status line)", () => {
 		expect(out).not.toContain("SMART«·»");
 		// Exactly one network token: no duplication.
 		expect(out.match(/NET\??\+?/g)).toEqual(["NET?"]);
+	});
+
+	test("keeps delegation policy after network under compact layout", () => {
+		const out = composeLegacyLeftSection({
+			ids: LEGACY_IDS,
+			getContent: legacyContent(),
+			networkLabel: "NET",
+			subagentLabel: "󰚩 1",
+			networkSeparator: " · ",
+			itemSeparator: "·",
+			safeModeId: "safe-mode",
+		});
+		expect(out).toBe("SMART · NET · 󰚩 1·favorites");
 	});
 
 	test("uses the compact separator for the remaining section items", () => {

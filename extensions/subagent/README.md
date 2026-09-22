@@ -19,6 +19,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Restricted-agent gate**: Agent names matching a global pattern require one timed parent confirmation per dispatch
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
+- **Bounded delegation**: `/px:agents:config` controls whether delegation is disabled, top-level only, or recursively available with a finite depth budget
 - **Session rewiring**: `/px:agents:rewire` can silently replace every subagent profile's model and effort for the current session without editing agent files
 - **Active widget**: While children run, a non-interactive two-line list above the input editor shows each active subagent's state, elapsed time, turns, model/effort, usage, readable id, and task preview
 - **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
@@ -365,6 +366,18 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 | Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
 | Chain | `{ chain: [...] }` | Sequential; `{previous}` in a step's task is interpolated with the previous step's final output (empty for the first step) |
 | Execution | `execution` | `"async"` (default) detaches and returns immediately; `"blocking"` streams and waits |
+
+## Delegation depth
+
+Delegation defaults to depth `0`, which allows the main agent to start subagents but does not expose the `subagent` tool inside those children. Use `/px:agents:config` to change the policy for the current session:
+
+- `-1` disables all new subagent dispatches;
+- `0` allows top-level dispatches only;
+- `1+` allows that many additional recursive delegation levels.
+
+Every child receives its parent's budget minus one. Existing children keep the budget they received; menu changes affect later dispatches. The status bar renders `󰚩 ×`, `󰚩 ✓`, or `󰚩 N` immediately after the network indicator. Disabled is muted, top-level-only uses the normal text color, and recursive delegation uses the warning color.
+
+Set `PI_SUBAGENT_MAX_DEPTH=-1|0|N` before starting Pi to change the initial policy. The value is clamped to `-1..8`; invalid or missing values default to `0`. Session menu changes survive `/reload` for that session but are not persisted across Pi restarts.
 
 ## Session model rewiring
 

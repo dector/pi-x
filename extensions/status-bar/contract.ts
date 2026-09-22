@@ -5,6 +5,8 @@ export const STATUS_BAR_EVENTS = {
 	firstLineClear: "px:status-bar:first-line:clear",
 	rewireSet: "px:status-bar:rewire:set",
 	rewireClear: "px:status-bar:rewire:clear",
+	subagentDepthSet: "px:status-bar:subagent-depth:set",
+	subagentDepthClear: "px:status-bar:subagent-depth:clear",
 	rowSet: "px:status-bar:row:set",
 	rowClear: "px:status-bar:row:clear",
 	ping: "px:status-bar:ping",
@@ -58,6 +60,10 @@ export interface StatusBarFirstLineClearPayload {
 export interface StatusBarRewireSetPayload {
 	model: string;
 	thinkingLevel: string;
+}
+
+export interface StatusBarSubagentDepthSetPayload {
+	depth: number;
 }
 
 // Extra footer rows. Each registered id renders as its own line after the two

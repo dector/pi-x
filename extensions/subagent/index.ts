@@ -141,6 +141,14 @@ import {
 	type RewirePreset,
 } from "./rewire-presets.ts";
 import { availableThinkingLevels, resolveSubagentModel } from "./rewire.ts";
+import {
+	canDelegate,
+	childSubagentDepth,
+	formatSubagentDepth,
+	initialSubagentDepth,
+	MAX_SUBAGENT_DEPTH,
+	SUBAGENT_REMAINING_DEPTH_ENV,
+} from "./delegation-depth.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
 import { SubagentTimingTracker } from "./timing.ts";
@@ -162,6 +170,8 @@ const COLLAPSED_ITEM_COUNT = 10;
 const rewireSessionStates: Map<string, SubagentRewireConfig> =
 	((globalThis as { __piXSubagentRewireStates?: Map<string, SubagentRewireConfig> }).__piXSubagentRewireStates ??=
 		new Map());
+const delegationDepthSessionStates: Map<string, number> =
+	((globalThis as { __piXSubagentDepthStates?: Map<string, number> }).__piXSubagentDepthStates ??= new Map());
 
 // Nerd Font hourglass shown while a subagent run is still active (replaces the
 // `⏳` emoji, which renders inconsistently across terminals).
@@ -175,6 +185,8 @@ const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
+const STATUS_BAR_SUBAGENT_DEPTH_SET_EVENT = "px:status-bar:subagent-depth:set";
+const STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT = "px:status-bar:subagent-depth:clear";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
 
@@ -247,6 +259,8 @@ interface SingleAgentRuntimeDependencies {
 	hasProgressTool: boolean;
 	/** Re-emit one validated child relay on the parent `pi.events` bus. */
 	emitProgressRelay?: (channel: string, payload: Record<string, unknown>) => void;
+	/** Remaining recursive delegation budget inherited by each spawned child. */
+	delegationDepth: number;
 }
 
 async function runSingleAgent(
@@ -389,6 +403,7 @@ async function runSingleAgent(
 			cwd: cwd ?? defaultCwd,
 			env: {
 				PI_SUBAGENT_CHILD: "1",
+				[SUBAGENT_REMAINING_DEPTH_ENV]: String(childSubagentDepth(runtime.delegationDepth)),
 				PI_SUBAGENT_RUN_ID: runId,
 				PI_SUBAGENT_NAME: agent.name,
 			},
@@ -759,6 +774,9 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	const isSubagentChild = process.env.PI_SUBAGENT_CHILD === "1";
+	const configuredDefaultDepth = initialSubagentDepth(process.env, isSubagentChild);
+	let delegationDepth = configuredDefaultDepth;
 	const childControl = registerChildControls(pi);
 	// Surface agent names + brief descriptions in the tool description so the
 	// model can choose deliberately without trial and error. Important for
@@ -793,6 +811,15 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
+	};
+	const publishDelegationDepthStatus = (): void => {
+		if (isSubagentChild) return;
+		pi.events.emit(STATUS_BAR_SUBAGENT_DEPTH_SET_EVENT, { depth: delegationDepth });
+	};
+	const setDelegationDepth = (ctx: ExtensionContext, depth: number): void => {
+		delegationDepth = Math.max(-1, Math.min(MAX_SUBAGENT_DEPTH, Math.trunc(depth)));
+		delegationDepthSessionStates.set(ctx.sessionManager.getSessionId(), delegationDepth);
+		publishDelegationDepthStatus();
 	};
 	const defaultRewireConfigWithPreset = async (
 		ctx: ExtensionContext,
@@ -1470,6 +1497,36 @@ export default function (pi: ExtensionAPI) {
 			}
 		};
 
+		const configureDelegationDepth = async (ctx: ExtensionContext): Promise<void> => {
+			const choices = [
+				"Disabled  (-1)",
+				"Top level only  (0)",
+				...Array.from({ length: MAX_SUBAGENT_DEPTH }, (_, index) => {
+					const depth = index + 1;
+					return `${depth} recursive level${depth === 1 ? "" : "s"}  (${depth})`;
+				}),
+			];
+			const selected = await ctx.ui.select("Subagent delegation depth", choices);
+			if (!selected) return;
+			const match = selected.match(/\((-?\d+)\)$/);
+			if (match) setDelegationDepth(ctx, Number(match[1]));
+		};
+
+		const openAgentConfigMenu = async (ctx: ExtensionContext): Promise<void> => {
+			if (!ctx.hasUI) return;
+			while (true) {
+				const delegationChoice = `Delegation  ${formatSubagentDepth(delegationDepth)} (${delegationDepth})`;
+				const rewireChoice = `Rewire  ${rewireConfig?.enabled ? "ON" : "OFF"}`;
+				const choice = await ctx.ui.select("Subagent configuration", [delegationChoice, rewireChoice, "Back"]);
+				if (!choice || choice === "Back") return;
+				if (choice === delegationChoice) {
+					await configureDelegationDepth(ctx);
+					continue;
+				}
+				await openRewireMenu(ctx);
+			}
+		};
+
 		const eventContext = (payload: unknown): ExtensionContext | undefined => {
 			if (!payload || typeof payload !== "object") return undefined;
 			return (payload as { ctx?: ExtensionContext }).ctx;
@@ -1486,6 +1543,11 @@ export default function (pi: ExtensionAPI) {
 		pi.registerCommand("px:agents:rewire", {
 			description: "Override the model and effort for every subagent in this session",
 			handler: async (_args, ctx) => openRewireMenu(ctx),
+		});
+
+		pi.registerCommand("px:agents:config", {
+			description: "Configure subagent delegation depth and rewiring for this session",
+			handler: async (_args, ctx) => openAgentConfigMenu(ctx),
 		});
 
 		pi.registerCommand("px:agents", {
@@ -1689,9 +1751,14 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
-		const storedRewire = rewireSessionStates.get(ctx.sessionManager.getSessionId());
+		const sessionId = ctx.sessionManager.getSessionId();
+		const storedRewire = rewireSessionStates.get(sessionId);
 		rewireConfig = storedRewire ? { ...storedRewire } : await defaultRewireConfigWithPreset(ctx);
+		delegationDepth = isSubagentChild
+			? configuredDefaultDepth
+			: (delegationDepthSessionStates.get(sessionId) ?? configuredDefaultDepth);
 		publishRewireStatus();
+		publishDelegationDepthStatus();
 		sessionEpoch += 1;
 		sessionShutdown = new AbortController();
 		herdrPreflightInFlight.reset();
@@ -1718,6 +1785,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_tree", async (_event, ctx) => {
 		sessionContext = ctx;
 		publishRewireStatus();
+		publishDelegationDepthStatus();
 		// The tree can re-render with the same active set, so reset the dedup
 		// state and force a republish instead of skipping an identical snapshot.
 		activeWidget.reset();
@@ -1729,6 +1797,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async (event) => {
 		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
+		pi.events.emit(STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT, {});
 		// Order matters: flip the shutdown flag, abort detached controllers,
 		// terminate active RPC children, await settled dispatch promises, then
 		// clear runtime state. Completion delivery is suppressed by the manager
@@ -1957,8 +2026,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	);
 
-	pi.registerTool({
-		name: "subagent",
+	if (!isSubagentChild || canDelegate(delegationDepth)) {
+		pi.registerTool({
+			name: "subagent",
 		label: "Subagent",
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
@@ -1994,6 +2064,9 @@ export default function (pi: ExtensionAPI) {
 			// Refuse before preparation once teardown starts: an accepted dispatch
 			// must never outlive the session that owns it. Re-checked again below
 			// because preparation is async and can straddle a shutdown event.
+			if (!canDelegate(delegationDepth)) {
+				return buildNotStartedResult("Subagent dispatch not started: delegation is disabled for this session.");
+			}
 			if (shuttingDown) {
 				return buildNotStartedResult("Subagent dispatch not started: the session is shutting down.");
 			}
@@ -2046,6 +2119,7 @@ export default function (pi: ExtensionAPI) {
 				onProgress: publishActiveSubagentWidget,
 				onRunSettled: publishRunFinishedEntry,
 				hasProgressTool,
+				delegationDepth,
 				emitProgressRelay: (channel, payload) => pi.events.emit(channel, payload),
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
@@ -2443,6 +2517,7 @@ export default function (pi: ExtensionAPI) {
 
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
-		},
-	});
+			},
+		});
+	}
 }

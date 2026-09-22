@@ -38,6 +38,7 @@ import {
 	type StatusBarLayout,
 	type StatusBarPingPayload,
 	type StatusBarRewireSetPayload,
+	type StatusBarSubagentDepthSetPayload,
 	type StatusBarRowClearPayload,
 	type StatusBarRowSetPayload,
 	type StatusBarSection,
@@ -80,6 +81,7 @@ const SAFE_MODE_ID = "safe-mode";
 const REPO_STATS_ID = "repo-stats";
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
+const SUBAGENT_DEPTH_ICON = "󰚩";
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dash kept between labels (or beside a lone label).
 const MIN_CORNER_LABEL_GAP = 1;
@@ -266,6 +268,8 @@ interface FrameStatusEditorOptions {
 	bottomLeftStatus?: FrameStatusProvider;
 	/** Effective network token, rendered immediately after the safe-mode status. */
 	bottomLeftNetwork?: FrameStatusProvider;
+	/** Effective subagent depth policy, rendered immediately after the network token. */
+	bottomLeftSubagent?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
 	/** Top-right corner label (git dirty totals). */
@@ -347,6 +351,7 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftProvider?: () => FrameContextParts | undefined;
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
+	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topRightProvider?: FrameStatusProvider;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
@@ -372,6 +377,7 @@ class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftProvider = options.bottomLeft;
 		this.bottomLeftStatusProvider = options.bottomLeftStatus;
 		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
+		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
 		this.topLeftProvider = options.topLeft;
 		this.topRightProvider = options.topRight;
 		this.relocatedLabels = options.relocatedLabels;
@@ -670,12 +676,13 @@ class FrameStatusEditor extends CustomEditor {
 		const costLabel = contextParts?.cost;
 		const statusLabel = this.bottomLeftStatusProvider?.();
 		const networkLabel = this.bottomLeftNetworkProvider?.();
+		const subagentLabel = this.bottomLeftSubagentProvider?.();
 		// Full border context is usage + cost; the usage meter always stays on the border.
 		const combinedContext =
 			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
 				? `${usageLabel} · ${costLabel}`
 				: usageLabel || costLabel;
-		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel);
+		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
@@ -686,6 +693,7 @@ class FrameStatusEditor extends CustomEditor {
 			costRelocated ? usageLabel : combinedContext,
 			statusLabel,
 			networkLabel,
+			subagentLabel,
 		);
 		if (this.relocatedLabels) {
 			this.relocatedLabels.contextLabel = costRelocated ? costLabel : undefined;
@@ -716,11 +724,17 @@ class FrameStatusEditor extends CustomEditor {
 	 * Composition (including safe-mode recoloring) lives in the pure
 	 * `composeBorderBottomLeft` helper.
 	 */
-	private bottomLeftSegment(contextLabel?: string, statusLabel?: string, networkLabel?: string): string {
+	private bottomLeftSegment(
+		contextLabel?: string,
+		statusLabel?: string,
+		networkLabel?: string,
+		subagentLabel?: string,
+	): string {
 		return composeBorderBottomLeft({
 			contextLabel,
 			statusLabel,
 			networkLabel,
+			subagentLabel,
 			borderColor: (text) => this.borderColor(text),
 		});
 	}
@@ -935,6 +949,20 @@ function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload 
 		typeof maybe.thinkingLevel === "string" &&
 		maybe.thinkingLevel.trim().length > 0
 	);
+}
+
+function isSubagentDepthSetPayload(value: unknown): value is StatusBarSubagentDepthSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const maybe = value as Partial<StatusBarSubagentDepthSetPayload>;
+	return typeof maybe.depth === "number" && Number.isInteger(maybe.depth) && maybe.depth >= -1;
+}
+
+function renderSubagentDepthLabel(depth: number, theme: ExtensionContext["ui"]["theme"]): string {
+	const value = depth < 0 ? "×" : depth === 0 ? "✓" : depth;
+	const text = `${SUBAGENT_DEPTH_ICON} ${value}`;
+	if (depth < 0) return theme.fg("muted", text);
+	if (depth === 0) return theme.fg("text", text);
+	return theme.fg("warning", text);
 }
 
 function isPingPayload(value: unknown): value is StatusBarPingPayload {
@@ -1530,6 +1558,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let firstLineOrderCounter = 0;
 	let rowOrderCounter = 0;
 	let rewireTarget: StatusBarRewireSetPayload | undefined;
+	let subagentDepth: number | undefined;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
 	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
@@ -1727,6 +1756,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const networkResolution = resolveNetworkStatus({ displayMode, state: networkStore.current, theme });
 					const networkStatusLabel =
 						networkResolution?.surface === "status-line" ? networkResolution.label : undefined;
+					const subagentStatusLabel =
+						subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, theme);
 					// Safe mode and the network token always share one item joined by exactly
 					// ` · ` (here `networkSeparator`), so a crowded line switching to the compact
 					// separator cannot collapse that dot.
@@ -1738,6 +1769,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							ids: layout.left,
 							getContent: (id) => contentById.get(id),
 							networkLabel: networkStatusLabel,
+							subagentLabel: subagentStatusLabel,
 							networkSeparator: theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR),
 							itemSeparator,
 							safeModeId: SAFE_MODE_ID,
@@ -1820,6 +1852,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				});
 				return resolution?.surface === "border" ? resolution.label : undefined;
 			},
+			bottomLeftSubagent: () =>
+				subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, activeContext().ui.theme),
 			topLeft: (opts) =>
 				buildBorderModelLabel(
 					activeContext(),
@@ -1943,6 +1977,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		// events after shutdown cannot restore the previous session's UI.
 		networkStore.deactivate();
 		progressStore.deactivate();
+		subagentDepth = undefined;
 		requestFooterRender = undefined;
 	});
 
@@ -1985,6 +2020,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.rewireClear, () => {
 		rewireTarget = undefined;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.subagentDepthSet, (payload) => {
+		if (!isSubagentDepthSetPayload(payload)) return;
+		subagentDepth = payload.depth;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.subagentDepthClear, () => {
+		subagentDepth = undefined;
 		requestRender();
 	});
 

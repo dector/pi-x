@@ -297,6 +297,7 @@ export interface BorderBottomLeftArgs {
 	contextLabel?: string;
 	statusLabel?: string;
 	networkLabel?: string;
+	subagentLabel?: string;
 	borderColor: (text: string) => string;
 }
 
@@ -317,7 +318,8 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const networkLabel = hasVisibleText(args.networkLabel)
 		? decorateBorderNetworkLabel(args.networkLabel)
 		: undefined;
-	const statusGroup = joinSafeModeAndNetwork(safeModeLabel, networkLabel, args.borderColor);
+	const subagentLabel = hasVisibleText(args.subagentLabel) ? sanitizeStatusText(args.subagentLabel!) : undefined;
+	const statusGroup = joinStatusPolicyGroup(safeModeLabel, networkLabel, subagentLabel, args.borderColor);
 	if (!hasContext && !statusGroup) return "";
 
 	const open = args.borderColor(FRAME_LEFT_CORNER_OPEN);
@@ -336,14 +338,27 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
  * `separator` is already themed (for example `theme.fg("muted", " · ")`), so the
  * group keeps the spaced dot even when surrounding items use a compact join.
  */
+function joinStatusPolicyGroup(
+	safeMode: string | undefined,
+	network: string | undefined,
+	subagent: string | undefined,
+	separator: (text: string) => string,
+): string | undefined {
+	const base = joinSafeModeAndNetwork(safeMode, network, separator);
+	if (!subagent) return base;
+	return base ? `${base}${separator(" · ")}${subagent}` : subagent;
+}
+
 export function composeSafeModeNetworkGroup(args: {
 	safeMode?: string;
 	network?: string;
+	subagent?: string;
 	separator: string;
 }): string | undefined {
-	return joinSafeModeAndNetwork(
+	return joinStatusPolicyGroup(
 		hasVisibleText(args.safeMode) ? sanitizeStatusText(args.safeMode) : undefined,
 		hasVisibleText(args.network) ? sanitizeStatusText(args.network) : undefined,
+		hasVisibleText(args.subagent) ? sanitizeStatusText(args.subagent) : undefined,
 		() => args.separator,
 	);
 }
@@ -368,6 +383,7 @@ export interface LegacyLeftSectionArgs {
 	ids: readonly string[];
 	getContent: (id: string) => string | undefined;
 	networkLabel?: string;
+	subagentLabel?: string;
 	/** Already themed ` · ` used only between safe mode and the network token. */
 	networkSeparator: string;
 	/** Generic separator between section items (compact under crowded widths). */
@@ -383,12 +399,13 @@ export interface LegacyLeftSectionArgs {
  */
 export function composeLegacyLeftSection(args: LegacyLeftSectionArgs): string | undefined {
 	const overrides = new Map<string, string | undefined>(args.overrides);
-	if (hasVisibleText(args.networkLabel)) {
+	if (hasVisibleText(args.networkLabel) || hasVisibleText(args.subagentLabel)) {
 		overrides.set(
 			args.safeModeId,
 			composeSafeModeNetworkGroup({
 				safeMode: args.getContent(args.safeModeId),
 				network: args.networkLabel,
+				subagent: args.subagentLabel,
 				separator: args.networkSeparator,
 			}),
 		);
