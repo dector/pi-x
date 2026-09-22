@@ -29,6 +29,13 @@ not an execution gate: correctness and safety requirements still apply.
 The selected level is persisted in the current session branch and restored on
 resume or tree navigation. New sessions start at `auto`.
 
+The review-level picker shows cache impact before selection. When the active
+model explicitly supports mid-conversation system messages, it shows a green Nerd
+Font check and confirms that system prompt patching preserves the LLM prompt
+cache. Otherwise, it shows a red warning that changing the setting might
+invalidate the cache. These messages predict Pi's request serialization; they do
+not confirm the provider's cache result.
+
 When `status-bar` is installed, the selected eye icon appears in the editor's
 top-left label immediately after model effort (`<effort> · <eye>`) for explicit
 levels. The separator and icon use the frame-border purple. Auto is hidden, though

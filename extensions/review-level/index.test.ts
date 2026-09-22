@@ -9,6 +9,8 @@ function setup(branch: unknown[] = []) {
 	const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
 	const emitted: Array<{ channel: string; payload: unknown }> = [];
 	const entries: Array<{ type: string; data: unknown }> = [];
+	const notifications: Array<{ message: string; type: string }> = [];
+	const pickerTitles: string[] = [];
 	const pi = {
 		events: { emit: (channel: string, payload: unknown) => emitted.push({ channel, payload }) },
 		on(event: string, handler: Handler) {
@@ -26,10 +28,24 @@ function setup(branch: unknown[] = []) {
 	reviewLevelExtension(pi as unknown as ExtensionAPI);
 	const ctx = {
 		hasUI: false,
+		model: undefined as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined,
 		sessionManager: { getBranch: () => branch },
-		ui: { notify() {}, select: async () => undefined },
+		ui: {
+			notify(message: string, type: string) {
+				notifications.push({ message, type });
+			},
+			select: async (title: string) => {
+				pickerTitles.push(title);
+				return undefined;
+			},
+			theme: {
+				fg(color: string, text: string) {
+					return `<${color}>${text}</${color}>`;
+				},
+			},
+		},
 	};
-	return { lifecycle, commands, emitted, entries, ctx };
+	return { lifecycle, commands, emitted, entries, notifications, pickerTitles, ctx };
 }
 
 async function fire(handlers: Map<string, Handler[]>, event: string, payload: unknown, ctx: unknown) {
@@ -70,6 +86,36 @@ describe("review-level extension", () => {
 			channel: "px:status-bar:review-level:set",
 			payload: { level: "normal" },
 		});
+	});
+
+	test("shows the cache warning in red on the picker before selection", async () => {
+		const state = setup();
+		state.ctx.hasUI = true;
+		await state.commands.get("px:review")!.handler("", state.ctx);
+		expect(state.pickerTitles).toEqual([
+			"Recommended review level\n<error>Changing this setting might invalidate the LLM prompt cache.</error>",
+		]);
+		expect(state.notifications).toEqual([]);
+	});
+
+	test("shows a green Nerd Font check on the picker when prompt patching preserves the cache", async () => {
+		const state = setup();
+		state.ctx.hasUI = true;
+		state.ctx.model = { compat: { supportsMidConvoSystemMessages: true } };
+		await state.commands.get("px:review")!.handler("", state.ctx);
+		expect(state.pickerTitles).toEqual([
+			"Recommended review level\n<success>󰄬 System prompt patching is supported; changing this setting will not invalidate the LLM prompt cache.</success>",
+		]);
+		expect(state.notifications).toEqual([]);
+	});
+
+	test("does not warn when the requested level is already active", async () => {
+		const state = setup();
+		state.ctx.hasUI = true;
+		await state.commands.get("px:review")!.handler("auto", state.ctx);
+		expect(state.notifications).toEqual([
+			{ message: "Recommended review level already Auto.", type: "info" },
+		]);
 	});
 
 	test("tree navigation restores branch-local state and defaults an empty branch to auto", async () => {

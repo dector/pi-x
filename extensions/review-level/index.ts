@@ -14,6 +14,7 @@ const ENTRY_TYPE = "review-level";
 const PROMPT_SECTION = "review_recommendation";
 const STATUS_BAR_REVIEW_SET_EVENT = "px:status-bar:review-level:set";
 const STATUS_BAR_REVIEW_CLEAR_EVENT = "px:status-bar:review-level:clear";
+const CACHE_PRESERVED_ICON = "󰄬";
 
 interface CustomEntryLike {
 	type?: unknown;
@@ -44,6 +45,19 @@ function pickerRows(): string[] {
 function levelFromPickerRow(row: string | undefined): ReviewLevel | undefined {
 	if (!row) return undefined;
 	return REVIEW_LEVELS.find((level) => row === pickerRows()[REVIEW_LEVELS.indexOf(level)]);
+}
+
+function supportsPromptPatching(ctx: ExtensionContext): boolean {
+	const compat = ctx.model?.compat;
+	return !!compat && "supportsMidConvoSystemMessages" in compat && compat.supportsMidConvoSystemMessages === true;
+}
+
+function pickerTitle(ctx: ExtensionContext): string {
+	if (supportsPromptPatching(ctx)) {
+		const notice = `${CACHE_PRESERVED_ICON} System prompt patching is supported; changing this setting will not invalidate the LLM prompt cache.`;
+		return `Recommended review level\n${ctx.ui.theme.fg("success", notice)}`;
+	}
+	return `Recommended review level\n${ctx.ui.theme.fg("error", "Changing this setting might invalidate the LLM prompt cache.")}`;
 }
 
 export default function reviewLevelExtension(pi: ExtensionAPI): void {
@@ -111,7 +125,7 @@ export default function reviewLevelExtension(pi: ExtensionAPI): void {
 				}
 			} else if (ctx.hasUI) {
 				const rows = pickerRows();
-				const choice = await ctx.ui.select("Recommended review level", rows);
+				const choice = await ctx.ui.select(pickerTitle(ctx), rows);
 				selected = levelFromPickerRow(choice);
 				if (!selected) return;
 			} else {
