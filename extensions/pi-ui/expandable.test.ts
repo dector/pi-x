@@ -283,13 +283,13 @@ describe("entry chip", () => {
 		expect(tui.overlayCalls).toHaveLength(1);
 
 		const call = tui.overlayCalls[0];
-		const line = "\x1b[7m \u{f0140} tool [ 10 | 250 ] \x1b[27m";
+		const line = "\x1b[7m \u{f0140} tool · 10/250 \x1b[27m";
 		const width = visibleWidth(line);
 		expect(call?.options).toMatchObject({ row: 7, col: 80 - width, width, nonCapturing: true });
 		expect(call?.component.render(80)[0]).toBe(line);
 	});
 
-	test("styles the chip as an intense purple pill with dim italic label", () => {
+	test("styles the chip as an intense purple pill with pure white text", () => {
 		const theme = {
 			fg: (color: string, text: string) => `<${color}>${text}`,
 			italic: (text: string) => `<i>${text}</i>`,
@@ -304,8 +304,9 @@ describe("entry chip", () => {
 
 		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
 		expect(line).toContain("\x1b[48;2;91;33;182m");
-		expect(line).toContain("<muted> \u{f0140} <i>tool</i> [ 10 | 250 ] · expanded ");
-		expect(line.endsWith("\x1b[49m")).toBe(true);
+		expect(line).toContain("\x1b[38;2;255;255;255m");
+		expect(line).toContain(" \u{f0140} \x1b[3mtool\x1b[23m · 10/250 · expanded ");
+		expect(line.endsWith("\x1b[39m\x1b[49m")).toBe(true);
 		expect(line).not.toContain("\x1b[7m");
 	});
 
@@ -323,7 +324,7 @@ describe("entry chip", () => {
 		showEntryChip(tui, 0, { label: "tool", index: 0, total: 1 });
 
 		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
-		expect(line.startsWith("\x1b[48;5;98m")).toBe(true);
+		expect(line.startsWith("\x1b[48;5;98m\x1b[97m")).toBe(true);
 	});
 
 	test("replaces the previous chip and hides it", () => {
@@ -446,7 +447,9 @@ describe("selection navigation", () => {
 		const first = selectEdgeEntry(tui, "first");
 		expect(first.status === "moved" && first.result).toMatchObject({ index: 0, label: "user", atStart: true });
 		expect(getSelectedEntry()).toBe(chat.children[0]);
-		expect(tui.overlayCalls.at(-1)?.component.render(80)[0]).toContain("user [ 1 | 3 ]");
+		const firstChip = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
+		expect(firstChip).toContain("user");
+		expect(firstChip).toContain("· 1/3");
 	});
 
 	test("reports empty and unavailable transcripts", () => {
@@ -477,7 +480,7 @@ describe("selection toggle", () => {
 		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
 		expect(tool.expanded).toBe(true);
 		expect(tool.invalidations).toBe(1);
-		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("tool [ 2 | 3 ] · expanded");
+		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("· 2/3 · expanded");
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);

@@ -44,7 +44,14 @@ const CHIP_REVERSE_OFF = "\x1b[27m";
 const CHIP_ARROW = "\u{f0140}";
 // Intense branded purple, deeper than the theme's muted thinking purple.
 const CHIP_PURPLE_BACKGROUND = "\x1b[48;2;91;33;182m";
+// Pure white on the purple pill, bright white for 256-colour terminals.
+const CHIP_WHITE_FOREGROUND = "\x1b[38;2;255;255;255m";
+const CHIP_WHITE_FOREGROUND_256 = "\x1b[97m";
+const CHIP_ITALIC = "\x1b[3m";
+const CHIP_ITALIC_OFF = "\x1b[23m";
+const CHIP_FOREGROUND_RESET = "\x1b[39m";
 const CHIP_BACKGROUND_RESET = "\x1b[49m";
+const CHIP_SEPARATOR = " · ";
 const CHIP_DURATION_MS = 1500;
 
 /**
@@ -582,14 +589,14 @@ export interface ChipParts {
 }
 
 function chipPlainText(parts: ChipParts): string {
-	const suffix = parts.state ? ` · ${parts.state}` : "";
-	return `${CHIP_ARROW} ${parts.label} [ ${parts.index + 1} | ${parts.total} ]${suffix}`;
+	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
+	return `${CHIP_ARROW} ${parts.label}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix}`;
 }
 
 /**
- * Intense branded purple pill with dim grayish text. The background is a fixed
- * branded purple in truecolor themes (the theme purple is deliberately muted),
- * and falls back to the theme's own purple when the terminal is 256-colour.
+ * Intense branded purple pill with pure white text (italic label). The purple is
+ * a fixed branded colour on truecolor terminals; 256-colour terminals reuse the
+ * theme's own purple so the encoding stays valid.
  */
 function chipLine(parts: ChipParts): string {
 	const theme = getThemeReference() as ChipTheme | undefined;
@@ -597,17 +604,16 @@ function chipLine(parts: ChipParts): string {
 		return `${CHIP_REVERSE} ${chipPlainText(parts)} ${CHIP_REVERSE_OFF}`;
 	}
 
-	const label = typeof theme.italic === "function" ? theme.italic(parts.label) : parts.label;
-	const suffix = parts.state ? ` · ${parts.state}` : "";
-	const body = ` ${CHIP_ARROW} ${label} [ ${parts.index + 1} | ${parts.total} ]${suffix} `;
-	const foreground = theme.fg("muted", body);
-
+	const truecolor = typeof theme.getColorMode !== "function" || theme.getColorMode() === "truecolor";
 	const themePurple = typeof theme.getFgAnsi === "function" ? String(theme.getFgAnsi("thinkingHigh")) : "";
 	const themeBackground = themePurple.startsWith("\x1b[38;") ? `\x1b[48;${themePurple.slice(5)}` : "";
-	const truecolor = typeof theme.getColorMode !== "function" || theme.getColorMode() === "truecolor";
 	const background = truecolor ? CHIP_PURPLE_BACKGROUND : themeBackground;
 	if (background.length === 0) return `${CHIP_REVERSE} ${chipPlainText(parts)} ${CHIP_REVERSE_OFF}`;
-	return `${background}${foreground}${CHIP_BACKGROUND_RESET}`;
+
+	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
+	const foreground = truecolor ? CHIP_WHITE_FOREGROUND : CHIP_WHITE_FOREGROUND_256;
+	const body = ` ${CHIP_ARROW} ${CHIP_ITALIC}${parts.label}${CHIP_ITALIC_OFF}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} `;
+	return `${background}${foreground}${body}${CHIP_FOREGROUND_RESET}${CHIP_BACKGROUND_RESET}`;
 }
 
 function hideEntryChip(): void {
