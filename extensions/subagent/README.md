@@ -368,7 +368,9 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 
 ## Session model rewiring
 
-Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `Rewire   [OFF]` in muted text while disabled and `Rewire   [ON]` in red while enabled; `  Configuration` opens the model and effort selectors.
+Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `Rewire   [OFF]` in muted text while disabled and `Rewire   [ON]` in red while enabled; `  Configuration` opens the model, effort, and preset selectors.
+
+Rewire presets are stored globally in `~/.pi/agent/subagent-rewire-presets.json`. Configuration shows `Presets (N)` first, where `N` is the stored preset count. In the preset list, press `n` to create a preset by selecting its model and effort, `d` to delete the preset under the cursor after confirmation, or `enter` to apply one to the current rewire configuration. The most recently applied preset supplies the initial model and effort in later sessions and is preselected when creating another preset.
 
 When enabled, the configured values override each agent file's `model` and `thinking` fields. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
 

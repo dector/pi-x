@@ -128,6 +128,18 @@ import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } fro
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
+import { RewirePresetListView, type RewirePresetListResult } from "./rewire-preset-list.ts";
+import {
+	addRewirePreset,
+	deleteRewirePreset,
+	formatRewirePreset,
+	latestUsedRewirePreset,
+	loadRewirePresets,
+	markRewirePresetUsed,
+	rewirePresetsPath,
+	saveRewirePresets,
+	type RewirePreset,
+} from "./rewire-presets.ts";
 import { availableThinkingLevels, resolveSubagentModel } from "./rewire.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
@@ -758,6 +770,7 @@ export default function (pi: ExtensionAPI) {
 	// Session-only. Agent files are never modified, and accepted dispatches keep
 	// the snapshot they were prepared with even if this changes later.
 	let rewireConfig: SubagentRewireConfig | undefined;
+	const presetFilePath = rewirePresetsPath(getAgentDir());
 	const defaultRewireConfig = (ctx: ExtensionContext): SubagentRewireConfig | undefined =>
 		ctx.model
 			? {
@@ -766,6 +779,25 @@ export default function (pi: ExtensionAPI) {
 					thinkingLevel: ctx.thinkingLevel ?? "off",
 				}
 			: undefined;
+	const defaultRewireConfigWithPreset = async (
+		ctx: ExtensionContext,
+	): Promise<SubagentRewireConfig | undefined> => {
+		const base = defaultRewireConfig(ctx);
+		if (!base) return undefined;
+		try {
+			const latest = latestUsedRewirePreset(loadRewirePresets(presetFilePath));
+			if (!latest) return base;
+			const models =
+				ctx.scopedModels.length > 0
+					? ctx.scopedModels.map((entry) => entry.model)
+					: await ctx.modelRegistry.getAvailable();
+			const model = models.find((candidate) => `${candidate.provider}/${candidate.id}` === latest.model);
+			if (!model || !availableThinkingLevels(model).includes(latest.thinkingLevel)) return base;
+			return { ...base, model: latest.model, thinkingLevel: latest.thinkingLevel };
+		} catch {
+			return base;
+		}
+	};
 	const setRewireConfig = (ctx: ExtensionContext, config: SubagentRewireConfig): void => {
 		rewireConfig = config;
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -1193,8 +1225,142 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	if (!childControl) {
+		const selectableRewireModels = async (ctx: ExtensionContext) => {
+			const scoped = ctx.scopedModels.length > 0 ? ctx.scopedModels : undefined;
+			const models = scoped?.map((entry) => entry.model) ?? (await ctx.modelRegistry.getAvailable());
+			return { scoped, byId: new Map(models.map((model) => [`${model.provider}/${model.id}`, model])) };
+		};
+
+		const selectRewirePresetValues = async (ctx: ExtensionContext): Promise<RewirePreset | undefined> => {
+			const { byId } = await selectableRewireModels(ctx);
+			if (byId.size === 0) {
+				ctx.ui.notify("No models are available for subagent rewiring.", "warning");
+				return undefined;
+			}
+			const latest = latestUsedRewirePreset(readStoredRewirePresets(ctx));
+			const modelIds = [...byId.keys()].sort();
+			if (latest && byId.has(latest.model)) {
+				modelIds.splice(modelIds.indexOf(latest.model), 1);
+				modelIds.unshift(latest.model);
+			}
+			const selectedModel = await ctx.ui.select("Subagent preset model", modelIds);
+			if (!selectedModel) return undefined;
+			const model = byId.get(selectedModel);
+			if (!model) return undefined;
+			const levels = availableThinkingLevels(model);
+			if (latest?.model === selectedModel && levels.includes(latest.thinkingLevel)) {
+				levels.splice(levels.indexOf(latest.thinkingLevel), 1);
+				levels.unshift(latest.thinkingLevel);
+			}
+			const selectedEffort = await ctx.ui.select("Subagent preset effort", levels);
+			const thinkingLevel = levels.find((level) => level === selectedEffort);
+			return thinkingLevel ? { model: selectedModel, thinkingLevel } : undefined;
+		};
+
+		const readStoredRewirePresets = (ctx: ExtensionContext): RewirePreset[] => {
+			try {
+				return loadRewirePresets(presetFilePath);
+			} catch (error) {
+				ctx.ui.notify(
+					`Could not read rewire presets: ${error instanceof Error ? error.message : String(error)} Create a preset to replace the invalid file.`,
+					"error",
+				);
+				return [];
+			}
+		};
+
+		const updateStoredRewirePresets = async (
+			ctx: ExtensionContext,
+			update: (presets: RewirePreset[]) => RewirePreset[],
+		): Promise<boolean> => {
+			try {
+				await withFileMutationQueue(presetFilePath, async () => {
+					let current: RewirePreset[];
+					try {
+						current = loadRewirePresets(presetFilePath);
+					} catch {
+						current = [];
+					}
+					const next = update(current);
+					saveRewirePresets(presetFilePath, next);
+				});
+				return true;
+			} catch (error) {
+				ctx.ui.notify(`Could not save rewire presets: ${error instanceof Error ? error.message : String(error)}`, "error");
+				return false;
+			}
+		};
+
+		const showRewirePresets = async (ctx: ExtensionContext): Promise<void> => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("Rewire preset management requires TUI mode.", "warning");
+				return;
+			}
+			while (true) {
+				const presets = readStoredRewirePresets(ctx);
+				const result = await ctx.ui.custom<RewirePresetListResult>((tui, theme, keybindings, done) =>
+					new RewirePresetListView({
+						presets,
+						theme: {
+							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+							bold: (text) => theme.bold(text),
+						},
+						keybindings,
+						requestRender: () => tui.requestRender(),
+						done,
+					}),
+				);
+				if (!result || result.type === "cancel") return;
+				if (result.type === "create") {
+					const preset = await selectRewirePresetValues(ctx);
+					if (!preset) continue;
+					const existed = presets.some(
+						(candidate) => candidate.model === preset.model && candidate.thinkingLevel === preset.thinkingLevel,
+					);
+					if (existed) {
+						ctx.ui.notify(`Preset already exists: ${formatRewirePreset(preset)}`, "warning");
+						continue;
+					}
+					if (await updateStoredRewirePresets(ctx, (current) => addRewirePreset(current, preset))) {
+						ctx.ui.notify(`Preset created: ${formatRewirePreset(preset)}`, "info");
+					}
+					continue;
+				}
+				const preset = presets[result.index];
+				if (!preset) continue;
+				if (result.type === "delete") {
+					const confirmed = await ctx.ui.confirm("Delete rewire preset", `Delete ${formatRewirePreset(preset)}?`);
+					if (confirmed) {
+						await updateStoredRewirePresets(ctx, (current) => {
+							const index = current.findIndex(
+								(candidate) =>
+									candidate.model === preset.model && candidate.thinkingLevel === preset.thinkingLevel,
+							);
+							return deleteRewirePreset(current, index);
+						});
+					}
+					continue;
+				}
+				const { byId } = await selectableRewireModels(ctx);
+				const model = byId.get(preset.model);
+				if (!model) {
+					ctx.ui.notify(`Model ${preset.model} is not available in this session.`, "warning");
+					continue;
+				}
+				if (!availableThinkingLevels(model).includes(preset.thinkingLevel)) {
+					ctx.ui.notify(`Effort ${preset.thinkingLevel} is not supported by ${preset.model}.`, "warning");
+					continue;
+				}
+				const config = rewireConfig ?? (await defaultRewireConfigWithPreset(ctx));
+				if (!config) return;
+				setRewireConfig(ctx, { ...config, model: preset.model, thinkingLevel: preset.thinkingLevel });
+				await updateStoredRewirePresets(ctx, (current) => markRewirePresetUsed(current, preset));
+				return;
+			}
+		};
+
 		const configureRewire = async (ctx: ExtensionContext): Promise<void> => {
-			rewireConfig ??= defaultRewireConfig(ctx);
+			rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
 			if (!rewireConfig) {
 				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
 				return;
@@ -1202,15 +1368,18 @@ export default function (pi: ExtensionAPI) {
 			while (true) {
 				const config = rewireConfig;
 				if (!config) return;
+				const presetChoice = `Presets (${readStoredRewirePresets(ctx).length})`;
 				const choice = await ctx.ui.select(
 					"Subagent rewire configuration",
-					[`Model  ${config.model}`, `Effort  ${config.thinkingLevel}`, "Back"],
+					[presetChoice, `Model  ${config.model}`, `Effort  ${config.thinkingLevel}`, "Back"],
 				);
 				if (!choice || choice === "Back") return;
+				if (choice === presetChoice) {
+					await showRewirePresets(ctx);
+					continue;
+				}
 				if (choice.startsWith("Model  ")) {
-					const scoped = ctx.scopedModels.length > 0 ? ctx.scopedModels : undefined;
-					const models = scoped?.map((entry) => entry.model) ?? (await ctx.modelRegistry.getAvailable());
-					const byId = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]));
+					const { scoped, byId } = await selectableRewireModels(ctx);
 					if (byId.size === 0) {
 						ctx.ui.notify("No models are available for subagent rewiring.", "warning");
 						continue;
@@ -1253,7 +1422,7 @@ export default function (pi: ExtensionAPI) {
 			description: "Override the model and effort for every subagent in this session",
 			handler: async (_args, ctx) => {
 				if (!ctx.hasUI) return;
-				rewireConfig ??= defaultRewireConfig(ctx);
+				rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
 				while (true) {
 					const rewireBadge = rewireConfig?.enabled
 						? ctx.ui.theme.fg("error", "[ON]")
@@ -1479,7 +1648,7 @@ export default function (pi: ExtensionAPI) {
 		sessionContext = ctx;
 		shuttingDown = false;
 		const storedRewire = rewireSessionStates.get(ctx.sessionManager.getSessionId());
-		rewireConfig = storedRewire ? { ...storedRewire } : defaultRewireConfig(ctx);
+		rewireConfig = storedRewire ? { ...storedRewire } : await defaultRewireConfigWithPreset(ctx);
 		sessionEpoch += 1;
 		sessionShutdown = new AbortController();
 		herdrPreflightInFlight.reset();
