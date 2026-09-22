@@ -41,9 +41,10 @@ const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
 // Fallback styling when no theme was captured yet (reverse video, like pi's flash).
 const CHIP_REVERSE = "\x1b[7m";
 const CHIP_REVERSE_OFF = "\x1b[27m";
-// Nerd Font Material Design chevrons framing the chip: down on the left, up on the right.
+// Nerd Font Material Design chevron-down marking the selected entry.
 const CHIP_ARROW = "\u{f0140}";
-const CHIP_ARROW_END = "\u{f0143}";
+// Fold affordances for the selected entry: unfold-more when collapsed, unfold-less when expanded.
+const CHIP_FOLD_GLYPHS = { collapsed: "\u{f054f}", expanded: "\u{f054e}" } as const;
 // Intense branded purple, deeper than the theme's muted thinking purple.
 const CHIP_PURPLE_BACKGROUND = "\x1b[48;2;91;33;182m";
 // Pure white on the purple pill, bright white for 256-colour terminals.
@@ -590,12 +591,13 @@ export interface ChipParts {
 	label: string;
 	index: number;
 	total: number;
-	state?: string;
+	/** Fold state of the entry, shown as an unfold affordance when it can collapse. */
+	fold?: "expanded" | "collapsed";
 }
 
 function chipPlainText(parts: ChipParts): string {
-	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
-	return `${CHIP_ARROW} ${parts.label}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} ${CHIP_ARROW_END}`;
+	const suffix = parts.fold ? ` ${CHIP_FOLD_GLYPHS[parts.fold]}` : "";
+	return `${CHIP_ARROW} ${parts.label}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix}`;
 }
 
 /**
@@ -615,9 +617,9 @@ function chipLine(parts: ChipParts): string {
 	const background = truecolor ? CHIP_PURPLE_BACKGROUND : themeBackground;
 	if (background.length === 0) return `${CHIP_REVERSE} ${chipPlainText(parts)} ${CHIP_REVERSE_OFF}`;
 
-	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
+	const suffix = parts.fold ? ` ${CHIP_FOLD_GLYPHS[parts.fold]}` : "";
 	const foreground = truecolor ? CHIP_WHITE_FOREGROUND : CHIP_WHITE_FOREGROUND_256;
-	const body = ` ${CHIP_ARROW} ${CHIP_ITALIC}${parts.label}${CHIP_ITALIC_OFF}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} ${CHIP_ARROW_END} `;
+	const body = ` ${CHIP_ARROW} ${CHIP_ITALIC}${parts.label}${CHIP_ITALIC_OFF}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} `;
 	return `${background}${foreground}${body}${CHIP_FOREGROUND_RESET}${CHIP_BACKGROUND_RESET}`;
 }
 
@@ -661,6 +663,12 @@ export function showEntryChip(tui: unknown, row: number, parts: ChipParts, durat
 	return true;
 }
 
+/** Fold state of an entry, or undefined when it has nothing to collapse. */
+function entryFoldState(entry: TrackedEntry): "expanded" | "collapsed" | undefined {
+	if (!isExpandableEntry(entry)) return undefined;
+	return isEntryExpanded(entry) ? "expanded" : "collapsed";
+}
+
 function selectionIndex(positions: readonly EntryPosition[]): number {
 	const selected = getSelectedEntry();
 	if (!selected) return -1;
@@ -674,7 +682,8 @@ export interface SelectionMarkerContext {
 	label: string;
 	index: number;
 	total: number;
-	state?: string;
+	/** Fold state of the entry, when it can collapse. */
+	fold?: "expanded" | "collapsed";
 }
 
 /**
@@ -683,8 +692,8 @@ export interface SelectionMarkerContext {
  */
 export const SELECTION_MARKERS: Record<string, (context: SelectionMarkerContext) => void> = {
 	/** Right-aligned purple pill with the entry label and position. */
-	chip: ({ tui, row, label, index, total, state }) => {
-		showEntryChip(tui, row, { label, index, total, state });
+	chip: ({ tui, row, label, index, total, fold }) => {
+		showEntryChip(tui, row, { label, index, total, fold });
 	},
 	/** No marker at all. */
 	none: () => {},
@@ -727,7 +736,14 @@ function selectPosition(
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
 	const label = describeEntry(target.component);
-	applySelectionMarker({ tui, row, label, index: targetIndex, total: positions.length });
+	applySelectionMarker({
+		tui,
+		row,
+		label,
+		index: targetIndex,
+		total: positions.length,
+		fold: entryFoldState(target.component),
+	});
 
 	return {
 		status: "moved",
@@ -810,7 +826,7 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 		label,
 		index,
 		total: positions.length,
-		state: expanded ? "expanded" : "collapsed",
+		fold: expanded ? "expanded" : "collapsed",
 	});
 
 	return {
