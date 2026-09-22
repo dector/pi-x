@@ -855,7 +855,8 @@ export default function (pi: ExtensionAPI) {
 		styles: () => ({
 			bold: (text) => sessionContext?.ui.theme.bold(text) ?? text,
 			italic: (text) => sessionContext?.ui.theme.italic(text) ?? text,
-			accent: (text) => sessionContext?.ui.theme.fg("accent", text) ?? text,
+			// The subagent brand follows Pi's purple thinking-level color.
+			accent: (text) => sessionContext?.ui.theme.fg("thinkingHigh", text) ?? text,
 			muted: (text) => sessionContext?.ui.theme.fg("muted", text) ?? text,
 			dim: (text) => sessionContext?.ui.theme.fg("dim", text) ?? text,
 			success: (text) => sessionContext?.ui.theme.fg("success", text) ?? text,

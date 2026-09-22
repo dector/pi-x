@@ -12,6 +12,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { isAbortedResult, isFailedResult } from "./result-output.ts";
 import type { SubagentRunState, UsageStats } from "./types.ts";
 
 /** Stable widget id used by the subagent extension. */
@@ -56,12 +57,17 @@ export interface ActiveSubagentWidgetRun {
 	task: string;
 	startedAt: number;
 	completedAt?: number;
+	/** Dispatch membership keeps settled siblings visible while another sibling is alive. */
+	dispatchId?: string;
 	result: {
 		state?: SubagentRunState;
 		model?: string;
 		thinkingLevel?: ThinkingLevel;
 		usage?: UsageStats;
 		pendingApproval?: { method: string; title?: string };
+		exitCode?: number;
+		stopReason?: string;
+		errorMessage?: string;
 	};
 }
 
@@ -97,9 +103,9 @@ export interface ActiveSubagentWidgetFormatOptions {
  * Render the active-subagents widget.
  *
  * Returns `undefined` when no run is active so the caller can clear the widget.
- * Completed runs are excluded. The result never exceeds
- * `ACTIVE_SUBAGENT_WIDGET_MAX_LINES`; when more runs are active than fit, the
- * last line reports the hidden count.
+ * While a dispatch is active, all of its started runs remain visible, including
+ * settled siblings. The result never exceeds `ACTIVE_SUBAGENT_WIDGET_MAX_LINES`;
+ * when more runs are visible than fit, the last line reports the hidden count.
  */
 export function formatActiveSubagentWidget(
 	runs: readonly ActiveSubagentWidgetRun[],
@@ -109,71 +115,97 @@ export function formatActiveSubagentWidget(
 	const active = runs.filter((run) => !run.completedAt);
 	if (active.length === 0) return undefined;
 
+	const activeDispatches = new Set(active.map((run) => run.dispatchId).filter((id): id is string => Boolean(id)));
+	const visible = runs.filter((run) => !run.completedAt || (run.dispatchId !== undefined && activeDispatches.has(run.dispatchId)));
+	const counts = countOutcomes(visible);
+	const summary = [
+		`${counts.active} active`,
+		...(counts.finished ? [`${counts.finished} finished`] : []),
+		...(counts.failed ? [`${counts.failed} failed`] : []),
+		...(counts.canceled ? [`${counts.canceled} canceled`] : []),
+	].join(", ");
+
 	const styles = options.styles ?? PLAIN_STYLES;
-	const header = styles.accent(styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${active.length} active)`));
-	const fullRunBudget = Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 1) / 3);
-	// A hidden-count notice cannot fit after three complete runs, so overflow
-	// reserves that notice by showing two runs and leaving two rows unused.
-	const runBudget = active.length > fullRunBudget
-		? Math.floor((ACTIVE_SUBAGENT_WIDGET_MAX_LINES - 2) / 3)
-		: fullRunBudget;
-	const shown = active.slice(0, runBudget);
-	const lines = [
-		header,
-		...shown.flatMap((run) => formatActiveSubagentWidgetLines(run, now, styles, options.contextWindowForModel)),
-	];
-	const hidden = active.length - shown.length;
+	const lines = [styles.accent(styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${summary})`))];
+	let shown = 0;
+	for (const run of visible) {
+		const block = formatActiveSubagentWidgetLines(run, now, styles, options.contextWindowForModel);
+		const mustReserveOverflowLine = shown + 1 < visible.length;
+		const available = ACTIVE_SUBAGENT_WIDGET_MAX_LINES - lines.length - (mustReserveOverflowLine ? 1 : 0);
+		if (block.length > available) break;
+		lines.push(...block);
+		shown += 1;
+	}
+	const hidden = visible.length - shown;
 	if (hidden > 0) lines.push(styles.dim(styles.italic(`… ${hidden} more`)));
-	return lines.slice(0, ACTIVE_SUBAGENT_WIDGET_MAX_LINES);
+	return lines;
 }
 
-/** Format one run as identity, runtime details, and task lines. */
+/** Format one run as identity/model, runtime details, and one task line. */
 function formatActiveSubagentWidgetLines(
 	run: ActiveSubagentWidgetRun,
 	now: number,
 	styles: ActiveSubagentWidgetStyles,
 	contextWindowForModel?: (model?: string) => number | undefined,
-): [string, string, string] {
-	const appearance = stateAppearance(run.result.state, Boolean(run.result.pendingApproval));
+): string[] {
+	const outcome = runOutcome(run);
+	const appearance = stateAppearance(outcome, Boolean(run.result.pendingApproval));
 	const state = truncate(
-		run.result.pendingApproval ? "waiting approval" : (run.result.state ?? "running").replace(/-/g, " "),
+		run.result.pendingApproval ? "waiting approval" : outcome.replace(/-/g, " "),
 		ACTIVE_SUBAGENT_STATE_MAX_LENGTH,
 	);
 	const agent = truncate(run.agentName, ACTIVE_SUBAGENT_AGENT_MAX_LENGTH);
 	const id = truncate(run.runId, ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH);
-	const identityLine = " " + styles[appearance.tone](appearance.icon) + " " + styles.dim(`[${id}]`)
+	const identityPrefix = ` [${id}] · ${agent}`;
+	const effort = run.result.thinkingLevel;
+	const effortSuffix = effort ? ` (${effort})` : "";
+	const modelBudget = Math.max(
+		1,
+		Math.min(
+			ACTIVE_SUBAGENT_MODEL_MAX_LENGTH,
+			ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(identityPrefix + " · " + effortSuffix) - 2,
+		),
+	);
+	const model = run.result.model ? truncate(run.result.model, modelBudget) : undefined;
+	let identityLine = " " + styles[appearance.tone](appearance.icon) + " " + styles.dim(`[${id}]`)
 		+ styles.dim(" · ") + styles.muted(agent);
+	if (model) {
+		identityLine += styles.dim(" · ") + styles.muted(model);
+		if (effort) identityLine += styles.dim(" (") + styles.muted(effort) + styles.dim(")");
+	} else if (effort) {
+		identityLine += styles.dim(" · ") + styles.muted(effort);
+	}
 
 	const elapsed = formatElapsed((run.completedAt ?? now) - run.startedAt);
 	const turns = formatTurns(run.result.usage?.turns);
 	const usage = truncate(formatWidgetUsage(run.result.usage, run.result.model, contextWindowForModel), 30);
 	const activity = `${state} ${elapsed}${turns ? `, ${turns}` : ""}${usage ? ` · ${usage}` : ""}`;
-	const effort = run.result.thinkingLevel;
-	const effortSuffix = effort ? ` (${effort})` : "";
-	const detailsPrefix = " │ ";
-	const modelSuffix = ` · ${activity}`;
-	const modelBudget = Math.max(
-		1,
-		Math.min(
-			ACTIVE_SUBAGENT_MODEL_MAX_LENGTH,
-			ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH - codePointLength(detailsPrefix + effortSuffix + modelSuffix),
-		),
-	);
-	const model = run.result.model ? truncate(run.result.model, modelBudget) : undefined;
-	let detailsLine = styles.dim(detailsPrefix);
-	if (model) {
-		detailsLine += styles.muted(model);
-		if (effort) detailsLine += styles.dim(" (") + styles.muted(effort) + styles.dim(")");
-		detailsLine += styles.dim(` · ${activity}`);
-	} else if (effort) {
-		detailsLine += styles.muted(effort) + styles.dim(` · ${activity}`);
-	} else {
-		detailsLine += styles.dim(activity);
-	}
+	const detailsLine = styles.dim(` │ ${activity}`);
 
 	const task = truncate(run.task || "(no task description)", ACTIVE_SUBAGENT_TASK_MAX_LENGTH);
-	const taskLine = styles.dim(" │ ") + styles.muted(task);
-	return [identityLine, detailsLine, taskLine];
+	return [identityLine, detailsLine, styles.dim(` │ ${task}`)];
+}
+
+type WidgetOutcome = SubagentRunState | "finished" | "canceled";
+
+function runOutcome(run: ActiveSubagentWidgetRun): WidgetOutcome {
+	if (run.completedAt) {
+		if (isAbortedResult(run.result)) return "canceled";
+		return isFailedResult(run.result) ? "failed" : "finished";
+	}
+	return run.result.state ?? "running";
+}
+
+function countOutcomes(runs: readonly ActiveSubagentWidgetRun[]): Record<"active" | "finished" | "failed" | "canceled", number> {
+	const counts = { active: 0, finished: 0, failed: 0, canceled: 0 };
+	for (const run of runs) {
+		const outcome = runOutcome(run);
+		if (!run.completedAt) counts.active += 1;
+		else if (outcome === "canceled") counts.canceled += 1;
+		else if (outcome === "failed") counts.failed += 1;
+		else counts.finished += 1;
+	}
+	return counts;
 }
 
 function formatWidgetUsage(
@@ -200,11 +232,13 @@ function formatTurns(turns: number | undefined): string {
 type StateTone = "success" | "warning" | "error" | "muted";
 
 function stateAppearance(
-	state: SubagentRunState | undefined,
+	state: WidgetOutcome,
 	pendingApproval: boolean,
 ): { icon: string; tone: StateTone } {
+	if (state === "finished") return { icon: "✓", tone: "success" };
 	if (state === "failed") return { icon: "✗", tone: "error" };
-	if (pendingApproval || ["waiting-approval", "pause-requested", "paused", "resuming", "aborting"].includes(state ?? "")) {
+	if (state === "canceled") return { icon: "⊘", tone: "warning" };
+	if (pendingApproval || ["waiting-approval", "pause-requested", "paused", "resuming", "aborting"].includes(state)) {
 		return { icon: "◐", tone: "warning" };
 	}
 	if (state === "starting") return { icon: "○", tone: "muted" };

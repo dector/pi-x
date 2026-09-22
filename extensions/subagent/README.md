@@ -413,25 +413,30 @@ Detached async children keep the widget visible until their dispatch settles.
 The widget is cleared when the last child finishes and on `session_shutdown`.
 
 ```text
-󰚩 Subagents (2 active)
- ● [red-panda-00k3w9fz2q] · worker-fast
- │ openai/gpt-5 (minimal) · running 34s, 3 turns · ctx:10% $0.0266
- │ Implement validation
- ◐ [calm-otter-01ab4cd9xy] · researcher-fast
- │ openai/gpt-5 (low) · waiting approval 12s
+󰚩 Subagents (1 active, 1 finished)
+ ● [red-panda-00k3w9fz2q] · worker-fast · openai/gpt-5 (minimal)
+ │ running 34s, 3 turns · ctx:10% $0.0266
+ │ Implement validation and update the related tests…
+ ✓ [calm-otter-01ab4cd9xy] · researcher-fast · openai/gpt-5 (low)
+ │ finished 12s
  │ Check API behavior
 ```
 
-The accented bold title uses the Nerd Font robot glyph. Each run uses three
-lines: state icon, run id, and agent; model and runtime details; then the task
-preview. The `│` border, run id, separators, and activity text use the theme's
-dim color. Agent, model, effort, and task text use the brighter muted color
-instead of plain terminal white. Running, waiting, and failed icons use success,
-warning, and error colors; a starting icon uses muted. Fields and complete
-lines are capped to keep the widget compact. Truncation works on Unicode code
-points so it does not split a surrogate pair. Pi limits each widget to 10
-lines. Three runs fit exactly; when more are active, the formatter shows two
-runs and reserves a final dim `… N more` line.
+The bold title uses the Nerd Font robot glyph and the theme's purple
+thinking-level brand color. The first run line contains the state icon, run id,
+agent, model, and effort. Runtime details follow, then the task preview on one
+dim line. The `│` border, run id, separators, activity, and task text use
+the theme's dim color. Agent, model, and effort use the brighter muted color.
+Running and successful icons use success, waiting and canceled icons use
+warning, failed icons use error, and a starting icon uses muted. While any run
+in a dispatch is alive, its successful, failed, and canceled siblings remain
+listed and are counted separately in the title. The whole dispatch disappears
+when its last live run settles.
+
+Fields and complete lines are capped to keep the widget compact. Truncation
+works on Unicode code points so it does not split a surrogate pair. Pi limits
+each widget to 10 lines. The formatter keeps complete run blocks and reserves
+a final dim `… N more` line when every visible run cannot fit.
 
 The display refreshes on registry changes (start/complete) and on progress
 updates (state, waiting approval, model, and usage). While at least one run is

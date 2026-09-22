@@ -140,6 +140,32 @@ test("mixed completed and active runs count and render only the active one", () 
 	expect(lines?.join("\n")).not.toContain("Finished task");
 });
 
+test("settled siblings stay visible with outcome counts until their dispatch finishes", () => {
+	const dispatchId = "dispatch-one";
+	const lines = formatActiveSubagentWidget([
+		makeRun({ runId: "sa-live", dispatchId }),
+		makeRun({ runId: "sa-ok", dispatchId, completedAt: NOW - 3_000, result: { state: "settled", exitCode: 0 } }),
+		makeRun({ runId: "sa-failed", dispatchId, completedAt: NOW - 2_000, result: { state: "failed", exitCode: 1 } }),
+		makeRun({
+			runId: "sa-canceled",
+			dispatchId,
+			completedAt: NOW - 1_000,
+			result: { state: "failed", exitCode: 1, stopReason: "aborted" },
+		}),
+	], NOW);
+	expect(lines?.[0]).toBe("󰚩 Subagents (1 active, 1 finished, 1 failed, 1 canceled)");
+	expect(lines?.join("\n")).toContain("✓ [sa-ok]");
+	expect(lines?.[lines.length - 1]).toBe("… 2 more");
+});
+
+test("settled runs disappear when the last run in their dispatch finishes", () => {
+	const runs = [
+		makeRun({ runId: "sa-one", dispatchId: "dispatch-one", completedAt: NOW - 2_000 }),
+		makeRun({ runId: "sa-two", dispatchId: "dispatch-one", completedAt: NOW - 1_000 }),
+	];
+	expect(formatActiveSubagentWidget(runs, NOW)).toBeUndefined();
+});
+
 test("state maps to a distinct icon", () => {
 	const running = formatActiveSubagentWidget([makeRun({ result: { state: "running" } })], NOW)?.[1];
 	const starting = formatActiveSubagentWidget([makeRun({ result: { state: "starting" } })], NOW)?.[1];
@@ -152,7 +178,7 @@ test("state maps to a distinct icon", () => {
 	expect(waiting).toStartWith(" ◐ ");
 });
 
-test("model, effort, context, cost, and turns are included when present", () => {
+test("model and effort are on the identity line while usage stays on the activity line", () => {
 	const lines = formatActiveSubagentWidget(
 		[makeRun({ result: {
 			state: "running",
@@ -163,33 +189,33 @@ test("model, effort, context, cost, and turns are included when present", () => 
 		NOW,
 		{ contextWindowForModel: () => 100_000 },
 	);
-	expect(lines?.[2]).toContain("opencode-go/deepseek-v4.1-flash (minimal)");
-	expect(lines?.[2]).toContain("· running 34s, 31 turns");
+	expect(lines?.[1]).toContain("worker · opencode-go/deepseek-v4.1-flash (minimal)");
+	expect(lines?.[2]).toContain("running 34s, 31 turns");
 	expect(lines?.[2]).toContain("· ctx:10% $0.0266");
 });
 
-test("long tasks are truncated with an ellipsis", () => {
-	const task = "a".repeat(120);
+test("long task descriptions stay on one truncated line", () => {
+	const task = "a".repeat(240);
 	const lines = formatActiveSubagentWidget([makeRun({ task })], NOW);
-	const line = lines?.[3] ?? "";
-	expect(line).toContain("…");
-	expect(line.length).toBeLessThan(task.length);
+	expect(lines).toHaveLength(4);
+	expect(lines?.[3]).toContain("…");
 });
 
-test("the task line budget includes its border", () => {
+test("the task line includes its border in the line budget", () => {
 	const lines = formatActiveSubagentWidget([
 		makeRun({ runId: "readable-run-id-with-a-long-tag", task: "task ".repeat(80) }),
 	], NOW);
-	const line = lines?.[3] ?? "";
-	expect(codePointLength(line)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
-	expect(line).toContain("…");
+	const taskLine = lines?.[3] ?? "";
+	expect(codePointLength(taskLine)).toBeLessThanOrEqual(ACTIVE_SUBAGENT_WIDGET_MAX_LINE_LENGTH);
+	expect(taskLine).toContain("…");
 });
 
-test("effort is shown even before a model is known", () => {
+test("effort is shown on the identity line before a model is known", () => {
 	const lines = formatActiveSubagentWidget([
 		makeRun({ result: { state: "starting", thinkingLevel: "minimal" } }),
 	], NOW);
-	expect(lines?.[2]).toContain("minimal · starting");
+	expect(lines?.[1]).toContain("worker · minimal");
+	expect(lines?.[2]).toContain("starting");
 });
 
 test("elapsed renders minutes once a run passes a minute", () => {
@@ -218,8 +244,8 @@ test("widget uses theme roles for hierarchy and run state", () => {
 	});
 	expect(lines?.[0]).toBe("<accent><b>󰚩 Subagents (1 active)</b></accent>");
 	expect(lines?.[1]).toBe(" <success>●</success> <dim>[red-panda]</dim><dim> · </dim><muted>worker</muted>");
-	expect(lines?.[2]).toBe("<dim> │ </dim><dim>running 34s</dim>");
-	expect(lines?.[3]).toBe("<dim> │ </dim><muted>Implement validation</muted>");
+	expect(lines?.[2]).toBe("<dim> │ running 34s</dim>");
+	expect(lines?.[3]).toBe("<dim> │ Implement validation</dim>");
 });
 
 test("state icons use their corresponding theme colors", () => {
@@ -243,6 +269,17 @@ test("state icons use their corresponding theme colors", () => {
 	expect(identityFor("waiting-approval", true)).toContain("<warning>◐</warning>");
 	expect(identityFor("failed")).toContain("<error>✗</error>");
 	expect(identityFor("starting")).toContain("<muted>○</muted>");
+
+	const terminalIdentity = (result: ActiveSubagentWidgetRun["result"]) => {
+		const dispatchId = "dispatch-colors";
+		return formatActiveSubagentWidget([
+			makeRun({ runId: "live", dispatchId }),
+			makeRun({ runId: "done", dispatchId, completedAt: NOW - 1, result }),
+		], NOW, { styles })?.[4] ?? "";
+	};
+	expect(terminalIdentity({ exitCode: 0 })).toContain("<success>✓</success>");
+	expect(terminalIdentity({ exitCode: 1 })).toContain("<error>✗</error>");
+	expect(terminalIdentity({ exitCode: 1, stopReason: "aborted" })).toContain("<warning>⊘</warning>");
 });
 
 test("long agent names and overall lines stay within the display budget", () => {
@@ -266,9 +303,8 @@ test("long agent names and overall lines stay within the display budget", () => 
 	expect(metadata + task).toContain("…");
 });
 
-test("truncation does not split surrogate pairs", () => {
-	const lines = formatActiveSubagentWidget([makeRun({ task: "😀".repeat(180) })], NOW);
-	const line = lines?.[3] ?? "";
+test("task truncation does not split surrogate pairs", () => {
+	const line = formatActiveSubagentWidget([makeRun({ task: "😀".repeat(240) })], NOW)?.[3] ?? "";
 	expect(line).toContain("…");
 	expect(hasLoneSurrogate(line)).toBe(false);
 });
