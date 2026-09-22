@@ -168,7 +168,9 @@ import type {
 	ToolRunStatus,
 } from "./types.ts";
 
-const COLLAPSED_ITEM_COUNT = 10;
+const COLLAPSED_TOOL_COUNT = 7;
+const COLLAPSED_PREVIEW_LINE_COUNT = 8;
+const COLLAPSED_FINAL_OUTPUT_LINE_COUNT = 7;
 
 // Process-local storage survives /reload but disappears when Pi restarts. Keyed
 // by session id so /new and /resume do not leak one session's override into another.
@@ -2392,6 +2394,28 @@ export default function (pi: ExtensionAPI) {
 				return text.trimEnd();
 			};
 
+			const renderCollapsedSingle = (items: DisplayItem[], runningText: string) => {
+				const tools = items.filter((item): item is Extract<DisplayItem, { type: "toolCall" }> => item.type === "toolCall");
+				const latestTextLine = runningText
+					.trim()
+					.split(/\r?\n/)
+					.filter((line) => line.trim().length > 0)
+					.at(-1);
+				const textLineCount = latestTextLine ? 1 : 0;
+				const needsSkippedLine = tools.length > COLLAPSED_TOOL_COUNT;
+				const toolLimit = Math.min(
+					COLLAPSED_TOOL_COUNT,
+					COLLAPSED_PREVIEW_LINE_COUNT - textLineCount - (needsSkippedLine ? 1 : 0),
+				);
+				const toShow = tools.slice(-toolLimit);
+				const skipped = tools.length - toShow.length;
+				let text = "";
+				if (skipped > 0) text += `${theme.fg("muted", `... ${skipped} earlier items`)}\n`;
+				for (const item of toShow) text += `${renderToolItem(item)}\n`;
+				if (latestTextLine) text += theme.fg("muted", `│ ${latestTextLine}`);
+				return { text: text.trimEnd(), truncated: skipped > 0 };
+			};
+
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
 				const isActive = r.exitCode === -1;
@@ -2433,13 +2457,23 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+				const runningText = isActive ? (r.liveText || finalOutput) : "";
 				if (isActive) text += ` ${theme.fg("warning", `[${r.state ?? "running"}]`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+				else if (displayItems.length === 0 && !runningText) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
-					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
-					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					const preview = renderCollapsedSingle(displayItems, runningText);
+					if (preview.text) text += `\n${preview.text}`;
+					const finalOutputLines = isActive ? [] : finalOutput.trim().split(/\r?\n/);
+					const finalOutputPreview = finalOutputLines
+						.slice(0, COLLAPSED_FINAL_OUTPUT_LINE_COUNT)
+						.map((line) => theme.fg("muted", "│ ") + theme.fg("toolOutput", line))
+						.join("\n");
+					if (finalOutputPreview) text += `\n${finalOutputPreview}`;
+					if (preview.truncated || finalOutputLines.length > COLLAPSED_FINAL_OUTPUT_LINE_COUNT) {
+						text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					}
 				}
 				const timingStr = formatResultTiming(r);
 				const usageStr = formatUsageStats(r.usage, r.model, r.thinkingLevel, contextWindowForModel(r.model));
