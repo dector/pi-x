@@ -36,6 +36,7 @@ import type {
 	SubagentDispatchStatus,
 	SubagentExecution,
 	SubagentMode,
+	SubagentRewireConfig,
 } from "./types.ts";
 
 /** Maximum number of parallel tasks accepted at preparation time. */
@@ -109,6 +110,8 @@ export interface PreparationContext {
 	/** Resolved parent model as `provider/id`. */
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
+	/** Enabled session-only override for every subagent profile. */
+	rewire?: SubagentRewireConfig;
 }
 
 export interface PreparationDependencies {
@@ -379,6 +382,7 @@ export async function prepareSubagentDispatch(
 				model: deps.context.model,
 				thinkingLevel: deps.context.thinkingLevel,
 			},
+			...(deps.context.rewire ? { rewire: { ...deps.context.rewire } } : {}),
 			cwd: deps.context.cwd,
 			safeModeSnapshot,
 			items,

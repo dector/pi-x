@@ -152,6 +152,25 @@ describe("single preparation", () => {
 		expect(calls.safeMode).toBe(1);
 	});
 
+	test("snapshots an enabled session rewire", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		deps.context.rewire = {
+			enabled: true,
+			model: "openai-codex/gpt-5.6-sol",
+			thinkingLevel: "minimal",
+		};
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.rewire).toEqual({
+			enabled: true,
+			model: "openai-codex/gpt-5.6-sol",
+			thinkingLevel: "minimal",
+		});
+		expect(result.dispatch.rewire).not.toBe(deps.context.rewire);
+	});
+
 	test("defaults to user scope and omits undefined snapshots", async () => {
 		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
 		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);

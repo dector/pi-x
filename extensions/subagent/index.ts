@@ -128,6 +128,7 @@ import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } fro
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { createRunIdGenerator } from "./run-id.ts";
+import { availableThinkingLevels, resolveSubagentModel } from "./rewire.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import { ACTIVE_SUBAGENT_WIDGET_ID, ActiveSubagentWidget } from "./status-row.ts";
 import { SubagentTimingTracker } from "./timing.ts";
@@ -138,10 +139,17 @@ import type {
 	SubagentBackendKind,
 	SubagentDetails,
 	SubagentRunOutcome,
+	SubagentRewireConfig,
 	ToolRunStatus,
 } from "./types.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
+
+// Process-local storage survives /reload but disappears when Pi restarts. Keyed
+// by session id so /new and /resume do not leak one session's override into another.
+const rewireSessionStates: Map<string, SubagentRewireConfig> =
+	((globalThis as { __piXSubagentRewireStates?: Map<string, SubagentRewireConfig> }).__piXSubagentRewireStates ??=
+		new Map());
 
 // Nerd Font hourglass shown while a subagent run is still active (replaces the
 // `⏳` emoji, which renders inconsistently across terminals).
@@ -281,10 +289,10 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "rpc", "--no-session"];
 	let safeModeSnapshot: SafeModeSnapshot | undefined;
-	const inheritsDispatchConfig = !agent.model;
-	const model = agent.model ?? dispatchDefaults.model;
+	const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, dispatch.rewire);
+	const model = resolvedModel.model;
 	if (model) args.push("--model", model);
-	const thinkingLevel = agent.thinking ?? (inheritsDispatchConfig ? dispatchDefaults.thinkingLevel : undefined);
+	const thinkingLevel = resolvedModel.thinkingLevel;
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	const childTools = withProgressTool(agent.tools, runtime.hasProgressTool);
 	if (childTools && childTools.length > 0) args.push("--tools", childTools.join(","));
@@ -747,6 +755,29 @@ export default function (pi: ExtensionAPI) {
 
 	let sessionContext: ExtensionContext | undefined;
 	let shuttingDown = false;
+	// Session-only. Agent files are never modified, and accepted dispatches keep
+	// the snapshot they were prepared with even if this changes later.
+	let rewireConfig: SubagentRewireConfig | undefined;
+	const defaultRewireConfig = (ctx: ExtensionContext): SubagentRewireConfig | undefined =>
+		ctx.model
+			? {
+					enabled: false,
+					model: `${ctx.model.provider}/${ctx.model.id}`,
+					thinkingLevel: ctx.thinkingLevel ?? "off",
+				}
+			: undefined;
+	const setRewireConfig = (ctx: ExtensionContext, config: SubagentRewireConfig): void => {
+		rewireConfig = config;
+		const sessionId = ctx.sessionManager.getSessionId();
+		// Refresh insertion order and keep this process-local cache bounded.
+		rewireSessionStates.delete(sessionId);
+		rewireSessionStates.set(sessionId, { ...config });
+		while (rewireSessionStates.size > 32) {
+			const oldest = rewireSessionStates.keys().next().value;
+			if (oldest === undefined) break;
+			rewireSessionStates.delete(oldest);
+		}
+	};
 	// Session-scoped abort signal and in-flight dispatch tracking. Together they
 	// let shutdown abort and await blocking runs before disposing the owned tab,
 	// closing the window where a late spawn could adopt a torn-down tab.
@@ -1162,6 +1193,87 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	if (!childControl) {
+		const configureRewire = async (ctx: ExtensionContext): Promise<void> => {
+			rewireConfig ??= defaultRewireConfig(ctx);
+			if (!rewireConfig) {
+				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
+				return;
+			}
+			while (true) {
+				const config = rewireConfig;
+				if (!config) return;
+				const choice = await ctx.ui.select(
+					"Subagent rewire configuration",
+					[`Model  ${config.model}`, `Effort  ${config.thinkingLevel}`, "Back"],
+				);
+				if (!choice || choice === "Back") return;
+				if (choice.startsWith("Model  ")) {
+					const scoped = ctx.scopedModels.length > 0 ? ctx.scopedModels : undefined;
+					const models = scoped?.map((entry) => entry.model) ?? (await ctx.modelRegistry.getAvailable());
+					const byId = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]));
+					if (byId.size === 0) {
+						ctx.ui.notify("No models are available for subagent rewiring.", "warning");
+						continue;
+					}
+					const selected = await ctx.ui.select("Subagent override model", [...byId.keys()].sort());
+					if (!selected) continue;
+					const model = byId.get(selected);
+					if (!model) continue;
+					const levels = availableThinkingLevels(model);
+					const pinned = scoped?.find((entry) => `${entry.model.provider}/${entry.model.id}` === selected)?.thinkingLevel;
+					const fallback = levels.includes(config.thinkingLevel)
+						? config.thinkingLevel
+						: levels.includes("medium")
+							? "medium"
+							: levels[0] ?? "off";
+					setRewireConfig(ctx, {
+						...config,
+						model: selected,
+						thinkingLevel: pinned && levels.includes(pinned) ? pinned : fallback,
+					});
+					continue;
+				}
+
+				const availableModels = await ctx.modelRegistry.getAvailable();
+				const model = availableModels.find(
+					(candidate) => `${candidate.provider}/${candidate.id}` === config.model,
+				);
+				if (!model) {
+					ctx.ui.notify(`Model ${config.model} is no longer available.`, "warning");
+					continue;
+				}
+				const levels = availableThinkingLevels(model);
+				const selected = await ctx.ui.select("Subagent override effort", levels);
+				const effort = levels.find((level) => level === selected);
+				if (effort) setRewireConfig(ctx, { ...config, thinkingLevel: effort });
+			}
+		};
+
+		pi.registerCommand("px:agents:rewire", {
+			description: "Override the model and effort for every subagent in this session",
+			handler: async (_args, ctx) => {
+				if (!ctx.hasUI) return;
+				rewireConfig ??= defaultRewireConfig(ctx);
+				while (true) {
+					const toggleIcon = rewireConfig?.enabled ? "\uf205" : "\uf204";
+					const choice = await ctx.ui.select("Subagent rewiring", [
+						`${toggleIcon}  Rewire subagents`,
+						"\ue615  Configuration",
+					]);
+					if (!choice) return;
+					if (choice.endsWith("Rewire subagents")) {
+						if (!rewireConfig) {
+							ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
+							continue;
+						}
+						setRewireConfig(ctx, { ...rewireConfig, enabled: !rewireConfig.enabled });
+						continue;
+					}
+					await configureRewire(ctx);
+				}
+			},
+		});
+
 		pi.registerCommand("px:agents", {
 			description: "Manage active and recent subagent runs",
 			handler: async (_args, ctx) => {
@@ -1363,6 +1475,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionContext = ctx;
 		shuttingDown = false;
+		const storedRewire = rewireSessionStates.get(ctx.sessionManager.getSessionId());
+		rewireConfig = storedRewire ? { ...storedRewire } : defaultRewireConfig(ctx);
 		sessionEpoch += 1;
 		sessionShutdown = new AbortController();
 		herdrPreflightInFlight.reset();
@@ -1690,6 +1804,7 @@ export default function (pi: ExtensionAPI) {
 					cwd: ctx.cwd,
 					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 					thinkingLevel: ctx.thinkingLevel,
+					...(rewireConfig?.enabled ? { rewire: { ...rewireConfig } } : {}),
 				},
 			});
 			if (!preparation.ok) return preparation.result;

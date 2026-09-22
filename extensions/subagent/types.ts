@@ -78,6 +78,13 @@ export interface DispatchDefaults {
 	thinkingLevel?: ThinkingLevel;
 }
 
+/** Session-only model/thinking override applied to every agent profile. */
+export interface SubagentRewireConfig {
+	enabled: boolean;
+	model: string;
+	thinkingLevel: ThinkingLevel;
+}
+
 /** One fully-allocated task in a prepared dispatch. */
 export interface PreparedDispatchItem {
 	runId: string;
@@ -104,6 +111,8 @@ export interface PreparedSubagentDispatch {
 	projectAgentsDir: string | null;
 	agents: AgentConfig[];
 	dispatchDefaults: DispatchDefaults;
+	/** Session rewire snapshotted at dispatch preparation time. */
+	rewire?: SubagentRewireConfig;
 	cwd: string;
 	safeModeSnapshot?: SafeModeSnapshot;
 	items: PreparedDispatchItem[];

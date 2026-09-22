@@ -19,6 +19,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Restricted-agent gate**: Agent names matching a global pattern require one timed parent confirmation per dispatch
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
+- **Session rewiring**: `/px:agents:rewire` can silently replace every subagent profile's model and effort for the current session without editing agent files
 - **Active widget**: While children run, a non-interactive two-line list above the input editor shows each active subagent's state, elapsed time, turns, model/effort, usage, readable id, and task preview
 - **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
 - **Run log**: `/px:agent:log` shows each run's original task prompt and final output, including detached runs after resume
@@ -364,6 +365,12 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 | Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
 | Chain | `{ chain: [...] }` | Sequential; `{previous}` in a step's task is interpolated with the previous step's final output (empty for the first step) |
 | Execution | `execution` | `"async"` (default) detaches and returns immediately; `"blocking"` streams and waits |
+
+## Session model rewiring
+
+Run `/px:agents:rewire` to configure one model and effort for all subagents. The menu shows `  Rewire subagents` while disabled and `  Rewire subagents` while enabled; `  Configuration` opens the model and effort selectors.
+
+When enabled, the configured values override each agent file's `model` and `thinking` fields. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
 
 ## Runtime manager
 
