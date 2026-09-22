@@ -391,11 +391,15 @@ When enabled, the configured values override each agent file's `model` and `thin
 
 Run `/px:agents` to list active and recent children, async and blocking alike. Active runs are grouped above finished runs, separated by one blank non-selectable line. In the list: `↑`/`↓` move, `enter` opens the run's action menu, `d` attaches/joins the selected run (a completed persisted run opens its read-only transcript), `D` detaches the selected attached blocking dispatch, and `esc` closes. An ineligible `d`/`D` keeps the list open and shows a short warning. Select a run to:
 
+- watch a live transcript/progress stream in a read-only floating panel without changing dispatch ownership or execution mode. The panel draws a rounded purple frame titled with the agent id, with one terminal-background cell of spacing outside the frame; `j`/`k` scroll one line and `Shift+j`/`Shift+k` scroll five;
+- attach to the full transcript with steering and run controls;
 - inspect its task, PID, state, working directory, diagnostics, execution mode, dispatch id, and inherited/effective mode;
 - configure that child's safe mode and outer access;
 - request cooperative pause or resume;
 - abort it after confirmation. For a detached/async child this aborts its owning dispatch, so the final completion is recorded as aborted and remaining chain/parallel work is stopped. An attached blocking child is aborted per-run, so its parallel siblings keep running;
 - detach an active blocking dispatch ("Detach") so the same child keeps running in the background and its result arrives later as one completion.
+
+Run IDs use short session-unique animal names such as `ag_shy-lion`. Dispatch IDs use geographic names such as `dp_snowy-mountain`. Used names stay reserved for the session, including across `/reload`, so neither form needs a random suffix.
 
 Pause takes effect at the next safe boundary, before a provider turn or tool call. It does not interrupt a provider request or tool already in progress, so the state may remain `pause-requested` briefly.
 
@@ -424,6 +428,9 @@ widget immediately above the input editor via `ctx.ui.setWidget(id, lines, {
 placement: "aboveEditor" })`. The stable widget id is `px-subagents-active`.
 Detached async children keep the widget visible until their dispatch settles.
 The widget is cleared when the last child finishes and on `session_shutdown`.
+Press `Alt+P` to collapse it to a single summary line (and press again to
+expand). This reclaims its rows, for example while a floating Watch panel would
+otherwise overlap it.
 
 ```text
 󰚩 Subagents (1 active, 1 finished)

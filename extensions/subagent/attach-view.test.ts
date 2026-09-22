@@ -15,6 +15,10 @@ const CTRL_U = "\x15";
 const CTRL_D = "\x04";
 const LOWER_G = "g";
 const UPPER_G = "G";
+const LOWER_J = "j";
+const LOWER_K = "k";
+const UPPER_J = "J";
+const UPPER_K = "K";
 const CTRL_ENTER = "\x1b[13;5u";
 const PAUSE_KEY = "p";
 const RESUME_KEY = "r";
@@ -131,6 +135,8 @@ function makeView(options: {
 	stop?: (runId: string) => Promise<void>;
 	confirmStop?: (run: { runId: string; agentName: string }) => Promise<boolean>;
 	forceReadOnly?: boolean;
+	watchOnly?: boolean;
+	bordered?: boolean;
 } = {}) {
 	const result = options.result ?? makeResult();
 	const startedAt = Date.now() - 42_000;
@@ -150,6 +156,8 @@ function makeView(options: {
 		stop: options.stop,
 		confirmStop: options.confirmStop,
 		forceReadOnly: options.forceReadOnly,
+		watchOnly: options.watchOnly,
+		bordered: options.bordered,
 	});
 	return { view, result };
 }
@@ -165,6 +173,49 @@ describe("AttachView", () => {
 		expect(lines.join("\n")).toContain("read");
 		expect(lines.join("\n")).toContain("Esc detach");
 		expect(view.isFollowing).toBe(true);
+	});
+
+	test("watch mode stays live and enforces read-only observation", async () => {
+		const fake = makeFakeEditor();
+		let steers = 0;
+		let controls = 0;
+		const { view } = makeView({
+			watchOnly: true,
+			editor: fake.editor,
+			steer: async () => { steers += 1; },
+			pause: async () => { controls += 1; },
+			resume: async () => { controls += 1; },
+			stop: async () => { controls += 1; },
+		});
+		const text = view.render(100).join("\n");
+		expect(view.isReadOnly).toBe(false);
+		expect(view.hasControls).toBe(false);
+		expect(text).toContain("watching live");
+		expect(text).toContain("Esc close");
+		expect(text).not.toContain("Enter steer");
+		expect(text).not.toContain("p pause");
+		expect(text).not.toContain("[steer-editor");
+		view.handleInput(ENTER);
+		view.handleInput("p");
+		view.handleInput("r");
+		view.handleInput("a");
+		expect(view.inputMode).toBe("scroll");
+		expect(controls).toBe(0);
+		await view.submitSteer("do something else");
+		expect(steers).toBe(0);
+		expect(view.lastSteerStatus?.text).toContain("Watch mode");
+	});
+
+	test("settled watch mode keeps close wording", () => {
+		const { view } = makeView({
+			watchOnly: true,
+			completedAt: Date.now(),
+			result: makeResult({ exitCode: 0, state: "settled" }),
+		});
+		const text = view.render(100).join("\n");
+		expect(text).toContain("Esc close");
+		expect(text).toContain("settled · read-only");
+		expect(text).not.toContain("Esc detach");
 	});
 
 	test("Escape detaches without touching the run", () => {
@@ -533,6 +584,71 @@ describe("AttachView", () => {
 		expect(view.isFollowing).toBe(false);
 		view.handleInput(UPPER_G);
 		expect(view.isFollowing).toBe(true);
+	});
+
+	test("j/k scroll one line and Shift+j/k scroll five", () => {
+		const { view } = makeView({ rows: 14, result: makeLongResult() });
+		const firstLineNumber = () => {
+			const match = view.render(60).join("\n").match(/line (\d+)/);
+			return match ? Number(match[1]) : -1;
+		};
+		const start = firstLineNumber();
+		expect(start).toBeGreaterThanOrEqual(0);
+		view.handleInput(LOWER_K);
+		expect(view.isFollowing).toBe(false);
+		expect(firstLineNumber()).toBe(start - 1);
+		view.handleInput(UPPER_K);
+		expect(firstLineNumber()).toBe(start - 6);
+		view.handleInput(LOWER_J);
+		expect(firstLineNumber()).toBe(start - 5);
+		view.handleInput(UPPER_J);
+		expect(firstLineNumber()).toBe(start);
+	});
+
+	test("bordered watch mode draws a rounded frame titled with the agent id", () => {
+		const { view } = makeView({ watchOnly: true, bordered: true, rows: 16, result: makeLongResult() });
+		const lines = view.render(60);
+		// One terminal-background padding cell on every side of the frame.
+		expect(lines[0]?.trim()).toBe("");
+		expect(lines[lines.length - 1]?.trim()).toBe("");
+		expect(lines[1]).toContain("╭");
+		expect(lines[1]).toContain("sa-abc123");
+		expect(lines[1]).toContain("╮");
+		expect(lines[lines.length - 2]).toContain("╰");
+		expect(lines[lines.length - 2]).toContain("╯");
+		expect(lines[2]?.startsWith(" │")).toBe(true);
+		expect(lines[2]?.endsWith("│ ")).toBe(true);
+		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(60);
+	});
+
+	test("bordered watch mode never overflows narrow widths", () => {
+		for (const width of [1, 2, 3, 4, 8, 20]) {
+			const { view } = makeView({ watchOnly: true, bordered: true, rows: 12, result: makeLongResult() });
+			for (const line of view.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	test("the watch frame uses the purple thinkingHigh color", () => {
+		const colors: string[] = [];
+		const view = new AttachView({
+			getResult: () => makeResult(),
+			getRun: () => ({ runId: "ag_shy-lion", agentName: "worker", startedAt: 0 }),
+			theme: {
+				fg: (color, text) => {
+					colors.push(color);
+					return text;
+				},
+				bold: (text) => text,
+			},
+			requestRender: () => {},
+			done: () => {},
+			watchOnly: true,
+			bordered: true,
+			terminalRows: () => 16,
+		});
+		const lines = view.render(50);
+		expect(lines[1]).toContain("ag_shy-lion");
+		expect(colors).toContain("thinkingHigh");
 	});
 
 	test("mouse wheel scrolls the transcript and disables tail-follow", () => {

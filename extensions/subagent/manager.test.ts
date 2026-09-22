@@ -66,8 +66,9 @@ function completedProcess(overrides: Partial<ManagerRunDescriptor> = {}): Manage
 }
 
 describe("manager actions", () => {
-	test("process-backed actions are unchanged", () => {
+	test("active process runs offer Watch before Attach", () => {
 		expect(managerActions(activeProcess())).toEqual([
+			"Watch",
 			"Attach",
 			"Details",
 			"Configure permissions",
@@ -81,6 +82,7 @@ describe("manager actions", () => {
 
 	test("active attached blocking runs offer Detach", () => {
 		expect(managerActions(activeProcess({ attachedBlocking: true }))).toEqual([
+			"Watch",
 			"Attach",
 			"Detach",
 			"Details",
@@ -100,6 +102,7 @@ describe("manager actions", () => {
 	test("active Herdr runs gain Jump after Details", () => {
 		const actions = managerActions(activeProcess({ backend: "herdr", herdr: location() }));
 		expect(actions).toEqual([
+			"Watch",
 			"Attach",
 			"Details",
 			"Jump to Herdr pane",

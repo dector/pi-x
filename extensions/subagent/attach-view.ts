@@ -91,6 +91,10 @@ export interface AttachViewOptions {
 	done: (result: null) => void;
 	/** Embedded steering editor. Omitted in read-only/no-input contexts. */
 	editor?: AttachEditor;
+	/** Live read-only observer mode. It never changes run ownership or controls. */
+	watchOnly?: boolean;
+	/** Draw a rounded purple frame with the agent id as its title. */
+	bordered?: boolean;
 	/**
 	 * Deliver a steering message to the given run. Resolves on success and
 	 * rejects with a user-facing message on failure. Addressing the run by id
@@ -196,11 +200,14 @@ export class AttachView implements Component, Focusable {
 
 	/** Whether pause/resume/stop controls are wired for this view. */
 	get hasControls(): boolean {
-		return !!(this.options.pause || this.options.resume || this.options.stop);
+		return !this.options.watchOnly && !!(this.options.pause || this.options.resume || this.options.stop);
 	}
 
 	render(width: number): string[] {
-		const w = Math.max(1, width);
+		const outerW = Math.max(1, width);
+		const border = this.options.bordered === true;
+		// One terminal-background cell of breathing room on every side of the frame.
+		const w = border ? Math.max(1, outerW - 4) : outerW;
 		const result = this.options.getResult();
 		const run = this.options.getRun();
 		const theme = this.options.theme;
@@ -217,7 +224,8 @@ export class AttachView implements Component, Focusable {
 		const statusLines = this.renderStatusLines(w, readOnly);
 		const editorLines = this.renderEditor(w, readOnly);
 
-		const totalRows = Math.max(8, (this.options.terminalRows?.() ?? 24) - 2);
+		// A border adds a row at the top and bottom, plus one padding row each.
+		const totalRows = Math.max(8, (this.options.terminalRows?.() ?? 24) - 2 - (border ? 4 : 0));
 		// Header + task + two separators + help + status; keep at least one
 		// transcript row before the editor claims the rest.
 		const reserved = 1 + taskLines.length + 2 + 1 + statusLines.length;
@@ -239,7 +247,29 @@ export class AttachView implements Component, Focusable {
 		if (clippedEditor.length > 0) lines.push(...clippedEditor);
 		lines.push(...statusLines);
 		lines.push(this.helpLine(w, readOnly));
-		return lines;
+		if (!border) return lines;
+		return this.frame(lines, w, outerW, run);
+	}
+
+	/** Rounded purple frame with the agent id in the top border. */
+	private frame(lines: readonly string[], innerW: number, outerW: number, run: AttachViewRun): string[] {
+		const frameW = outerW - 2;
+		// A rounded frame needs at least one inner column between its side borders.
+		if (frameW < 4) return lines.map((line) => truncateToWidth(line, outerW, "…"));
+		const purple = (text: string) => this.options.theme.fg("thinkingHigh", text);
+		const title = ` ${run.runId} `;
+		const fill = Math.max(0, frameW - 3 - visibleWidth(title));
+		const top = purple(`╭─${title}${"─".repeat(fill)}╮`);
+		const bottom = purple(`╰${"─".repeat(Math.max(0, frameW - 2))}╯`);
+		const blank = " ".repeat(outerW);
+		const out = [blank, " " + truncateToWidth(top, frameW, "…") + " "];
+		for (const line of lines) {
+			const pad = " ".repeat(Math.max(0, innerW - visibleWidth(line)));
+			out.push(" " + purple("│") + truncateToWidth(line + pad, innerW, "…") + purple("│") + " ");
+		}
+		out.push(" " + truncateToWidth(bottom, frameW, "…") + " ");
+		out.push(blank);
+		return out;
 	}
 
 	handleInput(data: string): void {
@@ -266,8 +296,10 @@ export class AttachView implements Component, Focusable {
 			return;
 		}
 
-		if (matchesKey(data, Key.up)) this.viewport.lineUp();
-		else if (matchesKey(data, Key.down)) this.viewport.lineDown();
+		if (matchesKey(data, Key.up) || matchesKey(data, "k")) this.viewport.lineUp();
+		else if (matchesKey(data, Key.down) || matchesKey(data, "j")) this.viewport.lineDown();
+		else if (matchesKey(data, Key.shift("k"))) this.viewport.scrollBy(-5);
+		else if (matchesKey(data, Key.shift("j"))) this.viewport.scrollBy(5);
 		else if (matchesKey(data, Key.pageUp)) this.viewport.pageUp();
 		else if (matchesKey(data, Key.pageDown)) this.viewport.pageDown();
 		else if (matchesKey(data, Key.ctrl("u"))) this.viewport.halfPageUp();
@@ -284,7 +316,7 @@ export class AttachView implements Component, Focusable {
 		} else if (!readOnly && this.hasControls && matchesKey(data, "a")) {
 			void this.stop();
 			return;
-		} else if (matchesKey(data, Key.enter) && !readOnly && this.options.editor) {
+		} else if (matchesKey(data, Key.enter) && !readOnly && !this.options.watchOnly && this.options.editor) {
 			this.setMode("compose");
 			return;
 		} else return;
@@ -298,6 +330,11 @@ export class AttachView implements Component, Focusable {
 	async submitSteer(message: string): Promise<void> {
 		const text = message.trim();
 		if (text.length === 0) return;
+		if (this.options.watchOnly) {
+			this.steerStatus = { kind: "error", text: "Watch mode does not allow steering." };
+			this.options.requestRender();
+			return;
+		}
 		if (this.isReadOnly) {
 			this.steerStatus = { kind: "error", text: "This run has settled; steering is read-only." };
 			this.options.requestRender();
@@ -494,12 +531,22 @@ export class AttachView implements Component, Focusable {
 	private helpLine(width: number, readOnly: boolean): string {
 		const theme = this.options.theme;
 		const expand = this.expanded ? "collapse" : "expand";
+		if (this.options.watchOnly) {
+			const state = readOnly ? "settled · read-only" : "watching live";
+			const help =
+				width >= 64
+					? `${state} · Esc close · j/k scroll · Shift+j/k 5 · PgUp/PgDn · Ctrl+O ${expand}`
+					: width >= 34
+						? `Esc close · j/k · Shift+j/k 5 · PgUp/PgDn · Ctrl+O ${expand}`
+						: "Esc close";
+			return truncateToWidth(theme.fg("dim", help), width, "…");
+		}
 		if (readOnly) {
 			const help =
-				width >= 56
-					? `Esc detach · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand} · read-only`
+				width >= 64
+					? `read-only · Esc detach · j/k scroll · Shift+j/k 5 · PgUp/PgDn · Ctrl+O ${expand}`
 					: width >= 34
-						? `Esc detach · ↑↓/PgUp/PgDn · Ctrl+O ${expand}`
+						? `Esc detach · j/k · Shift+j/k 5 · PgUp/PgDn · Ctrl+O ${expand}`
 						: "Esc detach";
 			return truncateToWidth(theme.fg("dim", help), width, "…");
 		}
@@ -514,9 +561,9 @@ export class AttachView implements Component, Focusable {
 		const controls = this.hasControls ? " · p pause · r resume · a stop" : "";
 		const help =
 			width >= 96
-				? `Esc detach · Enter steer${controls} · ${follow} · ↑↓/PgUp/PgDn scroll · End follow · Ctrl+O ${expand}`
+				? `Esc detach · Enter steer${controls} · ${follow} · j/k or ↑↓ scroll · Shift+j/k 5 · PgUp/PgDn · End follow · Ctrl+O ${expand}`
 				: width >= 40
-					? `Esc detach · Enter steer${this.hasControls ? " · p/r/a" : ""} · ${follow} · PgUp/PgDn · Ctrl+O ${expand}`
+					? `Esc detach · Enter steer${this.hasControls ? " · p/r/a" : ""} · ${follow} · j/k · PgUp/PgDn · Ctrl+O ${expand}`
 					: width >= 28
 						? `Esc detach · ${follow} · Ctrl+O`
 						: "Esc detach";
@@ -540,7 +587,7 @@ export class AttachView implements Component, Focusable {
 	}
 
 	private renderEditor(width: number, readOnly: boolean): string[] {
-		if (readOnly || !this.options.editor) return [];
+		if (readOnly || this.options.watchOnly || !this.options.editor) return [];
 		return this.options.editor.render(width);
 	}
 

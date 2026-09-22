@@ -371,6 +371,45 @@ test("shutdown clears the widget", () => {
 	expect(published[published.length - 1]).toBeUndefined();
 });
 
+test("formatCollapsedActiveSubagentWidget returns one line or undefined", () => {
+	expect(statusRow.formatCollapsedActiveSubagentWidget([], NOW)).toBeUndefined();
+	const lines = statusRow.formatCollapsedActiveSubagentWidget([makeRun()], NOW);
+	expect(lines).toHaveLength(1);
+	expect(lines?.[0]).toContain("Subagents (1 active)");
+	expect(lines?.[0]).toContain(statusRow.ACTIVE_SUBAGENT_COLLAPSED_ICON);
+});
+
+test("collapsed mode publishes a single summary line", () => {
+	const { widget, published } = makePublished();
+	widget.refresh([makeRun()]);
+	widget.setCollapsed(true);
+	const last = published[published.length - 1];
+	expect(last).toHaveLength(1);
+	expect(last?.[0]).toContain("Subagents (1 active)");
+	expect(last?.[0]).toContain(statusRow.ACTIVE_SUBAGENT_COLLAPSED_ICON);
+});
+
+test("toggleCollapsed flips the state and republishes", () => {
+	const { widget, published } = makePublished();
+	widget.refresh([makeRun()]);
+	expect(widget.isCollapsed).toBe(false);
+	expect(widget.toggleCollapsed()).toBe(true);
+	expect(widget.isCollapsed).toBe(true);
+	const collapsedCount = published.length;
+	expect(widget.toggleCollapsed()).toBe(false);
+	expect(widget.isCollapsed).toBe(false);
+	expect(published.length).toBeGreaterThan(collapsedCount);
+	expect(published[published.length - 1]?.[0]).toBe("󰚩 Subagents (1 active)");
+});
+
+test("collapsed mode clears when the last run completes", () => {
+	const { widget, published } = makePublished();
+	widget.setCollapsed(true);
+	widget.refresh([makeRun()]);
+	widget.refresh([makeRun({ completedAt: NOW })]);
+	expect(published[published.length - 1]).toBeUndefined();
+});
+
 test("reset forces a republish on the next refresh", () => {
 	const { widget, published } = makePublished();
 	widget.refresh([makeRun()]);

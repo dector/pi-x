@@ -60,6 +60,7 @@ export interface ManagerRunDescriptor {
 }
 
 export type ManagerAction =
+	| "Watch"
 	| "Attach"
 	| "Detach"
 	| "View transcript"
@@ -91,8 +92,8 @@ export function isRetainedCompleted(descriptor: ManagerRunDescriptor): boolean {
 }
 
 /**
- * Actions for one run. Process-backed runs keep exactly the existing actions;
- * Herdr-backed runs gain Jump, and retained completed runs gain Close.
+ * Actions for one run. Active runs offer read-only Watch before interactive
+ * Attach; Herdr-backed runs gain Jump, and retained completed runs gain Close.
  */
 export function managerActions(descriptor: ManagerRunDescriptor): ManagerAction[] {
 	const jump = hasHerdrPane(descriptor) && derivedPaneStatus(descriptor) !== "missing";
@@ -100,6 +101,7 @@ export function managerActions(descriptor: ManagerRunDescriptor): ManagerAction[
 		const paused =
 			descriptor.state === "paused" || descriptor.state === "pause-requested" || descriptor.state === "resuming";
 		return [
+			"Watch",
 			"Attach",
 			...(descriptor.attachedBlocking ? (["Detach"] as ManagerAction[]) : []),
 			"Details",

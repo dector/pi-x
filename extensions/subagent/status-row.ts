@@ -43,6 +43,9 @@ export const ACTIVE_SUBAGENT_RUN_ID_MAX_LENGTH = 28;
 /** Nerd Font Material Design robot (`nf-md-robot`). */
 export const ACTIVE_SUBAGENT_WIDGET_ICON = "\u{f06a9}";
 
+/** Nerd Font Material Design unfold-more (`nf-md-unfold_more`), the expand affordance. */
+export const ACTIVE_SUBAGENT_COLLAPSED_ICON = "\u{f054f}";
+
 /**
  * How often the widget re-renders elapsed time while at least one run is
  * active. The elapsed display is second-granular, so a one-second tick is
@@ -139,6 +142,21 @@ export function formatActiveSubagentWidget(
 	const hidden = visible.length - shown;
 	if (hidden > 0) lines.push(styles.dim(styles.italic(`… ${hidden} more`)));
 	return lines;
+}
+
+/**
+ * Render a one-line collapsed widget: the summary header plus an expand icon.
+ * Returns `undefined` when no run is active, so the caller clears the widget.
+ */
+export function formatCollapsedActiveSubagentWidget(
+	runs: readonly ActiveSubagentWidgetRun[],
+	now = Date.now(),
+	options: ActiveSubagentWidgetFormatOptions = {},
+): string[] | undefined {
+	const full = formatActiveSubagentWidget(runs, now, options);
+	if (!full) return undefined;
+	const styles = options.styles ?? PLAIN_STYLES;
+	return [`${full[0]} ${styles.dim(ACTIVE_SUBAGENT_COLLAPSED_ICON)}`];
 }
 
 /** Format one run as identity/model, runtime details, and one task line. */
@@ -325,6 +343,7 @@ export class ActiveSubagentWidget {
 	private initialized = false;
 	private runs: readonly ActiveSubagentWidgetRun[] = [];
 	private timer: ReturnType<typeof setInterval> | undefined;
+	private collapsed = false;
 
 	constructor(private readonly options: ActiveSubagentWidgetOptions) {}
 
@@ -334,8 +353,29 @@ export class ActiveSubagentWidget {
 		this.syncTimer();
 	}
 
+	/** True while the widget is showing the one-line collapsed summary. */
+	get isCollapsed(): boolean {
+		return this.collapsed;
+	}
+
+	/** Collapse or expand the widget, republishing immediately. */
+	setCollapsed(collapsed: boolean): void {
+		if (this.collapsed === collapsed) return;
+		this.collapsed = collapsed;
+		// Force a publish even when the rendered line matches the last snapshot.
+		this.last = undefined;
+		this.publish();
+	}
+
+	/** Toggle the collapsed state; returns the new state. */
+	toggleCollapsed(): boolean {
+		this.setCollapsed(!this.collapsed);
+		return this.collapsed;
+	}
+
 	private publish(): void {
-		const content = formatActiveSubagentWidget(this.runs, (this.options.now ?? Date.now)(), {
+		const format = this.collapsed ? formatCollapsedActiveSubagentWidget : formatActiveSubagentWidget;
+		const content = format(this.runs, (this.options.now ?? Date.now)(), {
 			styles: this.options.styles?.(),
 			contextWindowForModel: this.options.contextWindowForModel,
 		});

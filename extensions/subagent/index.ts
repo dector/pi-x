@@ -20,12 +20,13 @@ import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type Theme,
 	getAgentDir,
 	getMarkdownTheme,
 	getSelectListTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Editor, Markdown, Spacer, Text, type Component, type EditorTheme } from "@earendil-works/pi-tui";
+import { Container, Editor, Key, Markdown, Spacer, Text, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildAgentLogPicker,
@@ -172,6 +173,9 @@ const rewireSessionStates: Map<string, SubagentRewireConfig> =
 		new Map());
 const delegationDepthSessionStates: Map<string, number> =
 	((globalThis as { __piXSubagentDepthStates?: Map<string, number> }).__piXSubagentDepthStates ??= new Map());
+type SessionNameState = { agentIds: Set<string>; dispatchIds: Set<string> };
+const nameSessionStates: Map<string, SessionNameState> =
+	((globalThis as { __piXSubagentNameStates?: Map<string, SessionNameState> }).__piXSubagentNameStates ??= new Map());
 
 // Nerd Font hourglass shown while a subagent run is still active (replaces the
 // `⏳` emoji, which renders inconsistently across terminals).
@@ -893,8 +897,20 @@ export default function (pi: ExtensionAPI) {
 		contextWindowForModel,
 	});
 
-	const newRunId = createRunIdGenerator();
-	const newDispatchId = createRunIdGenerator("dispatch");
+	// Collapse the active-subagents widget to a single summary line. The widget is
+	// non-interactive, so this is the only way to reclaim its rows (for example
+	// while a floating Watch panel would otherwise overlap it).
+	pi.registerShortcut(Key.alt("p"), {
+		description: "Collapse or expand the active-subagents panel",
+		handler: async (ctx) => {
+			const collapsed = activeWidget.toggleCollapsed();
+			ctx.ui.notify(collapsed ? "Subagent panel collapsed" : "Subagent panel expanded", "info");
+		},
+	});
+
+	let nameState: SessionNameState = { agentIds: new Set(), dispatchIds: new Set() };
+	let newRunId = createRunIdGenerator("agent", nameState.agentIds);
+	let newDispatchId = createRunIdGenerator("dispatch", nameState.dispatchIds);
 
 	// Extension-owned dispatches: async descendants and blocking dispatches alike.
 	// Independent of any parent tool invocation: `deliver` is fire-and-forget and
@@ -1108,54 +1124,62 @@ export default function (pi: ExtensionAPI) {
 		getCompletedAt: () => number | undefined;
 		/** Live registry run; omitted for a read-only persisted transcript. */
 		live?: SubagentRunRuntime;
+		/** Watch uses a floating read-only panel and never changes run ownership. */
+		watchOnly?: boolean;
 	}
 
 	async function openAttachOverlay(target: AttachOverlayTarget, ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) return;
 		try {
+			const buildView = (tui: TUI, theme: Theme, done: (result: null) => void) => {
+				const editorTheme: EditorTheme = {
+					borderColor: (text) => theme.fg("accent", text),
+					selectList: getSelectListTheme(),
+				};
+				const live = target.live;
+				const interactive = live && !target.watchOnly;
+				const view = new AttachView({
+					getResult: target.getResult,
+					getRun: () => ({
+						runId: target.runId,
+						agentName: target.agentName,
+						startedAt: target.startedAt,
+						completedAt: target.getCompletedAt(),
+					}),
+					theme: {
+						fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+						bold: (text) => theme.bold(text),
+					},
+					requestRender: () => tui.requestRender(),
+					done: (result) => done(result),
+					terminalRows: () => tui.terminal.rows,
+					watchOnly: target.watchOnly,
+					bordered: target.watchOnly,
+					// A recovered persisted transcript has no child to control, so it is
+					// always read-only even if its stored result lacks a final state.
+					forceReadOnly: !live,
+					editor: interactive ? new Editor(tui, editorTheme) : undefined,
+					// Address every control through the captured run object, not the
+					// registry, so the overlay keeps working after the registry prunes
+					// the entry once the run completes.
+					steer: interactive ? (_runId, message) => sendSteer(live, message) : undefined,
+					pause: interactive ? () => pauseAttachedRun(live) : undefined,
+					resume: interactive ? () => resumeAttachedRun(live) : undefined,
+					stop: interactive ? () => stopAttachedRun(live) : undefined,
+					confirmStop: interactive
+						? (run) => ctx.ui.confirm("Stop subagent", `Stop ${run.agentName} [${run.runId}]?`)
+						: undefined,
+				});
+				closeActiveAttach = () => view.close();
+				return view;
+			};
 			await ctx.ui.custom<null>(
-				(tui, theme, _keybindings, done) => {
-					const editorTheme: EditorTheme = {
-						borderColor: (text) => theme.fg("accent", text),
-						selectList: getSelectListTheme(),
-					};
-					const live = target.live;
-					const view = new AttachView({
-						getResult: target.getResult,
-						getRun: () => ({
-							runId: target.runId,
-							agentName: target.agentName,
-							startedAt: target.startedAt,
-							completedAt: target.getCompletedAt(),
-						}),
-						theme: {
-							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
-							bold: (text) => theme.bold(text),
-						},
-						requestRender: () => tui.requestRender(),
-						done: (result) => done(result),
-						terminalRows: () => tui.terminal.rows,
-						// A recovered persisted transcript has no child to control, so it is
-						// always read-only even if its stored result lacks a final state.
-						forceReadOnly: !live,
-						editor: live ? new Editor(tui, editorTheme) : undefined,
-						// Address every control through the captured run object, not the
-						// registry, so the overlay keeps working after the registry prunes
-						// the entry once the run completes.
-						steer: live ? (_runId, message) => sendSteer(live, message) : undefined,
-						pause: live ? () => pauseAttachedRun(live) : undefined,
-						resume: live ? () => resumeAttachedRun(live) : undefined,
-						stop: live ? () => stopAttachedRun(live) : undefined,
-						confirmStop: live
-							? (run) => ctx.ui.confirm("Stop subagent", `Stop ${run.agentName} [${run.runId}]?`)
-							: undefined,
-					});
-					closeActiveAttach = () => view.close();
-					return view;
-				},
+				(tui, theme, _keybindings, done) => buildView(tui, theme, done),
 				{
 					overlay: true,
-					overlayOptions: { anchor: "center", width: "100%", minWidth: 40, maxHeight: "100%", margin: 1 },
+					overlayOptions: target.watchOnly
+						? { anchor: "center", width: "80%", minWidth: 40, maxHeight: "70%", margin: 2 }
+						: { anchor: "center", width: "100%", minWidth: 40, maxHeight: "100%", margin: 1 },
 				},
 			);
 		} catch (error) {
@@ -1163,6 +1187,22 @@ export default function (pi: ExtensionAPI) {
 		} finally {
 			closeActiveAttach = undefined;
 		}
+	}
+
+	/** Live watch in a floating read-only panel; ownership and execution stay unchanged. */
+	function openWatch(run: SubagentRunRuntime, ctx: ExtensionContext): Promise<void> {
+		return openAttachOverlay(
+			{
+				runId: run.runId,
+				agentName: run.agentName,
+				startedAt: run.startedAt,
+				getResult: () => run.result,
+				getCompletedAt: () => run.completedAt,
+				live: run,
+				watchOnly: true,
+			},
+			ctx,
+		);
 	}
 
 	/** Live attach for a registry run (read-only automatically once settled). */
@@ -1596,6 +1636,12 @@ export default function (pi: ExtensionAPI) {
 					);
 					if (!action || action === "Back") continue;
 
+					if (action === "Watch") {
+						if (run) await openWatch(run, ctx);
+						else ctx.ui.notify(`Watch unavailable: ${descriptor.runId} is not a live run.`, "warning");
+						continue;
+					}
+
 					if (action === "Attach" || action === "View transcript") {
 						if (run) await openAttach(run, ctx);
 						else if (item.entry) await openRecoveredAttach(item.entry, ctx);
@@ -1752,6 +1798,22 @@ export default function (pi: ExtensionAPI) {
 		sessionContext = ctx;
 		shuttingDown = false;
 		const sessionId = ctx.sessionManager.getSessionId();
+		nameState = nameSessionStates.get(sessionId) ?? { agentIds: new Set(), dispatchIds: new Set() };
+		// Rebuild reservations from persisted session results after a process restart;
+		// the global map covers ordinary extension reloads.
+		for (const entry of persistedAgentLogEntries(ctx.sessionManager.getBranch())) {
+			if (entry.runId?.startsWith("ag_")) nameState.agentIds.add(entry.runId);
+			if (entry.dispatchId?.startsWith("dp_")) nameState.dispatchIds.add(entry.dispatchId);
+		}
+		nameSessionStates.delete(sessionId);
+		nameSessionStates.set(sessionId, nameState);
+		while (nameSessionStates.size > 32) {
+			const oldest = nameSessionStates.keys().next().value;
+			if (oldest === undefined) break;
+			nameSessionStates.delete(oldest);
+		}
+		newRunId = createRunIdGenerator("agent", nameState.agentIds);
+		newDispatchId = createRunIdGenerator("dispatch", nameState.dispatchIds);
 		const storedRewire = rewireSessionStates.get(sessionId);
 		rewireConfig = storedRewire ? { ...storedRewire } : await defaultRewireConfigWithPreset(ctx);
 		delegationDepth = isSubagentChild

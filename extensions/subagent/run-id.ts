@@ -1,24 +1,17 @@
 /**
- * Human-readable, process-unique subagent IDs.
+ * Short, human-readable subagent and dispatch IDs.
  *
- * Run IDs use an adjective-noun pair plus a compact 48-bit uniqueness tag
- * (`red-panda-00k3w9fz2q`). Dispatch IDs keep their namespace
- * (`dispatch-red-panda-00k3w9fz2q`). The readable words make IDs easy to scan;
- * cryptographic randomness keeps collisions across process restarts negligible,
- * while a bounded process-local reservation catches an immediate duplicate.
+ * Agent runs use the animal world (`ag_shy-lion`). Dispatches use geographic
+ * features (`dp_snowy-mountain`). A caller-owned set remembers every name used
+ * by a session, so IDs need no random uniqueness suffix and remain unique after
+ * an extension reload when that set is retained.
  */
 
-import { randomBytes } from "node:crypto";
-
-const ADJECTIVES = [
-	"amber", "bold", "brave", "bright", "calm", "cedar", "clear", "cool",
-	"coral", "cosmic", "crisp", "dawn", "deep", "eager", "fair", "fast",
-	"fern", "frost", "gentle", "gold", "grand", "green", "happy", "icy",
-	"jade", "keen", "kind", "lively", "lucky", "lunar", "mellow", "mint",
-	"misty", "neat", "nimble", "nova", "pearl", "pine", "plum", "proud",
-	"quick", "quiet", "rapid", "red", "river", "royal", "sage", "sharp",
-	"silver", "smart", "solar", "swift", "tidy", "tiny", "true", "vivid",
-	"warm", "wild", "wise", "young", "zesty", "blue", "soft", "stone",
+const AGENT_ADJECTIVES = [
+	"alert", "bold", "brave", "bright", "calm", "clever", "curious", "eager",
+	"fair", "fast", "gentle", "happy", "keen", "kind", "lively", "lucky",
+	"mellow", "nimble", "noble", "proud", "quick", "quiet", "royal", "shy",
+	"smart", "soft", "swift", "tidy", "tiny", "true", "warm", "wise",
 ] as const;
 
 const ANIMALS = [
@@ -32,35 +25,62 @@ const ANIMALS = [
 	"ferret", "gull", "mink", "orca", "puma", "ram", "skink", "tern",
 ] as const;
 
-const MAX_RESERVED_IDS = 4096;
-const issuedIds = new Set<string>();
-const issuedOrder: string[] = [];
+const GEOGRAPHIC_ADJECTIVES = [
+	"alpine", "blue", "broad", "cedar", "cloudy", "coral", "crystal", "deep",
+	"distant", "dry", "emerald", "foggy", "forest", "frosty", "golden", "grand",
+	"green", "hidden", "icy", "jade", "lunar", "misty", "northern", "quiet",
+	"rocky", "sage", "silver", "snowy", "southern", "sunny", "wild", "windy",
+] as const;
 
-function randomItem<T>(items: readonly T[]): T {
-	return items[Math.floor(Math.random() * items.length)]!;
+const GEOGRAPHIC_FEATURES = [
+	"basin", "bay", "beach", "bluff", "canyon", "cape", "cavern", "cliff",
+	"coast", "creek", "delta", "desert", "dune", "fjord", "forest", "glacier",
+	"glen", "grove", "harbor", "hill", "island", "lake", "marsh", "mesa",
+	"mountain", "oasis", "ocean", "pass", "peak", "plain", "plateau", "pond",
+	"prairie", "reef", "ridge", "river", "shore", "spring", "strait", "summit",
+	"tundra", "vale", "valley", "volcano", "waterfall", "wetland", "wood", "cove",
+] as const;
+
+export type HumanIdKind = "agent" | "dispatch";
+
+// Preserve uniqueness for standalone callers that do not provide a session set.
+// The subagent runtime passes its own session-retained sets instead.
+const fallbackUsedIds: Record<HumanIdKind, Set<string>> = {
+	agent: new Set(),
+	dispatch: new Set(),
+};
+
+function vocabulary(kind: HumanIdKind): {
+	prefix: string;
+	adjectives: readonly string[];
+	nouns: readonly string[];
+} {
+	return kind === "dispatch"
+		? { prefix: "dp", adjectives: GEOGRAPHIC_ADJECTIVES, nouns: GEOGRAPHIC_FEATURES }
+		: { prefix: "ag", adjectives: AGENT_ADJECTIVES, nouns: ANIMALS };
 }
 
-function uniquenessTag(): string {
-	return randomBytes(6).readUIntBE(0, 6).toString(36).padStart(10, "0");
-}
-
-function reserve(id: string): boolean {
-	if (issuedIds.has(id)) return false;
-	issuedIds.add(id);
-	issuedOrder.push(id);
-	if (issuedOrder.length > MAX_RESERVED_IDS) {
-		const oldest = issuedOrder.shift();
-		if (oldest) issuedIds.delete(oldest);
-	}
-	return true;
-}
-
-export function createRunIdGenerator(prefix = ""): () => string {
+/**
+ * Create an ID generator backed by a reservation set. Omitted sets use a
+ * process-wide fallback; the runtime supplies a session-retained set.
+ */
+export function createRunIdGenerator(
+	kind: HumanIdKind = "agent",
+	usedIds: Set<string> = fallbackUsedIds[kind],
+): () => string {
+	const words = vocabulary(kind);
+	const capacity = words.adjectives.length * words.nouns.length;
 	return () => {
-		while (true) {
-			const readable = `${randomItem(ADJECTIVES)}-${randomItem(ANIMALS)}-${uniquenessTag()}`;
-			const id = prefix ? `${prefix}-${readable}` : readable;
-			if (reserve(id)) return id;
+		const start = Math.floor(Math.random() * capacity);
+		for (let offset = 0; offset < capacity; offset += 1) {
+			const index = (start + offset) % capacity;
+			const adjective = words.adjectives[Math.floor(index / words.nouns.length)]!;
+			const noun = words.nouns[index % words.nouns.length]!;
+			const id = `${words.prefix}_${adjective}-${noun}`;
+			if (usedIds.has(id)) continue;
+			usedIds.add(id);
+			return id;
 		}
+		throw new Error(`No unused ${kind} names remain in this session.`);
 	};
 }
