@@ -40,6 +40,11 @@ const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
 // Fallback styling when no theme was captured yet (reverse video, like pi's flash).
 const CHIP_REVERSE = "\x1b[7m";
 const CHIP_REVERSE_OFF = "\x1b[27m";
+// Nerd Font Material Design chevron-down, the selection affordance.
+const CHIP_ARROW = "\u{f0140}";
+// Intense branded purple, deeper than the theme's muted thinking purple.
+const CHIP_PURPLE_BACKGROUND = "\x1b[48;2;91;33;182m";
+const CHIP_BACKGROUND_RESET = "\x1b[49m";
 const CHIP_DURATION_MS = 1500;
 
 /**
@@ -361,7 +366,9 @@ interface ChipState {
 interface ChipTheme {
 	fg(color: string, text: string): string;
 	bold(text: string): string;
+	italic?(text: string): string;
 	getFgAnsi?(color: string): string;
+	getColorMode?(): string;
 }
 
 function componentClassName(component: object): string | undefined {
@@ -565,27 +572,42 @@ export function navigablePositions(positions: readonly EntryPosition[]): EntryPo
 	return positions.filter((position) => position.height > 0 && hasNavigableContent(position.component));
 }
 
-/** `tool :: 10/20` chip text. */
-function chipLabel(label: string, index: number, total: number, state?: string): string {
-	const suffix = state ? ` :: ${state}` : "";
-	return `${label} :: ${index + 1}/${total}${suffix}`;
+/** Parts of the selection chip: `󰅀 tool [ 10 | 250 ]`. */
+export interface ChipParts {
+	/** Entry label, rendered italic. */
+	label: string;
+	index: number;
+	total: number;
+	state?: string;
+}
+
+function chipPlainText(parts: ChipParts): string {
+	const suffix = parts.state ? ` · ${parts.state}` : "";
+	return `${CHIP_ARROW} ${parts.label} [ ${parts.index + 1} | ${parts.total} ]${suffix}`;
 }
 
 /**
- * Purple pill with grayish text, matching the branded accent pi-ui uses for its
- * dialog frames. The background is the theme's `thinkingHigh` colour reused as a
- * background, so it works for truecolor and 256-colour themes alike.
+ * Intense branded purple pill with dim grayish text. The background is a fixed
+ * branded purple in truecolor themes (the theme purple is deliberately muted),
+ * and falls back to the theme's own purple when the terminal is 256-colour.
  */
-function chipLine(text: string): string {
+function chipLine(parts: ChipParts): string {
 	const theme = getThemeReference() as ChipTheme | undefined;
-	if (!theme || typeof theme.fg !== "function") return `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
+	if (!theme || typeof theme.fg !== "function") {
+		return `${CHIP_REVERSE} ${chipPlainText(parts)} ${CHIP_REVERSE_OFF}`;
+	}
 
-	const body = ` ${text} `;
-	const foreground = typeof theme.bold === "function" ? theme.bold(theme.fg("text", body)) : theme.fg("text", body);
-	const purple = typeof theme.getFgAnsi === "function" ? String(theme.getFgAnsi("thinkingHigh")) : "";
-	const background = purple.startsWith("\x1b[38;") ? `\x1b[48;${purple.slice(5)}` : "";
-	if (background.length === 0) return `${CHIP_REVERSE} ${text} ${CHIP_REVERSE_OFF}`;
-	return `${background}${foreground}\x1b[49m`;
+	const label = typeof theme.italic === "function" ? theme.italic(parts.label) : parts.label;
+	const suffix = parts.state ? ` · ${parts.state}` : "";
+	const body = ` ${CHIP_ARROW} ${label} [ ${parts.index + 1} | ${parts.total} ]${suffix} `;
+	const foreground = theme.fg("muted", body);
+
+	const themePurple = typeof theme.getFgAnsi === "function" ? String(theme.getFgAnsi("thinkingHigh")) : "";
+	const themeBackground = themePurple.startsWith("\x1b[38;") ? `\x1b[48;${themePurple.slice(5)}` : "";
+	const truecolor = typeof theme.getColorMode !== "function" || theme.getColorMode() === "truecolor";
+	const background = truecolor ? CHIP_PURPLE_BACKGROUND : themeBackground;
+	if (background.length === 0) return `${CHIP_REVERSE} ${chipPlainText(parts)} ${CHIP_REVERSE_OFF}`;
+	return `${background}${foreground}${CHIP_BACKGROUND_RESET}`;
 }
 
 function hideEntryChip(): void {
@@ -602,7 +624,7 @@ function hideEntryChip(): void {
  * the right edge of the screen. Overlays are composited by the alt-screen
  * renderer at absolute rows and `nonCapturing` keeps keyboard focus in the editor.
  */
-export function showEntryChip(tui: unknown, row: number, text: string, durationMs = CHIP_DURATION_MS): boolean {
+export function showEntryChip(tui: unknown, row: number, parts: ChipParts, durationMs = CHIP_DURATION_MS): boolean {
 	hideEntryChip();
 	const candidate = tui as
 		| {
@@ -612,7 +634,7 @@ export function showEntryChip(tui: unknown, row: number, text: string, durationM
 		| undefined;
 	if (typeof candidate?.showOverlay !== "function") return false;
 
-	const line = chipLine(text);
+	const line = chipLine(parts);
 	const width = Math.max(1, visibleWidth(line));
 	const columns = Number(candidate.terminal?.columns);
 	const col = Number.isFinite(columns) && columns > 0 ? Math.max(0, Math.round(columns) - width) : 0;
@@ -648,7 +670,7 @@ function selectPosition(
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = target.top - scrollTop;
 	const label = describeEntry(target.component);
-	showEntryChip(tui, row, chipLabel(label, targetIndex, positions.length));
+	showEntryChip(tui, row, { label, index: targetIndex, total: positions.length });
 
 	return {
 		status: "moved",
@@ -725,11 +747,12 @@ export function toggleSelectedEntry(tui: unknown): ToggleOutcome {
 
 	const scrollTop = typeof scrollView.scrollTop === "number" ? scrollView.scrollTop : 0;
 	const row = position.top - scrollTop;
-	showEntryChip(
-		tui,
-		row,
-		chipLabel(label, index, positions.length, expanded ? "expanded" : "collapsed"),
-	);
+	showEntryChip(tui, row, {
+		label,
+		index,
+		total: positions.length,
+		state: expanded ? "expanded" : "collapsed",
+	});
 
 	return {
 		status: "toggled",

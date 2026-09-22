@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { Container } from "@earendil-works/pi-tui";
+import { Container, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	computeEntryPositions,
 	describeEntry,
@@ -279,46 +279,66 @@ describe("entry chip", () => {
 		captureWithTheme(undefined);
 		const tui = createTui(undefined);
 
-		expect(showEntryChip(tui, 7, "12/379 tool")).toBe(true);
+		expect(showEntryChip(tui, 7, { label: "tool", index: 9, total: 250 })).toBe(true);
 		expect(tui.overlayCalls).toHaveLength(1);
 
 		const call = tui.overlayCalls[0];
-		const width = " 12/379 tool ".length;
+		const line = "\x1b[7m \u{f0140} tool [ 10 | 250 ] \x1b[27m";
+		const width = visibleWidth(line);
 		expect(call?.options).toMatchObject({ row: 7, col: 80 - width, width, nonCapturing: true });
-		expect(call?.component.render(80)[0]).toBe("\x1b[7m 12/379 tool \x1b[27m");
+		expect(call?.component.render(80)[0]).toBe(line);
 	});
 
-	test("styles the chip as a purple pill with grayish text", () => {
+	test("styles the chip as an intense purple pill with dim italic label", () => {
 		const theme = {
 			fg: (color: string, text: string) => `<${color}>${text}`,
+			italic: (text: string) => `<i>${text}</i>`,
 			bold: (text: string) => `*${text}*`,
 			getFgAnsi: () => "\x1b[38;2;143;127;184m",
+			getColorMode: () => "truecolor",
 		};
 		captureWithTheme(theme);
 		const tui = createTui(undefined);
 
-		showEntryChip(tui, 0, "tool :: 10/20");
+		showEntryChip(tui, 0, { label: "tool", index: 9, total: 250, state: "expanded" });
 
 		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
-		expect(line).toContain("\x1b[48;2;143;127;184m");
-		expect(line).toContain("*<text> tool :: 10/20 *");
+		expect(line).toContain("\x1b[48;2;91;33;182m");
+		expect(line).toContain("<muted> \u{f0140} <i>tool</i> [ 10 | 250 ] · expanded ");
 		expect(line.endsWith("\x1b[49m")).toBe(true);
 		expect(line).not.toContain("\x1b[7m");
+	});
+
+	test("reuses the theme purple background in 256-colour mode", () => {
+		const theme = {
+			fg: (color: string, text: string) => `<${color}>${text}`,
+			italic: (text: string) => text,
+			bold: (text: string) => text,
+			getFgAnsi: () => "\x1b[38;5;98m",
+			getColorMode: () => "256color",
+		};
+		captureWithTheme(theme);
+		const tui = createTui(undefined);
+
+		showEntryChip(tui, 0, { label: "tool", index: 0, total: 1 });
+
+		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
+		expect(line.startsWith("\x1b[48;5;98m")).toBe(true);
 	});
 
 	test("replaces the previous chip and hides it", () => {
 		const tui = createTui(undefined);
 
-		showEntryChip(tui, 1, "first");
-		showEntryChip(tui, 2, "second");
+		showEntryChip(tui, 1, { label: "tool", index: 0, total: 2 });
+		showEntryChip(tui, 2, { label: "tool", index: 1, total: 2 });
 
 		expect(tui.hidden).toBe(1);
 		expect(tui.overlayCalls).toHaveLength(2);
 	});
 
 	test("is unavailable without overlay support", () => {
-		expect(showEntryChip(undefined, 0, "chip")).toBe(false);
-		expect(showEntryChip({ terminal: { columns: 80 } }, 0, "chip")).toBe(false);
+		expect(showEntryChip(undefined, 0, { label: "tool", index: 0, total: 1 })).toBe(false);
+		expect(showEntryChip({ terminal: { columns: 80 } }, 0, { label: "tool", index: 0, total: 1 })).toBe(false);
 	});
 });
 
@@ -426,7 +446,7 @@ describe("selection navigation", () => {
 		const first = selectEdgeEntry(tui, "first");
 		expect(first.status === "moved" && first.result).toMatchObject({ index: 0, label: "user", atStart: true });
 		expect(getSelectedEntry()).toBe(chat.children[0]);
-		expect(tui.overlayCalls.at(-1)?.component.render(80)[0]).toContain("user :: 1/3");
+		expect(tui.overlayCalls.at(-1)?.component.render(80)[0]).toContain("user [ 1 | 3 ]");
 	});
 
 	test("reports empty and unavailable transcripts", () => {
@@ -457,7 +477,7 @@ describe("selection toggle", () => {
 		expect(first.status === "toggled" && first).toMatchObject({ label: "tool", expanded: true, index: 1, total: 3 });
 		expect(tool.expanded).toBe(true);
 		expect(tool.invalidations).toBe(1);
-		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("tool :: 2/3 :: expanded");
+		expect(tui.overlayCalls[0]?.component.render(80)[0]).toContain("tool [ 2 | 3 ] · expanded");
 
 		const second = toggleSelectedEntry(tui);
 		expect(second.status === "toggled" && second.expanded).toBe(false);
