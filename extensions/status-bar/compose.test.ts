@@ -156,64 +156,68 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		const out = composeBorderBottomLeft({
 			contextLabel: "15.9% 210k · 0.03$",
 			statusLabel: "SMART",
-			networkLabel: "<muted>NET?</muted>",
+			networkLabel: "?",
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  <muted>NET?</muted>« ╼━╾ »15.9% 210k · 0.03$« »");
-		// Order: safe mode, then network, then context.
-		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("NET?"));
-		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("15.9%"));
-		// Exactly one network token: no duplication.
-		expect(out.match(/NET\??\+?/g)).toEqual(["NET?"]);
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« ╼━╾ »15.9% 210k · 0.03$« »");
+		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("󰅟 ?"));
+		expect(out.indexOf("󰅟 ?")).toBeLessThan(out.indexOf("15.9%"));
 	});
 
 	test("renders the subagent depth immediately after network", () => {
 		const out = composeBorderBottomLeft({
 			statusLabel: "SMART",
-			networkLabel: "NET?",
+			networkLabel: "?",
 			subagentLabel: "󰚩 ✓",
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET?« · »󰚩 ✓« »");
-		expect(out.indexOf("NET?")).toBeLessThan(out.indexOf("󰚩 ✓"));
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« · »«󰚩 ✓»« »");
+		expect(out.indexOf("󰅟 ?")).toBeLessThan(out.indexOf("󰚩 ✓"));
+	});
+
+	test("uses one producer color for the whole recursive subagent indicator", () => {
+		const out = composeBorderBottomLeft({
+			subagentLabel: "\u001b[38;5;220m󰚩 2\u001b[0m",
+			borderColor: border,
+		});
+
+		expect(out).toBe("«━╾ »\u001b[38;5;220m󰚩 \u001b[0m\u001b[38;5;220m2\u001b[0m« »");
 	});
 
 	test("tapers the context bridge so its light halves face the labels", () => {
 		const out = composeBorderBottomLeft({
 			contextLabel: "15.9% 210k",
 			statusLabel: "SMART",
-			networkLabel: "NET?",
+			networkLabel: "?",
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET?« ╼━╾ »15.9% 210k« »");
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« ╼━╾ »15.9% 210k« »");
 		expect(out).not.toContain("━━━");
 	});
 
 	test("joins safe mode and network with exactly one border-colored ` · `", () => {
 		const out = composeBorderBottomLeft({
 			statusLabel: "SMART",
-			networkLabel: "NET+",
+			networkLabel: "✓?",
 			borderColor: border,
 		});
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »󰅟  NET+« »");
-		expect(out.match(/NET\??\+?/g)).toEqual(["NET+"]);
+		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ✓?»« »");
 	});
 
-	test("keeps the network token with no safe-mode producer", () => {
-		const out = composeBorderBottomLeft({ networkLabel: "NET", borderColor: border });
-		expect(out).toBe("«━╾ »󰅟  NET« »");
-		expect(out).not.toContain("«󰅟");
+	test("keeps the network indicator with no safe-mode producer", () => {
+		const out = composeBorderBottomLeft({ networkLabel: "✓", borderColor: border });
+		expect(out).toBe("«━╾ »«󰅟 ✓»« »");
 	});
 
-	test("colors the network icon like the token's producer, not the border", () => {
+	test("uses one producer color for the whole exceptional network indicator", () => {
 		const out = composeBorderBottomLeft({
-			networkLabel: "\u001b[1m\u001b[38;5;34mNET+\u001b[0m",
+			networkLabel: "\u001b[1m\u001b[38;5;196m!\u001b[0m",
 			borderColor: border,
 		});
-		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;34m󰅟  \u001b[0m\u001b[1m\u001b[38;5;34mNET+\u001b[0m« »");
+		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;196m󰅟 \u001b[0m\u001b[1m\u001b[38;5;196m!\u001b[0m« »");
 	});
 
 	test("keeps safe mode when the core is absent", () => {
@@ -452,7 +456,7 @@ describe("surface ownership (no duplication)", () => {
 		});
 
 		expect(statusLine).not.toContain("NET");
-		expect(borderLabel.match(/NET\??\+?/g)).toEqual(["NET?"]);
+		expect(borderLabel).toContain("󰅟 ?");
 	});
 });
 

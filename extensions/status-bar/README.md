@@ -120,7 +120,7 @@ labels are rendered in the frame corners:
 ```
 ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
-╰━╾ 󰕥 SMART · 󰅟  NET? ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╯
+╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -153,21 +153,23 @@ labels are rendered in the frame corners:
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals are hidden from the first line to avoid duplication; in `legacy` mode
   they stay on the first line.
-- **bottom-left** — safe-mode status followed by effective network policy and context usage/cost.
-  - Format: `━╾ 󰕥 <safe-mode> · 󰅟  <NET> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
+- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage/cost.
+  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
     network-to-context bridge is tapered on both label sides, so the line reads
-    as one heavy stroke that thins out where it meets either label. Each
-    part is prefixed with a Nerd Font icon that inherits the color of the text it
-    prefixes. The safe-mode and network parts are omitted when their producer/core is absent.
-  - **network** — effective policy from `permissions-core`, shown only after safe
-    mode and joined with exactly ` · ` (the dot uses the frame border color). The
-    token is prefixed with the network icon plus two spaces (`󰅟  `), which inherits
-    the token's own color. Labels/colors are policy-specific: deny-all is gray
-    `NET`, ask-all is gray `NET?`; allow-trusted, ask-untrusted and allow-all use
-    the user-message color (`NET`, `NET?`, `NET+`). It reflects effective state only,
-    so PARANOID always renders gray `NET?`. In `legacy` mode the token moves to the
-    status line instead (see [Display mode](#display-mode)); exactly one surface
-    renders it.
+    as one heavy stroke that thins out where it meets either label. The safe-mode
+    and network parts are omitted when their producer/core is absent.
+  - **network** — compact effective policy from `permissions-core`, shown only
+    after safe mode and joined with exactly ` · ` (the dot uses the frame border
+    color). One space follows the prefix icon. The complete indicator uses one
+    color: deny-all is muted `󰅟 ×`; ask-all is border-colored `󰅟 ?`;
+    allow-trusted is border-colored `󰅟 ✓`; ask-untrusted is border-colored
+    `󰅟 ✓?`; allow-all is red `󰅟 !`. It reflects effective state only, so
+    PARANOID renders `󰅟 ?`. In `legacy` mode the existing `NET`/`NET?`/`NET+`
+    token moves to the status line instead (see [Display mode](#display-mode));
+    exactly one surface renders it.
+  - **subagents** — compact delegation depth immediately after network. One
+    space follows the prefix icon. Disabled is muted `󰚩 ×`, top-level-only is
+    border-colored `󰚩 ✓`, and recursive delegation is warning-colored `󰚩 N`.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
   - `cost`: cumulative session cost, prefixed with the price icon `󰇁 ` and with no

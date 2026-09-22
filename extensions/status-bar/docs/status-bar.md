@@ -190,15 +190,17 @@ horizontal editor padding (`paddingX: 1`), and renders:
   ones included, and the total is omitted while it rounds to the same three-decimal
   value as the session cost.
 - bottom-left, before context: `safe-mode` producer content (for example `SMART`)
-  followed by the effective network token, joined to the context label by the
-  tapered border bridge (`━╾ 󰕥 SMART · 󰅟  NET? ╼━╾ 󰊚 15.9% `). Safe mode and the
-  network token share one label joined by exactly ` · `, which is preserved under
-  crowding. The safe-mode text is prefixed with `󰕥 `, which shares its color;
-  `SMART` uses the frame border color, other modes keep the producer's own color on
-  both icon and text. The network token is prefixed with `󰅟  ` (two spaces) and
-  keeps its policy color (`muted` for deny-all and ask-all; `text` for
-  allow-trusted, ask-untrusted, and allow-all); it follows effective state only
-  (PARANOID -> gray `NET?`).
+  followed by compact network and subagent indicators, joined to the context label
+  by the tapered border bridge (`━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% `). The
+  group uses exactly ` · ` between items, which is preserved under crowding. The
+  safe-mode text is prefixed with `󰕥 `, which shares its color; `SMART` uses the
+  frame border color, while other modes keep the producer color on icon and text.
+  Network uses one color for the full indicator and one space after its icon:
+  muted `󰅟 ×` for deny-all, border-colored `󰅟 ?` for ask-all,
+  border-colored `󰅟 ✓` for allow-trusted, border-colored `󰅟 ✓?` for
+  ask-untrusted, and red `󰅟 !` for allow-all. Subagent depth follows the same
+  rule: muted `󰚩 ×` when disabled, border-colored `󰚩 ✓` for top-level only,
+  and warning-colored `󰚩 N` for recursive delegation.
 
 Border labels use spaces instead of angle tacks (`╭━╾ left ╼━╮`).
 The frame line is heavy, but every point where it touches a label tapers to a

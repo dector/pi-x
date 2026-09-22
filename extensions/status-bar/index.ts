@@ -350,7 +350,7 @@ export function centerProgressLine(line: string, width: number): string {
  * ```
  * ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
  * ┃ ... input ...                                  ┃
- * ╰━╾ SMART · 󰅟  NET? ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
+ * ╰━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
@@ -726,7 +726,7 @@ class FrameStatusEditor extends CustomEditor {
 	/**
 	 * Combined bottom-left segment. Safe mode and the effective network token
 	 * share one label joined by exactly ` · `; context info follows after the
-	 * tapered border bridge: `━╾ SMART · NET? ╼━╾ 15.9% 210k `. The bridge keeps
+	 * tapered border bridge: `━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k `. The bridge keeps
 	 * its light halves on the label sides, so it reads as one line either way.
 	 * Composition (including safe-mode recoloring) lives in the pure
 	 * `composeBorderBottomLeft` helper.

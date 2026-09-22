@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	NETWORK_STATE_EVENTS,
 	NetworkStateStore,
+	POLICY_BORDER_TOKENS,
 	POLICY_COLORS,
 	POLICY_TOKENS,
 	joinSafeModeAndNetwork,
@@ -10,6 +11,7 @@ import {
 	parseNetworkStateChanged,
 	parseNetworkStateResponse,
 	queryNetworkState,
+	renderBorderNetworkToken,
 	renderEffectiveNetworkToken,
 	renderNetworkToken,
 	resolveNetworkStatus,
@@ -73,7 +75,17 @@ describe("network token and color matrix", () => {
 		});
 	});
 
-	test("maps every policy to the documented muted/user-message color", () => {
+	test("maps every policy to the compact border value", () => {
+		expect(POLICY_BORDER_TOKENS).toEqual({
+			"deny-all": "×",
+			"ask-all": "?",
+			"allow-trusted": "✓",
+			"ask-untrusted": "✓?",
+			"allow-all": "!",
+		});
+	});
+
+	test("maps every legacy policy to the documented muted/user-message color", () => {
 		expect(POLICY_COLORS).toEqual({
 			"deny-all": "muted",
 			"ask-all": "muted",
@@ -100,6 +112,14 @@ describe("network token and color matrix", () => {
 	test("renderEffectiveNetworkToken renders the effective policy, not configured", () => {
 		const explicitDeny = state({ configured: "allow-all", effective: "deny-all", autoEffective: "allow-trusted" });
 		expect(renderEffectiveNetworkToken(explicitDeny, theme)).toBe("<muted>NET</muted>");
+	});
+
+	test("border values reserve colors for blocked and unrestricted access", () => {
+		expect(renderBorderNetworkToken("deny-all", theme)).toBe("<muted>×</muted>");
+		expect(renderBorderNetworkToken("ask-all", theme)).toBe("?");
+		expect(renderBorderNetworkToken("allow-trusted", theme)).toBe("✓");
+		expect(renderBorderNetworkToken("ask-untrusted", theme)).toBe("✓?");
+		expect(renderBorderNetworkToken("allow-all", theme)).toBe("<error>!</error>");
 	});
 });
 
@@ -187,7 +207,7 @@ describe("surface resolution and display modes", () => {
 	test("new display mode owns the border surface", () => {
 		expect(networkSurfaceForDisplayMode("new")).toBe("border");
 		const resolution = resolveNetworkStatus({ displayMode: "new", state: state({ effective: "allow-all" }), theme });
-		expect(resolution).toEqual({ surface: "border", label: "<userMessageText>NET+</userMessageText>" });
+		expect(resolution).toEqual({ surface: "border", label: "<error>!</error>" });
 	});
 
 	test("legacy display mode owns the status-line surface", () => {

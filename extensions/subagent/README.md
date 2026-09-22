@@ -375,7 +375,7 @@ Delegation defaults to depth `0`, which allows the main agent to start subagents
 - `0` allows top-level dispatches only;
 - `1+` allows that many additional recursive delegation levels.
 
-Every child receives its parent's budget minus one. Existing children keep the budget they received; menu changes affect later dispatches. The status bar renders `󰚩 ×`, `󰚩 ✓`, or `󰚩 N` immediately after the network indicator. Disabled is muted, top-level-only uses the normal text color, and recursive delegation uses the warning color.
+Every child receives its parent's budget minus one. Existing children keep the budget they received; menu changes affect later dispatches. In border mode the status bar renders compact, single-color indicators immediately after network, with one space after the icon: muted `󰚩 ×` when disabled, frame-colored `󰚩 ✓` for top-level-only, and warning-colored `󰚩 N` for recursive delegation. Legacy mode uses the same spacing and colors the full label using the corresponding state color.
 
 Set `PI_SUBAGENT_MAX_DEPTH=-1|0|N` before starting Pi to change the initial policy. The value is clamped to `-1..8`; invalid or missing values default to `0`. Session menu changes survive `/reload` for that session but are not persisted across Pi restarts.
 

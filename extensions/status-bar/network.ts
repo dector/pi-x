@@ -43,10 +43,13 @@ export const NETWORK_STATUS_TOKENS = ["NET", "NET?", "NET+"] as const;
 
 export type NetworkStatusToken = (typeof NETWORK_STATUS_TOKENS)[number];
 
-// Theme color names ("muted" = gray, "userMessageText" = user-message text).
+/** Compact symbols used after the border's network glyph. */
+export const NETWORK_BORDER_TOKENS = ["×", "?", "✓", "✓?", "!"] as const;
+export type NetworkBorderToken = (typeof NETWORK_BORDER_TOKENS)[number];
+
 // Kept as strings so this module stays free of the pi theme type and can be
 // tested purely.
-export type NetworkStatusColor = "muted" | "userMessageText";
+export type NetworkStatusColor = "muted" | "userMessageText" | "error";
 
 export const POLICY_TOKENS: Record<NetworkPolicy, NetworkStatusToken> = {
 	"deny-all": "NET",
@@ -62,6 +65,14 @@ export const POLICY_COLORS: Record<NetworkPolicy, NetworkStatusColor> = {
 	"allow-trusted": "userMessageText",
 	"ask-untrusted": "userMessageText",
 	"allow-all": "userMessageText",
+};
+
+export const POLICY_BORDER_TOKENS: Record<NetworkPolicy, NetworkBorderToken> = {
+	"deny-all": "×",
+	"ask-all": "?",
+	"allow-trusted": "✓",
+	"ask-untrusted": "✓?",
+	"allow-all": "!",
 };
 
 export function tokenForPolicy(policy: NetworkPolicy): NetworkStatusToken {
@@ -209,6 +220,14 @@ export function renderNetworkToken(policy: NetworkPolicy, theme: NetworkTheme): 
 	return theme.fg(colorForPolicy(policy), tokenForPolicy(policy));
 }
 
+/** Render the compact border value; neutral values inherit the frame color. */
+export function renderBorderNetworkToken(policy: NetworkPolicy, theme: NetworkTheme): string {
+	const token = POLICY_BORDER_TOKENS[policy];
+	if (policy === "deny-all") return theme.fg("muted", token);
+	if (policy === "allow-all") return theme.fg("error", token);
+	return token;
+}
+
 /** Render the effective network token from validated state. */
 export function renderEffectiveNetworkToken(state: NetworkPermissionState, theme: NetworkTheme): string {
 	return renderNetworkToken(state.effective, theme);
@@ -239,9 +258,13 @@ export function resolveNetworkStatus(args: {
 	theme: NetworkTheme;
 }): NetworkStatusResolution | undefined {
 	if (!args.state) return undefined;
+	const surface = networkSurfaceForDisplayMode(args.displayMode);
 	return {
-		surface: networkSurfaceForDisplayMode(args.displayMode),
-		label: renderEffectiveNetworkToken(args.state, args.theme),
+		surface,
+		label:
+			surface === "border"
+				? renderBorderNetworkToken(args.state.effective, args.theme)
+				: renderEffectiveNetworkToken(args.state, args.theme),
 	};
 }
 

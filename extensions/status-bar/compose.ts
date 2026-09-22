@@ -13,7 +13,7 @@ import { joinSafeModeAndNetwork } from "./network";
  * are light/heavy half glyphs, so the line stays thin where it touches a label
  * and heavy in between:
  *
- *   `󰅟  NET? ╼━╾ 󰊚 15.9% 210k`
+ *   `󰅟 ✓? ╼━╾ 󰊚 15.9% 210k`
  */
 export const FRAME_LABEL_JOIN = "╼━╾";
 export const FRAME_LABEL_OPEN = " ";
@@ -33,9 +33,9 @@ export function sanitizeStatusText(text: string): string {
 // glyph reads as a prefix instead of touching its value. Legacy mode renders
 // the plain labels and is intentionally left unchanged.
 export const BORDER_SAFE_MODE_ICON = "󰕥 ";
-// The network icon keeps two spaces so the token stays clearly separated from
-// the glyph even when the token carries its own producer ANSI style.
-export const BORDER_NETWORK_ICON = "󰅟  ";
+// One space separates each policy/depth prefix glyph from its value.
+export const BORDER_NETWORK_ICON = "󰅟 ";
+export const BORDER_SUBAGENT_ICON = "󰚩 ";
 
 const BORDER_GIT_MARKER_ICONS = {
 	additions: "󰐖",
@@ -66,15 +66,26 @@ function paintAnsi(color: string, text: string): string {
 	return color ? `${color}${text}\u001b[0m` : text;
 }
 
-/**
- * Prefix the network token with its Nerd Font icon. The icon inherits the
- * token's producer ANSI style so it reads as part of the token rather than the
- * frame border; a plain token keeps a plain icon. Exactly two spaces sit
- * between the icon and the token.
- */
-function decorateBorderNetworkLabel(label: string): string {
-	const color = leadingAnsiSequences(label);
-	return `${color ? paintAnsi(color, BORDER_NETWORK_ICON) : BORDER_NETWORK_ICON}${label}`;
+/** Prefix the network value and give the whole compact indicator one color. */
+function decorateBorderNetworkLabel(label: string, borderColor: (text: string) => string): string {
+	const sanitized = sanitizeStatusText(label);
+	const producerColor = leadingAnsiSequences(sanitized);
+	return producerColor
+		? `${paintAnsi(producerColor, BORDER_NETWORK_ICON)}${sanitized}`
+		: borderColor(`${BORDER_NETWORK_ICON}${sanitized}`);
+}
+
+/** Give the compact subagent depth indicator one state-dependent color. */
+function decorateBorderSubagentLabel(label: string, borderColor: (text: string) => string): string {
+	const sanitized = sanitizeStatusText(label);
+	const valueWithSpacing = sanitized.replace(BORDER_SUBAGENT_ICON, "");
+	const valueStyle = leadingAnsiSequences(valueWithSpacing);
+	const value = `${valueStyle}${valueWithSpacing.slice(valueStyle.length).replace(/^ +/, "")}`;
+	if (stripAnsi(value) === "✓") return borderColor(`${BORDER_SUBAGENT_ICON}✓`);
+	const producerColor = leadingAnsiSequences(sanitized);
+	return producerColor
+		? `${paintAnsi(producerColor, BORDER_SUBAGENT_ICON)}${value}`
+		: borderColor(`${BORDER_SUBAGENT_ICON}${value}`);
 }
 
 /** Read `+N`/`-N`/`MN` from a git stats chunk; `undefined` when it does not match. */
@@ -306,7 +317,7 @@ export interface BorderBottomLeftArgs {
  * share one label joined by exactly ` · ` (colored like the border); the context
  * label follows after the tapered border bridge:
  *
- *   `━╾ 󰕥 SMART · 󰅟  NET? ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 `
+ *   `━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 `
  *
  * Either producer part may be missing; both missing yields `""`.
  */
@@ -316,9 +327,11 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 		? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
 		: undefined;
 	const networkLabel = hasVisibleText(args.networkLabel)
-		? decorateBorderNetworkLabel(args.networkLabel)
+		? decorateBorderNetworkLabel(args.networkLabel, args.borderColor)
 		: undefined;
-	const subagentLabel = hasVisibleText(args.subagentLabel) ? sanitizeStatusText(args.subagentLabel!) : undefined;
+	const subagentLabel = hasVisibleText(args.subagentLabel)
+		? decorateBorderSubagentLabel(args.subagentLabel, args.borderColor)
+		: undefined;
 	const statusGroup = joinStatusPolicyGroup(safeModeLabel, networkLabel, subagentLabel, args.borderColor);
 	if (!hasContext && !statusGroup) return "";
 
