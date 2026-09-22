@@ -283,7 +283,7 @@ describe("entry chip", () => {
 		expect(tui.overlayCalls).toHaveLength(1);
 
 		const call = tui.overlayCalls[0];
-		const line = "\x1b[7m \u{f0140} tool · 10/250 \x1b[27m";
+		const line = "\x1b[7m \u{f0140} tool · 10/250 \u{f0143} \x1b[27m";
 		const width = visibleWidth(line);
 		expect(call?.options).toMatchObject({ row: 7, col: 80 - width, width, nonCapturing: true });
 		expect(call?.component.render(80)[0]).toBe(line);
@@ -305,7 +305,7 @@ describe("entry chip", () => {
 		const line = tui.overlayCalls.at(-1)?.component.render(80)[0] ?? "";
 		expect(line).toContain("\x1b[48;2;91;33;182m");
 		expect(line).toContain("\x1b[38;2;255;255;255m");
-		expect(line).toContain(" \u{f0140} \x1b[3mtool\x1b[23m · 10/250 · expanded ");
+		expect(line).toContain(" \u{f0140} \x1b[3mtool\x1b[23m · 10/250 · expanded \u{f0143} ");
 		expect(line.endsWith("\x1b[39m\x1b[49m")).toBe(true);
 		expect(line).not.toContain("\x1b[7m");
 	});

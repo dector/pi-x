@@ -40,8 +40,9 @@ const TUI_CAPTURE_WIDGET_KEY = "px:pi-ui-tui-capture";
 // Fallback styling when no theme was captured yet (reverse video, like pi's flash).
 const CHIP_REVERSE = "\x1b[7m";
 const CHIP_REVERSE_OFF = "\x1b[27m";
-// Nerd Font Material Design chevron-down, the selection affordance.
+// Nerd Font Material Design chevrons framing the chip: down on the left, up on the right.
 const CHIP_ARROW = "\u{f0140}";
+const CHIP_ARROW_END = "\u{f0143}";
 // Intense branded purple, deeper than the theme's muted thinking purple.
 const CHIP_PURPLE_BACKGROUND = "\x1b[48;2;91;33;182m";
 // Pure white on the purple pill, bright white for 256-colour terminals.
@@ -590,7 +591,7 @@ export interface ChipParts {
 
 function chipPlainText(parts: ChipParts): string {
 	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
-	return `${CHIP_ARROW} ${parts.label}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix}`;
+	return `${CHIP_ARROW} ${parts.label}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} ${CHIP_ARROW_END}`;
 }
 
 /**
@@ -612,7 +613,7 @@ function chipLine(parts: ChipParts): string {
 
 	const suffix = parts.state ? `${CHIP_SEPARATOR}${parts.state}` : "";
 	const foreground = truecolor ? CHIP_WHITE_FOREGROUND : CHIP_WHITE_FOREGROUND_256;
-	const body = ` ${CHIP_ARROW} ${CHIP_ITALIC}${parts.label}${CHIP_ITALIC_OFF}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} `;
+	const body = ` ${CHIP_ARROW} ${CHIP_ITALIC}${parts.label}${CHIP_ITALIC_OFF}${CHIP_SEPARATOR}${parts.index + 1}/${parts.total}${suffix} ${CHIP_ARROW_END} `;
 	return `${background}${foreground}${body}${CHIP_FOREGROUND_RESET}${CHIP_BACKGROUND_RESET}`;
 }
 

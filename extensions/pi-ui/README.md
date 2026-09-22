@@ -129,7 +129,7 @@ Entries with nothing to show are skipped, so navigation follows what you actuall
 - zero-height entries (for example an assistant message with no rendered content)
 - assistant messages that only request tools while thinking is hidden — pi renders those as a `Thinking...` placeholder plus padding
 
-A short chip is drawn at the selected entry's own screen row, right-aligned: an intense purple pill with pure white text, a Nerd Font chevron-down (`nf-md-chevron_down`) and the format `󰅀 tool · 310/312`. The entry label is italic. The background is a fixed branded purple (`#5b21b6`) on truecolor terminals and the theme's own purple on 256-colour terminals, with pure white text (bright white on 256-colour). The chip disappears after 1.5 s, and a toggle appends ` · expanded` or ` · collapsed`.
+A short chip is drawn at the selected entry's own screen row, right-aligned: an intense purple pill with pure white text, framed by Nerd Font chevrons (`nf-md-chevron_down` / `nf-md-chevron_up`), e.g. `󰅀 tool · 310/312 󰅁`. The entry label is italic. The background is a fixed branded purple (`#5b21b6`) on truecolor terminals and the theme's own purple on 256-colour terminals, with pure white text (bright white on 256-colour). The chip disappears after 1.5 s, and a toggle appends ` · expanded` or ` · collapsed`.
 
 `Alt+End` jumps to the last entry and `Alt+Home` (Alt+Start on keyboards that label the key that way) to the first.
 
