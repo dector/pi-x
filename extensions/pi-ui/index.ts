@@ -1338,16 +1338,12 @@ async function showHiDialog(
 					searchable?: boolean;
 					isEnabled: (state: DialogState) => boolean;
 					run: () => void | Promise<void>;
-					runWithKey?: (key: string) => void | Promise<void>;
 					closeAfterRun?: boolean;
 				};
 				type DialogMenu = "main" | "stash";
 				type SearchAction = {
 					action: DialogAction;
 					menu: DialogMenu;
-					label?: string;
-					hotkeyLabel?: string;
-					executeKey?: string;
 				};
 
 				const getSafeModeUiState = (): DialogState => {
@@ -1477,16 +1473,23 @@ async function showHiDialog(
 					},
 					{
 						hotkey: "n",
-						hotkeyAliases: ["N"],
-						hotkeyLabel: "n/N",
-						label: "New note / browse notes…",
+						label: "Browse notes…",
+						group: "PROMPTS & NOTES",
+						showStatusBadge: false,
+						opensMenu: true,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(() => void onListNotes()),
+					},
+					{
+						hotkey: "N",
+						label: "New note…",
 						group: "PROMPTS & NOTES",
 						showStatusBadge: false,
 						opensMenu: true,
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(() => void onOpenNote()),
-						runWithKey: (key) => runAfterClose(() => void (key === "N" ? onListNotes() : onOpenNote())),
 					},
 				];
 				mainActions.sort(
@@ -1545,14 +1548,7 @@ async function showHiDialog(
 				];
 
 				const searchableActions: SearchAction[] = [
-					...mainActions.flatMap((action): SearchAction[] =>
-						action.hotkeyLabel === "n/N"
-							? [
-									{ action, menu: "main", label: "New note…", hotkeyLabel: "n", executeKey: "n" },
-									{ action, menu: "main", label: "Browse notes…", hotkeyLabel: "N", executeKey: "N" },
-								]
-							: [{ action, menu: "main" }],
-					),
+					...mainActions.map((action) => ({ action, menu: "main" as const })),
 					...stashActions
 						.filter((action) => action.searchable !== false)
 						.map((action) => ({ action, menu: "stash" as const })),
@@ -1562,10 +1558,10 @@ async function showHiDialog(
 					const query = searchQuery.trim().toLowerCase();
 					if (!query) return [];
 					const terms = query.split(/\s+/).filter(Boolean);
-					return searchableActions.filter(({ action, menu, label, hotkeyLabel }) => {
+					return searchableActions.filter(({ action, menu }) => {
 						const haystack = [
-							label ?? action.label,
-							hotkeyLabel ?? action.hotkeyLabel ?? action.hotkey,
+							action.label,
+							action.hotkeyLabel ?? action.hotkey,
 							...(action.hotkeyAliases ?? []),
 							menu === "stash" ? "prompt stash" : "",
 						]
@@ -1575,17 +1571,13 @@ async function showHiDialog(
 					});
 				};
 
-				const executeAction = (action: DialogAction | undefined, key?: string): void => {
+				const executeAction = (action: DialogAction | undefined): void => {
 					if (!action) return;
 					searchMode = false;
 					searchQuery = "";
 					void (async () => {
 						try {
-							if (key !== undefined && action.runWithKey) {
-								await action.runWithKey(key);
-							} else {
-								await action.run();
-							}
+							await action.run();
 						} finally {
 							if (action.closeAfterRun === false) return;
 							closeDialog();
@@ -1594,11 +1586,10 @@ async function showHiDialog(
 				};
 
 				const matchesActionKey = (data: string, key: string): boolean => data === key || matchesKey(data, key);
-				const matchActionForInput = (data: string): { action: DialogAction; key: string } | undefined => {
+				const matchActionForInput = (data: string): DialogAction | undefined => {
 					for (const action of getActions()) {
-						if (matchesActionKey(data, action.hotkey)) return { action, key: action.hotkey };
-						const alias = action.hotkeyAliases?.find((candidate) => matchesActionKey(data, candidate));
-						if (alias !== undefined) return { action, key: alias };
+						if (matchesActionKey(data, action.hotkey)) return action;
+						if (action.hotkeyAliases?.some((candidate) => matchesActionKey(data, candidate))) return action;
 					}
 					return undefined;
 				};
@@ -1622,14 +1613,16 @@ async function showHiDialog(
 						if (width <= 6) return [];
 						// The overlay spans the terminal, while the compact dialog stays centered.
 						// The surrounding cells use terminal background.
-						const maxFrameWidth = activeMenu === "main" && !searchMode ? 38 : 37;
+						const maxFrameWidth = 47;
 						const frameWidth = Math.min(Math.max(1, width - 2), maxFrameWidth);
 						const contentWidth = Math.max(1, frameWidth - 2);
 						const outerWidth = Math.max(0, width - frameWidth);
 						const outerLeft = " ".repeat(Math.floor(outerWidth / 2));
 						const outerRight = " ".repeat(Math.ceil(outerWidth / 2));
 						const state = getSafeModeUiState();
-						const border = (text: string): string => theme.fg("thinkingHigh", text);
+						const border = (text: string): string => `\x1b[97m${text}\x1b[39m`;
+						const selectedBg = "\x1b[48;2;0;0;0m";
+						const selectedFg = "\x1b[97m";
 						const outerLine = " ".repeat(width);
 						const fit = (text: string): string => {
 							const clipped = truncateToWidth(text, contentWidth, "");
@@ -1645,25 +1638,27 @@ async function showHiDialog(
 						const topFill = "━".repeat(Math.max(0, contentWidth - visibleWidth(titleText) - 3));
 						const top = `${border("╭━╾")}${border(theme.bold(titleText))}${border(`╼${topFill}╮`)}`;
 
-						const actionLine = (
-							action: DialogAction,
-							isSelected: boolean,
-							overrides?: { label?: string; hotkeyLabel?: string },
-						): string => {
+						const actionLine = (action: DialogAction, isSelected: boolean): string => {
 							const enabled = action.isEnabled(state);
-							const label = overrides?.label ?? action.label;
-							const shortcut = overrides?.hotkeyLabel ?? action.hotkeyLabel ?? action.hotkey;
+							const label = action.opensMenu ? `${action.label.replace(/…$/, "")} ›` : action.label;
+							const shortcut = action.hotkeyLabel ?? action.hotkey;
 							const statusText = action.showStatusBadge === false ? "" : enabled ? "─●" : "○─";
-							const markerText = action.opensMenu ? "→" : statusText;
+							const markerText = action.opensMenu ? "··" : statusText;
 							const rightText = [shortcut, markerText].filter(Boolean).join(" ");
-							const prefix = isSelected ? " › " : "   ";
-							const availableLeft = Math.max(1, contentWidth - visibleWidth(rightText) - 1);
+							const horizontalPadding = Math.min(3, Math.floor((contentWidth - 1) / 2));
+							const prefix = isSelected
+								? `${horizontalPadding > 1 ? " " : ""}›${" ".repeat(Math.max(0, horizontalPadding - 2))}`
+								: " ".repeat(horizontalPadding);
+							const rowWidth = Math.max(1, contentWidth - horizontalPadding * 2);
+							const actionWidth = Math.max(1, rowWidth - 1);
+							const minGap = Math.min(5, Math.max(1, actionWidth - visibleWidth(rightText) - 1));
+							const availableLeft = Math.max(1, actionWidth - visibleWidth(rightText) - minGap);
 							const leftText = truncateToWidth(`${prefix}${label}`, availableLeft, "");
-							const gap = " ".repeat(Math.max(1, contentWidth - visibleWidth(leftText) - visibleWidth(rightText)));
-							const left = isSelected ? border(theme.bold(leftText)) : leftText;
-							const styledShortcut = isSelected ? border(shortcut) : theme.fg("dim", shortcut);
+							const gap = " ".repeat(Math.max(minGap, actionWidth - visibleWidth(leftText) - visibleWidth(rightText)));
+							const left = isSelected ? selectedFg + leftText + "\x1b[39m" : leftText;
+							const styledShortcut = isSelected ? selectedFg + shortcut + "\x1b[39m" : theme.fg("dim", shortcut);
 							let marker = "";
-							if (action.opensMenu) marker = isSelected ? border("→") : theme.fg("muted", "→");
+							if (action.opensMenu) marker = isSelected ? selectedFg + "··\x1b[39m" : theme.fg("muted", "··");
 							else if (statusText) {
 								const color =
 									action.toggleSeverity === "danger"
@@ -1673,7 +1668,11 @@ async function showHiDialog(
 											: "success";
 								marker = enabled ? theme.fg(color, theme.bold(statusText)) : theme.fg("muted", statusText);
 							}
-							return fit(`${left}${gap}${styledShortcut}${marker ? ` ${marker}` : ""}`);
+							const row = `${left}${gap}${styledShortcut}${marker ? ` ${marker}` : ""}`;
+							const clippedRow = truncateToWidth(row, rowWidth, "");
+							const paddedContent = `${clippedRow}${" ".repeat(Math.max(0, rowWidth - visibleWidth(clippedRow)))}`;
+							const paddedRow = `${" ".repeat(horizontalPadding)}${paddedContent}${" ".repeat(horizontalPadding)}`;
+							return isSelected ? `${selectedBg}${paddedRow}\x1b[49m` : paddedRow;
 						};
 
 						const searchActions = searchMode ? getSearchActions() : [];
@@ -1692,12 +1691,7 @@ async function showHiDialog(
 						if (searchMode) {
 							lines.push(
 								...visibleSearchActions.map((item, index) =>
-									frame(
-										actionLine(item.action, searchWindowStart + index === selectedIndex, {
-											label: item.label,
-											hotkeyLabel: item.hotkeyLabel,
-										}),
-									),
+									frame(actionLine(item.action, searchWindowStart + index === selectedIndex)),
 								),
 							);
 						} else {
@@ -1705,7 +1699,9 @@ async function showHiDialog(
 							getActions().forEach((action, index) => {
 								if (action.group && action.group !== previousGroup) {
 									if (previousGroup) lines.push(frame(""));
-									lines.push(frame(theme.fg("dim", `  ${action.group}`)));
+									const headingPadding = Math.min(3, Math.floor((contentWidth - 1) / 2));
+									const headingIndent = " ".repeat(headingPadding + (headingPadding > 1 ? 1 : 0));
+									lines.push(frame(theme.fg("dim", `${headingIndent}${action.group}`)));
 									previousGroup = action.group;
 								}
 								lines.push(frame(actionLine(action, index === selectedIndex)));
@@ -1755,7 +1751,7 @@ async function showHiDialog(
 							}
 							if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
 								const result = results[selectedIndex];
-								executeAction(result?.action, result?.executeKey);
+								executeAction(result?.action);
 								return;
 							}
 							if (/^[^\x00-\x1f\x7f]+$/.test(data)) {
@@ -1795,8 +1791,7 @@ async function showHiDialog(
 							executeAction(getActions()[selectedIndex]);
 							return;
 						}
-						const match = matchActionForInput(data);
-						if (match) executeAction(match.action, match.key);
+						executeAction(matchActionForInput(data));
 					},
 				};
 			},

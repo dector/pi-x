@@ -42,7 +42,8 @@ Current dialog items:
 - **Prompts & Notes**
   - `s - prompt stash…` (opens a stash submenu)
   - `p - prompt history…` (opens the tabbed history dialog)
-  - `n/N - new note / browse notes…` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
+  - `n - browse notes…` (opens the `/px:notes:list` browser)
+  - `N - new note…` (opens the `/px:notes` editor)
 - `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
 - `Enter - run selected action`
@@ -51,9 +52,9 @@ Current dialog items:
 
 Behavior details:
 
-- The dialog uses the status-bar frame language: purple heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
-- Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **Access & Safety**, **Agents**, and **Prompts & Notes** headings. Shortcuts and indicators are right-aligned in one column, with a four-space gutter after the widest action name; `→` and an ellipsis mark actions that open another screen, and `─●`/`○─` show toggle state.
-- The selected row uses the same purple as the frame. Arrow navigation skips group headings.
+- The dialog uses the status-bar frame language: white heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
+- Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **ACCESS & SAFETY**, **AGENTS**, and **PROMPTS & NOTES** headings, aligned with the selected-row `›` indicator. Shortcuts are right-aligned, and submenu arrows and toggle indicators start in the same column, with one blank column after them, at least five spaces between action labels and shortcuts at full width, and three columns of horizontal padding on each side (reduced on narrow terminals); a `›` after each menu label and `··` in the right indicator column mark actions that open another screen, and `─●`/`○─` show toggle state.
+- The selected row has a full-width black background with white text for contrast; toggle indicators retain their status colors. Arrow navigation skips group headings.
 - Pressing `Esc` or `Backspace` in the main dialog closes it with no side effects.
 - Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
 - Pressing `↑/↓` (or `k/j`) moves selection in the action list.
@@ -80,9 +81,9 @@ Behavior details:
   - `←`/`→` or `h`/`l` switches tabs. Each history tab shows its current position and total count.
   - `j`/`k` scrolls the current prompt or response down/up by five lines.
   - The dialog closes via `Esc`, `Enter`, `q`, or `Ctrl+,`.
-- Pressing `n` emits event `px:notes:open` and closes the dialog; `notes` then opens its editor.
-- Pressing `N` emits event `px:notes:list` and closes the dialog; `notes` then opens its list browser.
-- Both notes actions are shown as a single row (`n/N`); pressing `Enter` on it defaults to `n` (editor).
+- Pressing `n` emits event `px:notes:list` and closes the dialog; `notes` then opens its list browser.
+- Pressing `N` emits event `px:notes:open` and closes the dialog; `notes` then opens its editor.
+- Both notes actions have separate rows; `Enter` runs the selected row.
 - Toggle switches show on as `─●` (severity-colored) and off as `○─` (muted):
   - Reader mode: normal/success (green).
   - Outer access: warning (orange/amber from the active theme).
@@ -91,7 +92,7 @@ Behavior details:
 - Agent rewiring mirrors the subagent extension's published rewire status.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
 - If `prompt-stash` or `safe-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
-- The main overlay spans the available terminal width; its compact frame remains centered and is capped at 38 columns, with a responsive narrow-terminal fallback.
+- The main overlay spans the available terminal width; its compact frame remains centered and is capped at 47 columns, with a responsive narrow-terminal fallback.
 - Prompt-history dialog uses the full available overlay width (`width: 100%`, `minWidth: 40`) and the quick-actions frame language.
 
 Integration contract (important):
@@ -200,7 +201,8 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
     - `↑`/`PgUp` and `↓`/`PgDn` — browse older and newer entries on the history tabs
     - `j`/`k` — scroll the current text down/up by five lines
     - `Esc`, `Enter`, `q`, or `Ctrl+,` — close
-  - `n/N` — request notes editor (`n`) or notes list (`N`) via `px:notes:open` / `px:notes:list`
+  - `n` — request notes list via `px:notes:list`
+  - `N` — request notes editor via `px:notes:open`
   - `Esc` — close dialog
   - `Backspace` — close main dialog, or return from submenu to main dialog
   - `Ctrl+,` — close dialog (toggle)
