@@ -1256,7 +1256,7 @@ async function showPromptPreviewDialog(ctx: ExtensionContext): Promise<void> {
 	);
 }
 
-async function showHiDialog(
+export async function showHiDialog(
 	ctx: ExtensionContext,
 	handlers: {
 		onToggleReader: () => void;
@@ -1277,6 +1277,7 @@ async function showHiDialog(
 	dialogLifecycle: {
 		isShown: () => boolean;
 		onShown: (requestClose: () => void) => void;
+		onRenderReady: (requestRender: () => void) => void;
 		onHidden: () => void;
 	},
 ): Promise<void> {
@@ -1321,6 +1322,7 @@ async function showHiDialog(
 					done();
 				};
 				closeFromInside = closeDialog;
+				dialogLifecycle.onRenderReady(() => tui.requestRender());
 				if (closeRequestedBeforeInit) {
 					closeDialog();
 				}
@@ -1429,8 +1431,7 @@ async function showHiDialog(
 						group: "AGENTS",
 						toggleSeverity: "danger",
 						isEnabled: () => isAgentsRewireEnabled(),
-						closeAfterRun: false,
-						run: () => runAfterClose(onToggleAgentsRewire),
+						run: onToggleAgentsRewire,
 					},
 					{
 						hotkey: "r",
@@ -1571,16 +1572,21 @@ async function showHiDialog(
 					});
 				};
 
-				const executeAction = (action: DialogAction | undefined): void => {
+				const executeAction = (action: DialogAction | undefined, viaEnter = false): void => {
 					if (!action) return;
-					searchMode = false;
-					searchQuery = "";
+					if (!(viaEnter && action.toggleSeverity)) {
+						searchMode = false;
+						searchQuery = "";
+					}
 					void (async () => {
 						try {
 							await action.run();
 						} finally {
-							if (action.closeAfterRun === false) return;
-							closeDialog();
+							if (viaEnter && action.toggleSeverity) {
+								tui.requestRender();
+							} else if (action.closeAfterRun !== false) {
+								closeDialog();
+							}
 						}
 					})();
 				};
@@ -1751,7 +1757,7 @@ async function showHiDialog(
 							}
 							if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
 								const result = results[selectedIndex];
-								executeAction(result?.action);
+								executeAction(result?.action, true);
 								return;
 							}
 							if (/^[^\x00-\x1f\x7f]+$/.test(data)) {
@@ -1788,7 +1794,7 @@ async function showHiDialog(
 							return;
 						}
 						if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-							executeAction(getActions()[selectedIndex]);
+							executeAction(getActions()[selectedIndex], true);
 							return;
 						}
 						executeAction(matchActionForInput(data));
@@ -1845,13 +1851,16 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let agentRunning = false;
 	let isActionDialogShown = false;
 	let requestActionDialogClose: (() => void) | undefined;
+	let requestActionDialogRender: (() => void) | undefined;
 	let agentsRewireEnabled = false;
 
 	pi.events.on(STATUS_BAR_REWIRE_SET_EVENT, () => {
 		agentsRewireEnabled = true;
+		requestActionDialogRender?.();
 	});
 	pi.events.on(STATUS_BAR_REWIRE_CLEAR_EVENT, () => {
 		agentsRewireEnabled = false;
+		requestActionDialogRender?.();
 	});
 
 	const ensureUiBellPatched = (ctx: ExtensionContext) => {
@@ -2164,9 +2173,13 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 						isActionDialogShown = true;
 						requestActionDialogClose = requestClose;
 					},
+					onRenderReady: (requestRender) => {
+						requestActionDialogRender = requestRender;
+					},
 					onHidden: () => {
 						isActionDialogShown = false;
 						requestActionDialogClose = undefined;
+						requestActionDialogRender = undefined;
 					},
 				},
 			);

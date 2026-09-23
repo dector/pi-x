@@ -62,18 +62,19 @@ Behavior details:
   - Type to filter by action label or shortcut.
   - `↑/↓` moves through results and `Enter` runs the selected result.
   - `Esc` cancels search and returns to the previous menu; `Backspace` does the same when the query is empty.
-- Pressing `Enter` executes the currently selected action and closes the dialog, unless the action opens a submenu.
+- Pressing `Enter` runs the selected action. Toggles keep the dialog open and refresh their indicators (preserving the query and selection in search); other actions close it unless they open a submenu. Direct hotkeys keep their existing close behavior.
 - Pressing `s` (or `S`) opens the prompt-stash submenu:
   - `s` — emits event `px:prompt-stash:stash` and closes the dialog.
   - `o` — emits event `px:prompt-stash:pop` and closes the dialog.
   - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
-- Pressing `Ctrl+r` runs **Rewire agents**, emits event `px:subagent:rewire:toggle`, and closes the dialog.
+- Pressing `Ctrl+r` runs **Rewire agents**, emits event `px:subagent:rewire:toggle`, and closes the dialog. Selecting it with `Enter` keeps the dialog open.
 - Pressing `R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
+- Selecting any of these toggles with `Enter` keeps the dialog open.
 - Pressing `p` (or `P`) opens a full-width, tabbed prompt-history dialog in the same visual style:
   - **User prompts** starts at the latest prompt; `↑`/`PgUp` moves back to `-1`, `-2`, and older prompts, while `↓`/`PgDn` moves newer.
   - **First prompt** is the initial, centered tab and shows the first user prompt on the current branch.
