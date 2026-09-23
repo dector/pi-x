@@ -308,6 +308,9 @@ interface FrameStatusEditorOptions {
 	interruptConfirmation: InterruptConfirmationGuard;
 	/** Subdued accent color used for the border's default-color indicators. */
 	subduedColor?: (text: string) => string;
+	/** Dim shutter stripes and muted rules inside the locked panel. */
+	lockedStripeColor?: (text: string) => string;
+	lockedRuleColor?: (text: string) => string;
 	/**
 	 * Color for the working highlight. `depth` 0 is the leading character
 	 * (brightest); higher depths are the trailing fade behind the direction of motion.
@@ -411,7 +414,7 @@ export function progressFooterLines(args: {
  * ╰━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
  * ```
  */
-class FrameStatusEditor extends CustomEditor {
+export class FrameStatusEditor extends CustomEditor {
 	private locked = false;
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: () => FrameContextParts | undefined;
@@ -425,6 +428,8 @@ class FrameStatusEditor extends CustomEditor {
 	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
 	private readonly subduedColor?: (text: string) => string;
+	private readonly lockedStripeColor: (text: string) => string;
+	private readonly lockedRuleColor: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
 	private readonly frameTui: TUI;
 	private working = false;
@@ -452,6 +457,8 @@ class FrameStatusEditor extends CustomEditor {
 		this.getWorkingAnimation = options.getWorkingAnimation;
 		this.interruptConfirmation = options.interruptConfirmation;
 		this.subduedColor = options.subduedColor;
+		this.lockedStripeColor = options.lockedStripeColor ?? ((text) => this.borderColor(text));
+		this.lockedRuleColor = options.lockedRuleColor ?? ((text) => this.borderColor(text));
 		this.highlightColor = options.highlightColor;
 	}
 
@@ -601,6 +608,7 @@ class FrameStatusEditor extends CustomEditor {
 	 */
 	render(width: number): string[] {
 		if (this.locked) {
+			// Only replace the editor body; border labels remain live while locked.
 			const label = "LOCKED \u{f023}"; // Nerd Font fa-lock
 			if (width < 3) return ["", "", truncateToWidth(label, Math.max(0, width), ""), "", ""];
 			const innerWidth = width - 2;
@@ -610,14 +618,31 @@ class FrameStatusEditor extends CustomEditor {
 				return `${" ".repeat(left)}${clipped}${" ".repeat(innerWidth - left - visibleWidth(clipped))}`;
 			};
 			const row = (text: string): string => `${this.borderColor("┃")}${center(text)}${this.borderColor("┃")}`;
+			const tapeWidth = Math.min(96, innerWidth - 6);
+			const showTape = tapeWidth >= visibleWidth("  LOCKED  ") + 4;
+			const motif = showTape
+				? [
+					row(this.lockedStripeColor("╱".repeat(tapeWidth))),
+					row(this.lockedStripeColor("╱".repeat(tapeWidth))),
+					row(this.lockedRuleColor("═".repeat(tapeWidth))),
+					row("  LOCKED  "),
+					row(this.lockedRuleColor("═".repeat(tapeWidth))),
+					row(this.lockedStripeColor("╱".repeat(tapeWidth))),
+					row(this.lockedStripeColor("╱".repeat(tapeWidth))),
+				]
+				: [row(this.borderColor("╾━━━━╼")), row(label)];
 			return [
-				this.borderColor(`╭${"━".repeat(innerWidth)}╮`),
+				this.isBorderMode()
+					? `${this.borderColor("╭")}${this.renderTopBorder(innerWidth, 0)}${this.borderColor("╮")}`
+					: this.borderColor(`╭${"━".repeat(innerWidth)}╮`),
 				row(""),
-				row(this.borderColor("╾━━━━╼")),
-				row(label),
-				row("Ctrl+,  ·  L to unlock"),
+				...motif,
 				row(""),
-				this.borderColor(`╰${"━".repeat(innerWidth)}╯`),
+				row(this.lockedRuleColor("Ctrl+,  ·  L to unlock")),
+				row(""),
+				this.isBorderMode()
+					? `${this.borderColor("╰")}${this.renderBottomBorder(innerWidth, 0)}${this.borderColor("╯")}`
+					: this.borderColor(`╰${"━".repeat(innerWidth)}╯`),
 			];
 		}
 		if (!this.isBorderMode() || width < 3) {
@@ -2079,6 +2104,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				confirm: () => showInterruptConfirmation(activeContext()),
 			}),
 			subduedColor: (text) => styleDarkAccent(activeContext().ui.theme, text),
+			lockedStripeColor: (text) => activeContext().ui.theme.fg("dim", text),
+			lockedRuleColor: (text) => activeContext().ui.theme.fg("muted", text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));
