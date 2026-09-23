@@ -192,7 +192,7 @@ export function formatActiveSubagentWidget(
 	].join(", ");
 
 	const styles = options.styles ?? PLAIN_STYLES;
-	const lines = [styles.accent(styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON} Subagents (${summary})`))];
+	const lines = [styles.accent(styles.bold(`${ACTIVE_SUBAGENT_WIDGET_ICON}  Subagents (${summary})`))];
 	let shown = 0;
 	for (const run of visible) {
 		const block = formatActiveSubagentWidgetLines(run, now, styles, options.contextWindowForModel);
@@ -408,13 +408,17 @@ export interface ActiveSubagentWidgetOptions {
  * - `reset()` forgets the last content and stops the timer so the next
  *   `refresh()` publishes even if the rendered content is unchanged (used on a
  *   new session or when the tree is restored).
+ *
+ * The widget starts collapsed: both panels are collapsed by default, so the
+ * first active run renders a one-line summary even before the panel
+ * coordinator broadcasts a selection.
  */
 export class ActiveSubagentWidget {
 	private last: string | undefined;
 	private initialized = false;
 	private runs: readonly ActiveSubagentWidgetRun[] = [];
 	private timer: ReturnType<typeof setInterval> | undefined;
-	private collapsed = false;
+	private collapsed = true;
 
 	constructor(private readonly options: ActiveSubagentWidgetOptions) {}
 

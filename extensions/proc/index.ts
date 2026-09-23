@@ -6,18 +6,24 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+	hasVisibleProcessEntries,
+	ProcessesWidget,
+	renderProcessesWidgetContent,
+	type ProcessesWidgetEntry,
+} from "./processes-widget.ts";
 
-const EXTENSION_ID = "proc";
+const PANEL_ID = "processes";
+const PANEL_LABEL = "Processes";
+const PANEL_ORDER = 20;
 
-const STATUS_BAR_EVENTS = {
-	rowSet: "px:status-bar:row:set",
-	rowClear: "px:status-bar:row:clear",
-	ping: "px:status-bar:ping",
-	pong: "px:status-bar:pong",
+const PANEL_EVENTS = {
+	register: "px:panels:register",
+	visibility: "px:panels:visibility",
+	active: "px:panels:active",
+	sync: "px:panels:sync",
+	content: "px:panels:content",
 } as const;
-const STATUS_BAR_WARNING_DELAY_MS = 500;
-const ROW_ORDER = 100;
-const MAX_ROW_ITEMS = 6;
 
 const ANSI_RESET = "\u001b[0m";
 const ANSI_GREEN = "\u001b[38;5;34m";
@@ -52,7 +58,8 @@ interface ProcConfig {
 	logBytes: number;
 	exitedRetentionMs: number;
 	exitedCap: number;
-	statusRow: boolean;
+	/** Legacy `statusRow: false` fallback: disables the Processes panel and widget. */
+	panelEnabled: boolean;
 }
 
 const DEFAULT_CONFIG: ProcConfig = {
@@ -61,7 +68,7 @@ const DEFAULT_CONFIG: ProcConfig = {
 	logBytes: DEFAULT_LOG_BYTES,
 	exitedRetentionMs: 60_000,
 	exitedCap: 20,
-	statusRow: true,
+	panelEnabled: true,
 };
 
 type StreamKind = "out" | "err";
@@ -99,6 +106,9 @@ interface GlobalProcState {
 	pi?: ExtensionAPI;
 	ctx?: ExtensionContext;
 	config: ProcConfig;
+	widget?: ProcessesWidget;
+	panelActiveUnsubscribe?: () => void;
+	lastPanelVisible?: boolean;
 }
 
 const globalKey = Symbol.for("pi-x.proc.state");
@@ -128,7 +138,7 @@ function loadConfig(): ProcConfig {
 		logBytes: Math.floor(positiveNumber(raw.logBytes, DEFAULT_CONFIG.logBytes, 1)),
 		exitedRetentionMs: Math.floor(positiveNumber(raw.exitedRetentionMs, DEFAULT_CONFIG.exitedRetentionMs, 0)),
 		exitedCap: Math.floor(positiveNumber(raw.exitedCap, DEFAULT_CONFIG.exitedCap, 0)),
-		statusRow: typeof raw.statusRow === "boolean" ? raw.statusRow : DEFAULT_CONFIG.statusRow,
+		panelEnabled: typeof raw.statusRow === "boolean" ? raw.statusRow : DEFAULT_CONFIG.panelEnabled,
 	};
 }
 
@@ -321,35 +331,55 @@ function sortRecords(a: ProcRecord, b: ProcRecord): number {
 	return a.startedAt - b.startedAt;
 }
 
-function renderRow(): string | undefined {
-	const now = Date.now();
-	const visible = globalState.records.filter((record) => {
-		if (record.state !== "exited") return true;
-		return record.endedAt !== undefined && now - record.endedAt <= config().exitedRetentionMs;
-	});
-	if (visible.length === 0) return undefined;
-
-	const ordered = [...visible].sort(sortRecords);
-	const shown = ordered.slice(0, MAX_ROW_ITEMS);
-	const hidden = ordered.length - shown.length;
-	const parts = shown.map((record) => `${statusDot(record)}●${ANSI_RESET} ${record.name} ${record.pid ?? "-"}`);
-	if (hidden > 0) parts.push(`+${hidden} more`);
-	return parts.join("  ·  ");
+/** Map live process records to the minimal shape the widget formatter needs. */
+function widgetEntries(): ProcessesWidgetEntry[] {
+	return globalState.records.map((record) => ({
+		name: record.name,
+		state: record.state,
+		pid: record.pid,
+		startedAt: record.startedAt,
+		endedAt: record.endedAt,
+		exitCode: record.exitCode,
+		exitSignal: record.exitSignal,
+		unread: unreadCount(record),
+	}));
 }
 
-function publishRow(): void {
+function hasVisibleProcesses(): boolean {
+	if (!config().panelEnabled) return false;
+	return hasVisibleProcessEntries(widgetEntries(), Date.now(), config().exitedRetentionMs);
+}
+
+/** Tell the panels extension whether the processes panel should be listed. */
+function publishPanelVisibility(): void {
 	const pi = globalState.pi;
 	if (!pi) return;
-	if (!config().statusRow) {
-		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: EXTENSION_ID });
+	const visible = hasVisibleProcesses();
+	if (visible === globalState.lastPanelVisible) return;
+	globalState.lastPanelVisible = visible;
+	pi.events.emit(PANEL_EVENTS.visibility, { id: PANEL_ID, visible });
+}
+
+/** Re-render the above-editor widget and sync panel visibility. */
+function publishWidget(): void {
+	const widget = globalState.widget;
+	if (!widget) return;
+	if (!config().panelEnabled) {
+		widget.clear();
+		publishPanelVisibility();
 		return;
 	}
-	const content = renderRow();
-	if (!content) {
-		pi.events.emit(STATUS_BAR_EVENTS.rowClear, { id: EXTENSION_ID });
-		return;
-	}
-	pi.events.emit(STATUS_BAR_EVENTS.rowSet, { id: EXTENSION_ID, content, order: ROW_ORDER });
+	widget.refresh(widgetEntries());
+	publishPanelVisibility();
+}
+
+/** Announce the processes panel to the panels extension. */
+function registerPanel(): void {
+	const pi = globalState.pi;
+	if (!pi) return;
+	const visible = hasVisibleProcesses();
+	globalState.lastPanelVisible = visible;
+	pi.events.emit(PANEL_EVENTS.register, { id: PANEL_ID, label: PANEL_LABEL, order: PANEL_ORDER, visible });
 }
 
 function enforceExitedCap(): void {
@@ -367,7 +397,7 @@ function scheduleRetention(record: ProcRecord): void {
 	if (record.retentionTimer) clearTimeout(record.retentionTimer);
 	record.retentionTimer = setTimeout(() => {
 		record.retentionTimer = undefined;
-		publishRow();
+		publishWidget();
 	}, config().exitedRetentionMs + 100);
 }
 
@@ -388,7 +418,7 @@ function finalizeExit(record: ProcRecord, code: number | null, signal: NodeJS.Si
 	wakeWaiters(record);
 	scheduleRetention(record);
 	enforceExitedCap();
-	publishRow();
+	publishWidget();
 
 	const ctx = globalState.ctx;
 	if (ctx?.hasUI) {
@@ -471,7 +501,7 @@ function startProcess(ctx: ExtensionContext, params: RunParams): ProcRecord {
 	};
 	globalState.records.push(record);
 	bindProcess(record, child);
-	publishRow();
+	publishWidget();
 	return record;
 }
 
@@ -485,7 +515,7 @@ function stopProcess(record: ProcRecord, signal: (typeof SIGNALS)[number] | unde
 		return;
 	}
 	record.state = "stopping";
-	publishRow();
+	publishWidget();
 	killGroup(pid, signal ?? "SIGTERM");
 	if (signal && signal !== "SIGTERM") return;
 	record.stopTimers.push(
@@ -687,7 +717,7 @@ class ProcManager implements Component {
 			}
 			if (!isRunning(record)) {
 				removeRecord(record);
-				publishRow();
+				publishWidget();
 				this.pendingForget.delete(name);
 				this.status = `Removed ${name}.`;
 			}
@@ -880,7 +910,7 @@ class ProcManager implements Component {
 				this.status = `Stopping ${record.name}…`;
 			} else {
 				removeRecord(record);
-				publishRow();
+				publishWidget();
 				this.status = `Removed ${record.name}.`;
 			}
 		} catch (error) {
@@ -967,54 +997,66 @@ const ProcToolParams = Type.Object({
 export default function procExtension(pi: ExtensionAPI): void {
 	globalState.config = loadConfig();
 
-	let statusBarAvailable = false;
-	let warnedMissingStatusBar = false;
-	let warningTimer: ReturnType<typeof setTimeout> | undefined;
+	// Re-registering the widget on a reload would otherwise leave the previous
+	// instance's subscription alive on a shared event bus.
+	globalState.panelActiveUnsubscribe?.();
 
-	const clearWarningTimer = (): void => {
-		if (!warningTimer) return;
-		clearTimeout(warningTimer);
-		warningTimer = undefined;
-	};
+	const widget = new ProcessesWidget({
+		setWidget: (content) => {
+			// The panel coordinator owns the single above-editor widget. Publish
+			// formatted lines there so process refreshes never reorder panels.
+			pi.events.emit(PANEL_EVENTS.content, {
+				id: PANEL_ID,
+				content,
+				render: renderProcessesWidgetContent,
+			});
+		},
+		listEntries: () => widgetEntries(),
+		styles: () => {
+			const theme = globalState.ctx?.ui.theme;
+			return {
+				bold: (text) => theme?.bold(text) ?? text,
+				dim: (text) => theme?.fg("dim", text) ?? text,
+				muted: (text) => theme?.fg("muted", text) ?? text,
+				accent: (text) => theme?.fg("thinkingHigh", text) ?? text,
+				success: (text) => theme?.fg("success", text) ?? text,
+				warning: (text) => theme?.fg("warning", text) ?? text,
+				error: (text) => theme?.fg("error", text) ?? text,
+			};
+		},
+		exitedRetentionMs: () => config().exitedRetentionMs,
+	});
+	globalState.widget = widget;
 
-	const warnMissingStatusBar = (): void => {
-		warningTimer = undefined;
-		if (statusBarAvailable || warnedMissingStatusBar) return;
-		warnedMissingStatusBar = true;
-		const ctx = globalState.ctx;
-		if (ctx?.hasUI) ctx.ui.notify("proc extension requires status-bar for its process row", "warning");
-	};
-
-	const pingStatusBar = (): void => {
-		statusBarAvailable = false;
-		warnedMissingStatusBar = false;
-		clearWarningTimer();
-		if (config().statusRow) warningTimer = setTimeout(warnMissingStatusBar, STATUS_BAR_WARNING_DELAY_MS);
-		pi.events.emit(STATUS_BAR_EVENTS.ping, { id: EXTENSION_ID });
-	};
-
-	pi.events.on(STATUS_BAR_EVENTS.pong, (payload) => {
-		const maybe = payload as { id?: unknown } | undefined;
-		if (maybe?.id !== EXTENSION_ID) return;
-		statusBarAvailable = true;
-		clearWarningTimer();
+	globalState.panelActiveUnsubscribe = pi.events.on(PANEL_EVENTS.active, (payload) => {
+		const activeId = (payload as { activeId?: unknown } | undefined)?.activeId;
+		widget.setActive(activeId === PANEL_ID);
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	const startSession = (ctx: ExtensionContext): void => {
 		globalState.pi = pi;
 		globalState.ctx = ctx;
-		pingStatusBar();
-		publishRow();
-	});
+		// Clear a footer row left by the pre-widget proc extension during /reload.
+		// The new Processes widget does not depend on status-bar being installed.
+		pi.events.emit("px:status-bar:row:clear", { id: "proc" });
+		widget.reset();
+		registerPanel();
+		publishWidget();
+		// Ask panels to replay its current active state; the response arrives as a
+		// `px:panels:active` event and expands the widget when proc is active.
+		pi.events.emit(PANEL_EVENTS.sync, { id: PANEL_ID });
+	};
 
-	pi.on("session_tree", async (_event, ctx) => {
-		globalState.pi = pi;
-		globalState.ctx = ctx;
-		publishRow();
-	});
+	pi.on("session_start", async (_event, ctx) => startSession(ctx));
+	pi.on("session_tree", async (_event, ctx) => startSession(ctx));
 
 	pi.on("session_shutdown", async (event) => {
-		clearWarningTimer();
+		// The extension may be disabled on reload, so do not leave a listener
+		// holding the old widget and context on the shared event bus.
+		globalState.panelActiveUnsubscribe?.();
+		globalState.panelActiveUnsubscribe = undefined;
+		// Clear the coordinator's cached content before dropping the session.
+		widget.clear();
 		if (globalState.ctx) globalState.ctx = undefined;
 		if (event.reason === "quit") {
 			for (const record of globalState.records) {
@@ -1026,7 +1068,6 @@ export default function procExtension(pi: ExtensionAPI): void {
 				wakeWaiters(record);
 			}
 			globalState.records = [];
-			publishRow();
 		}
 	});
 
@@ -1121,7 +1162,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 						throw new Error(`proc: "${record.name}" is still running; stop it before forgetting.`);
 					}
 					removeRecord(record);
-					publishRow();
+					publishWidget();
 					return { content: [{ type: "text", text: `Forgot ${record.name}.` }], details: { name: record.name } };
 				}
 				default: {
@@ -1190,7 +1231,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 					if (sub === "forget") {
 						if (isRunning(record)) throw new Error(`"${record.name}" is still running; stop it first.`);
 						removeRecord(record);
-						publishRow();
+						publishWidget();
 						notifyText(ctx, `Forgot ${record.name}.`);
 					} else if (sub === "kill") {
 						stopProcess(record, undefined, true);

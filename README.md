@@ -20,7 +20,7 @@ This repo currently contains the following extension(s):
 | [`repo-stats`](extensions/repo-stats/README.md) | Publishes first-line repo info (`path (branch)` and dirty totals like `+150/-200`) for the status bar. | `status-bar` |
 | [`skill-stats`](extensions/skill-stats/README.md) | Publishes `SKILLS: n/m` for unique `SKILL.md` files successfully read in the current session. | `status-bar` |
 | [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/px:flutter run`, `/px:flutter reload`, `/px:flutter restart`, `/px:flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `status-bar`, `flutter` CLI |
-| [`proc`](extensions/proc/README.md) | Runs and manages long-lived background processes: a `proc` tool (`run`/`list`/`status`/`logs`/`stop`/`kill`/`write`/`forget`), per-process log cursors, and a status-bar row with colored state dots. | `status-bar` |
+| [`proc`](extensions/proc/README.md) | Runs and manages long-lived background processes with a `proc` tool, per-process log cursors, and a collapsible above-editor Processes widget. | `panels` |
 | [`http`](extensions/http/README.md) | Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`. | `cheerio`, `pandoc` for `http_md` |
 | [`sqlite`](extensions/sqlite/README.md) | Adds a `sqlite` query tool for file-backed and in-memory databases, with read-only/mutating SQL classification for safe-mode integration. | `sqlite3` CLI |
 | [`interactive-bash`](extensions/interactive-bash/README.md) | Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts). | |
@@ -32,7 +32,8 @@ This repo currently contains the following extension(s):
 | [`prompt-stash`](extensions/prompt-stash/README.md) | Saves, clears, lists, and restores in-progress editor drafts with session-scoped persistence. | |
 | [`notes`](extensions/notes/README.md) | Global free-form notes: `/px:notes` composes one, `/px:notes:list` browses and copies them from a two-pane dialog. | |
 | [`hub`](extensions/hub/README.md) | Central signal hub: routes and arbitrates capability requests between extensions (`perm:shell`, `perm:io`, `perm:net`, `perm:agent`, `perm:tool`). | |
-| [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents. Async by default with automatic completion injection, plus explicit `execution: "blocking"`. Includes permission inheritance, approval relay, model-callable `action: "stop"`/`"steer"` controls, `/px:agents` runtime controls, session-wide model/effort rewiring via `/px:agents:rewire`, an above-editor active-subagents widget, and `/px:agent:log`. | `safe-mode` optional |
+| [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents. Async by default with automatic completion injection, plus explicit `execution: "blocking"`. Includes permission inheritance, approval relay, model-callable `action: "stop"`/`"steer"` controls, `/px:agents` runtime controls, session-wide model/effort rewiring via `/px:agents:rewire`, an above-editor active-subagents widget, and `/px:agent:log`. | `panels`; `safe-mode` optional |
+| [`panels`](extensions/panels/README.md) | Coordinates above-editor panels in a stable order. Both start collapsed; `Alt+P` cycles forward and `Alt+Shift+P` cycles backward. | |
 
 ## Network permissions (`perm:net`)
 

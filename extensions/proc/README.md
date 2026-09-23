@@ -2,7 +2,7 @@
 
 Runs and manages long-lived background processes for the agent. Start a dev server,
 watcher, or build; read its output on demand; check exit status; and see what is
-running in the status bar.
+running in the Processes widget above the editor.
 
 ## Features
 
@@ -11,7 +11,8 @@ running in the status bar.
   stops its children (no orphaned `node`/`npm` holding ports).
 - Ordered stdout/stderr ring buffer per process with independent read cursors:
   read only what is new since the last read, or replay from the start.
-- Own status-bar row: `● vite 48231  ·  ● npm 48255`.
+- Non-interactive Processes widget above the input editor: collapsed summary
+  by default, expands to a bounded list while the `processes` panel is active.
 - Processes survive `/reload`, `/new`, `/resume`, and `/fork`; they are stopped
   when pi quits.
 - `safe-mode` integration: read-only actions auto-allow, mutations ask.
@@ -58,22 +59,52 @@ err: warn ...
 `from:"last"` advances the `agent` cursor. `/px:proc logs` uses the separate
 `user` cursor, so viewing logs by hand does not consume what the agent sees.
 
-## Status bar
+## Processes widget (panels)
 
-Requires the [`status-bar`](../status-bar/README.md) extension and its
-`px:status-bar:row:*` contract. `proc` publishes one extra footer row:
+`proc` publishes its non-interactive Processes content to the [`panels`](../panels/README.md)
+coordinator. The coordinator renders all panels in a fixed order inside one
+above-editor widget. `proc` no longer uses the `status-bar` extension.
+
+The widget is **collapsed by default** to a single summary line with an expand
+icon:
 
 ```text
-● vite 48231  ·  ● npm 48255
+   Processes (2 running, 1 exited) 󰕏
 ```
 
-The dot is colored by state: green `running`, yellow `stopping`, gray
-`exited (0)`, red `exited (non-zero/signal)`. Running processes are listed
-first. Exited processes stay in the row for `exitedRetentionMs` (default 60s),
-then drop off; they remain in `list` until `forget`. If the row is too long it
-shows at most 6 items plus `+N more`.
+It expands while the `processes` panel is the active panel. The collapsed and
+expanded states are driven by the [`panels`](../panels/README.md) contract:
 
-`proc` works without `status-bar`; it only loses the row.
+- `proc` emits `px:panels:register` with
+  `{ id: "processes", label: "Processes", order: 20, visible }`.
+- `proc` emits `px:panels:visibility` with `{ id: "processes", visible }`
+  whenever the panel's visibility changes (no visible process ↔ at least one).
+- `proc` listens for `px:panels:active` with `{ activeId }` and expands only
+  when `activeId === "processes"`.
+- `proc` emits `px:panels:content` with its formatted lines and width renderer;
+  the coordinator orders them independently of process refreshes.
+- On `session_start` and `session_tree`, `proc` emits `px:panels:sync` to ask
+  `panels` to replay its current active state.
+
+Expanded output is bounded to 10 lines:
+
+```text
+   Processes (2 running, 1 exited)
+  󰁚 vite  pid 48231  running  12s  +3
+  󰄬 npm   pid 48255  exited   8s  code 0
+```
+
+Each process shows its name, pid, state, elapsed time, and details (exit code or
+signal, plus an unread count). Status glyphs match the Subagents widget:
+green arrow-circle for `running`, yellow pause-circle for `stopping`, gray
+check for `exited (0)`, red close for `exited (non-zero/signal)`. The title
+uses the same purple and left inset as Subagents. Running
+processes are listed first, then exited by most recent end time. Exited
+processes stay in the widget for `exitedRetentionMs` (default 60s), then drop
+off; they remain in `list` until `forget`. When more processes are visible than
+fit, the last line shows `… N more`.
+
+The `proc` tool works without `panels`; the Processes widget requires it.
 
 ## Configuration
 
@@ -85,16 +116,17 @@ Optional global config at `~/.pi/agent/proc.json`:
   "logLines": 5000,
   "logBytes": 2000000,
   "exitedRetentionMs": 60000,
-  "exitedCap": 20,
-  "statusRow": true
+  "exitedCap": 20
 }
 ```
 
 - `maxProcesses` — concurrent running processes; `run` fails at the cap.
 - `logLines` / `logBytes` — per-process ring buffer limits (whichever hits first).
-- `exitedRetentionMs` — how long an exited process stays in the status-bar row.
+- `exitedRetentionMs` — how long an exited process stays in the widget.
 - `exitedCap` — how many exited processes are retained (oldest dropped first).
-- `statusRow` — set `false` to disable the status-bar row.
+
+The retired `statusRow` option is still honored as a compatibility fallback:
+`"statusRow": false` hides the Processes widget and keeps the panel out of the cycle.
 
 ## Safety
 
@@ -159,6 +191,6 @@ Copy this folder into a standard pi extension location:
 
 Dependencies:
 
-- `status-bar` extension for the process row (optional but recommended)
+- `panels` extension for the Processes widget and panel shortcuts
 
 Then run `/reload`.

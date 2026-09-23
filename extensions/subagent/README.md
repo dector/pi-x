@@ -54,7 +54,8 @@ subagent/
 ├── result-output.ts     # Canonical per-result output extraction (shared with tool results)
 ├── run-id.ts            # Restart-safe unique run IDs
 ├── agent-log.ts         # Pure merge/format helpers for `/px:agent:log`
-├── status-row.ts        # Pure formatter and publisher for the active-subagents editor widget
+├── status-row.ts        # Pure formatter for the active-subagents panel content
+├── panels.ts            # `px:panels:*` integration: active -> collapsed, Watch suppression
 ├── safe-mode.ts         # Safe-mode snapshot query and child argv
 ├── timing.ts            # Per-run timing breakdown
 ├── events.ts            # RPC stream-event application to `SingleResult`
@@ -439,18 +440,26 @@ Pi 0.85.1 only marks a tool result as an error when `execute` throws, so a contr
 ## Active subagents widget
 
 While at least one child is running, `subagent` publishes a non-interactive
-widget immediately above the input editor via `ctx.ui.setWidget(id, lines, {
-placement: "aboveEditor" })`. The stable widget id is `px-subagents-active`.
-Detached async children keep the widget visible until their dispatch settles.
-The widget is cleared when the last child finishes and on `session_shutdown`.
-Press `Alt+P` to collapse it to a single summary line (and press again to
-expand). Opening a floating Watch panel collapses the widget automatically and
-restores the user's prior state when the panel closes, so the two surfaces do
-not compete for the same rows. `Alt+P` remains the manual control for any other
-case.
+panel immediately above the input editor. It never calls `ctx.ui.setWidget`
+itself: it emits `px:panels:content` with its formatted lines and a width
+renderer, and the [panels coordinator](../panels/README.md) draws every panel
+into the single `px-panels` widget. Detached async children keep the panel
+visible until their dispatch settles; the content is cleared when the last child
+finishes and on `session_shutdown`.
+
+The coordinator owns `Alt+P` (forward) and `Alt+Shift+P` (reverse), which cycle
+every registered panel and then collapse them all. The subagent panel registers
+as id `subagents`, order `10`. Every panel starts collapsed, so the widget shows
+a one-line summary until the user selects `subagents`; while another panel (for
+example `processes`) is active the summary stays collapsed. After the selected
+panel disappears, all panels stay collapsed until the user presses a cycle key;
+a later subagent run does not auto-expand it. Opening a floating Watch panel
+temporarily suppresses the widget; closing it re-derives the state from the
+coordinator's current selection, so a cycle change made while Watch was open is
+not undone.
 
 ```text
-󰚩 Subagents (1 active, 1 finished)
+󰚩  Subagents (1 active, 1 finished)
  ● [red-panda-00k3w9fz2q] · worker-fast · openai/gpt-5 (minimal)
  │ running 34s, 3 turns · ctx:10% $0.0266
  │ Implement validation and update the related tests…

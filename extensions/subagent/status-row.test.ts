@@ -101,7 +101,7 @@ test("one active run renders identity, runtime, and task lines", () => {
 	const lines = formatActiveSubagentWidget([makeRun()], NOW);
 	expect(lines).toBeDefined();
 	expect(lines).toHaveLength(4);
-	expect(lines?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(lines?.[0]).toBe("󰚩  Subagents (1 active)");
 	expect(lines?.[1]).toBe(` ${MANAGER_ICONS.running} [sa-abc123] · worker`);
 	expect(lines?.[2]).toBe(" │ running 34s");
 	expect(lines?.[3]).toBe(" │ Implement validation");
@@ -115,7 +115,7 @@ test("multiple active runs list every active run", () => {
 		],
 		NOW,
 	);
-	expect(lines?.[0]).toBe("󰚩 Subagents (2 active)");
+	expect(lines?.[0]).toBe("󰚩  Subagents (2 active)");
 	expect(lines).toHaveLength(7);
 	expect(lines?.[1]).toContain("worker");
 	expect(lines?.[2]).toContain("running");
@@ -136,7 +136,7 @@ test("mixed completed and active runs count and render only the active one", () 
 	});
 	const active = makeRun({ runId: "sa-active", agentName: "researcher", task: "Live task" });
 	const lines = formatActiveSubagentWidget([completed, active], NOW);
-	expect(lines?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(lines?.[0]).toBe("󰚩  Subagents (1 active)");
 	expect(lines).toHaveLength(4);
 	expect(lines?.[1]).toContain("researcher");
 	expect(lines?.[3]).toContain("Live task");
@@ -156,7 +156,7 @@ test("settled siblings stay visible with outcome counts until their dispatch fin
 			result: { state: "failed", exitCode: 1, stopReason: "aborted" },
 		}),
 	], NOW);
-	expect(lines?.[0]).toBe("󰚩 Subagents (1 active, 1 finished, 1 failed, 1 canceled)");
+	expect(lines?.[0]).toBe("󰚩  Subagents (1 active, 1 finished, 1 failed, 1 canceled)");
 	expect(lines?.join("\n")).toContain(`${MANAGER_ICONS.finished} [sa-ok]`);
 	expect(lines?.[lines.length - 1]).toBe("… 2 more");
 });
@@ -269,7 +269,7 @@ test("widget uses theme roles for hierarchy and run state", () => {
 			error: wrap("error"),
 		},
 	});
-	expect(lines?.[0]).toBe("<accent><b>󰚩 Subagents (1 active)</b></accent>");
+	expect(lines?.[0]).toBe("<accent><b>󰚩  Subagents (1 active)</b></accent>");
 	expect(lines?.[1]).toBe(` <success>${MANAGER_ICONS.running}</success> <dim>[red-panda]</dim><dim> · </dim><muted>worker</muted>`);
 	expect(lines?.[2]).toBe("<dim> │ running 34s</dim>");
 	expect(lines?.[3]).toBe("<dim> │ Implement validation</dim>");
@@ -342,7 +342,7 @@ test("widget content is truncated to the line limit with a hidden count", () => 
 	);
 	const lines = formatActiveSubagentWidget(runs, NOW);
 	expect(lines).toHaveLength(8);
-	expect(lines?.[0]).toBe("󰚩 Subagents (20 active)");
+	expect(lines?.[0]).toBe("󰚩  Subagents (20 active)");
 	expect(lines?.[lines.length - 1]).toBe("… 18 more");
 });
 
@@ -357,6 +357,8 @@ function makePublished(options: {
 	now?: () => number;
 	listRuns?: () => readonly ActiveSubagentWidgetRun[];
 	timers?: ActiveSubagentWidgetTimers;
+	/** Start expanded instead of the production collapsed default. */
+	expanded?: boolean;
 } = {}) {
 	const published: Array<string[] | undefined> = [];
 	const fake = makeFakeTimers();
@@ -366,14 +368,29 @@ function makePublished(options: {
 		listRuns: options.listRuns,
 		timers: options.timers ?? fake.timers,
 	});
+	if (options.expanded) {
+		widget.setCollapsed(false);
+		// Drop the expansion publish (with no runs yet) so assertions start clean.
+		published.length = 0;
+	}
 	return { widget, published, fake };
 }
 
-test("registry refresh publishes the formatted widget", () => {
+test("defaults to a one-line collapsed summary on the first active run", () => {
 	const { widget, published } = makePublished();
 	widget.refresh([makeRun()]);
+	expect(widget.isCollapsed).toBe(true);
 	expect(published).toHaveLength(1);
-	expect(published[0]?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(published[0]).toHaveLength(1);
+	expect(published[0]?.[0]).toContain("Subagents (1 active)");
+	expect(published[0]?.[0]).toContain(statusRow.ACTIVE_SUBAGENT_COLLAPSED_ICON);
+});
+
+test("registry refresh publishes the formatted widget when expanded", () => {
+	const { widget, published } = makePublished({ expanded: true });
+	widget.refresh([makeRun()]);
+	expect(published).toHaveLength(1);
+	expect(published[0]?.[0]).toBe("󰚩  Subagents (1 active)");
 });
 
 test("registry refresh suppresses identical content", () => {
@@ -407,7 +424,7 @@ test("formatCollapsedActiveSubagentWidget returns one line or undefined", () => 
 });
 
 test("collapsed mode publishes a single summary line", () => {
-	const { widget, published } = makePublished();
+	const { widget, published } = makePublished({ expanded: true });
 	widget.refresh([makeRun()]);
 	widget.setCollapsed(true);
 	const last = published[published.length - 1];
@@ -417,7 +434,7 @@ test("collapsed mode publishes a single summary line", () => {
 });
 
 test("toggleCollapsed flips the state and republishes", () => {
-	const { widget, published } = makePublished();
+	const { widget, published } = makePublished({ expanded: true });
 	widget.refresh([makeRun()]);
 	expect(widget.isCollapsed).toBe(false);
 	expect(widget.toggleCollapsed()).toBe(true);
@@ -426,7 +443,7 @@ test("toggleCollapsed flips the state and republishes", () => {
 	expect(widget.toggleCollapsed()).toBe(false);
 	expect(widget.isCollapsed).toBe(false);
 	expect(published.length).toBeGreaterThan(collapsedCount);
-	expect(published[published.length - 1]?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(published[published.length - 1]?.[0]).toBe("󰚩  Subagents (1 active)");
 });
 
 test("collapsed mode clears when the last run completes", () => {
@@ -438,17 +455,17 @@ test("collapsed mode clears when the last run completes", () => {
 });
 
 test("reset forces a republish on the next refresh", () => {
-	const { widget, published } = makePublished();
+	const { widget, published } = makePublished({ expanded: true });
 	widget.refresh([makeRun()]);
 	widget.clear();
 	widget.reset();
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(3);
-	expect(published[2]?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(published[2]?.[0]).toBe("󰚩  Subagents (1 active)");
 });
 
 test("session_tree reset republishes an otherwise-identical active snapshot", () => {
-	const { widget, published } = makePublished();
+	const { widget, published } = makePublished({ expanded: true });
 	widget.refresh([makeRun()]);
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(1);
@@ -456,7 +473,7 @@ test("session_tree reset republishes an otherwise-identical active snapshot", ()
 	widget.reset();
 	widget.refresh([makeRun()]);
 	expect(published).toHaveLength(2);
-	expect(published[1]?.[0]).toBe("󰚩 Subagents (1 active)");
+	expect(published[1]?.[0]).toBe("󰚩  Subagents (1 active)");
 });
 
 test("active runs start exactly one bounded refresh timer", () => {
@@ -492,7 +509,7 @@ test("clear and reset stop the refresh timer", () => {
 
 test("a silent-period tick advances elapsed time without a registry update", () => {
 	let now = NOW;
-	const { widget, published, fake } = makePublished({ now: () => now });
+	const { widget, published, fake } = makePublished({ now: () => now, expanded: true });
 	widget.refresh([makeRun({ startedAt: NOW - 1_000 })]);
 	expect(published).toHaveLength(1);
 	expect(published[0]?.[2]).toContain("1s");
@@ -504,7 +521,7 @@ test("a silent-period tick advances elapsed time without a registry update", () 
 
 test("a tick re-reads runs from listRuns when provided", () => {
 	let runs: ActiveSubagentWidgetRun[] = [makeRun({ result: { state: "running" } })];
-	const { widget, published, fake } = makePublished({ listRuns: () => runs });
+	const { widget, published, fake } = makePublished({ listRuns: () => runs, expanded: true });
 	widget.refresh(runs);
 	runs = [makeRun({ result: { state: "paused" } })];
 	fake.tick();

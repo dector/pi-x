@@ -140,6 +140,8 @@ mkdir -p "$DEST_ROOT"
 extensions=(
   "hub"
   "status-bar"
+  "panels"
+  "subagent"
   "proc"
   "no-reflection"
   "switch-thinking"
@@ -159,7 +161,6 @@ extensions=(
   "notes"
   "git"
   "pi-nvim"
-  "subagent"
   "herdr-agent-state"
 )
 

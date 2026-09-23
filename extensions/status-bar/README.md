@@ -84,9 +84,8 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - Empty/whitespace-only content is skipped. Rows are hidden while no producer
   has published content.
 - Rows are display-mode agnostic (rendered in both `new` and `legacy`).
-- Current producers:
-  - [`proc`](../proc/README.md) (id `proc`, order `100`).
-  - `hub-progress` (id `hub-progress`, order `50`) — see [Progress row](#progress-row).
+- Current producer: `hub-progress` (id `hub-progress`, order `50`) — see [Progress row](#progress-row).
+  [`proc`](../proc/README.md) now uses an above-editor Processes widget instead of a footer row.
 
 ### Progress row
 

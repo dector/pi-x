@@ -26,7 +26,7 @@ import {
 	getSelectListTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Editor, Key, Markdown, Spacer, Text, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Container, Editor, Markdown, Spacer, Text, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	buildAgentLogPicker,
@@ -103,6 +103,17 @@ import {
 	type ManagerRunDescriptor,
 } from "./manager.ts";
 import { ManagerListView, type ManagerListResult } from "./manager-list.ts";
+import {
+	PANELS_ACTIVE_EVENT,
+	PANELS_CONTENT_EVENT,
+	PANELS_REGISTER_EVENT,
+	PANELS_VISIBILITY_EVENT,
+	SUBAGENT_PANEL_ID,
+	SUBAGENT_PANEL_LABEL,
+	SUBAGENT_PANEL_ORDER,
+	SubagentPanelBridge,
+	parsePanelActive,
+} from "./panels.ts";
 import { formatResultTiming, formatToolCall, formatToolStatus, formatUsageStats } from "./format.ts";
 import { combineAbortSignals } from "./execution.ts";
 import { prepareSubagentDispatch, type SubagentRequest } from "./prepare.ts";
@@ -152,7 +163,6 @@ import {
 } from "./delegation-depth.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
 import {
-	ACTIVE_SUBAGENT_WIDGET_ID,
 	ActiveSubagentWidget,
 	renderActiveSubagentWidgetContent,
 } from "./status-row.ts";
@@ -876,24 +886,22 @@ export default function (pi: ExtensionAPI) {
 	const registry = new SubagentRegistry(30, () => publishActiveSubagentWidget());
 
 	// Active-subagents widget docked above the input editor. The widget is
-	// non-interactive; `/px:agents` owns inspection and control. Content is
+	// non-interactive; `/px:agents` owns inspection and control. The panel
+	// coordinator owns the single `px-panels` widget, so this only publishes
+	// formatted lines and never calls `ctx.ui.setWidget` itself. Content is
 	// cleared on shutdown before the session context is dropped.
 	const activeWidget = new ActiveSubagentWidget({
 		setWidget: (content) => {
-			if (!sessionContext?.hasUI) return;
-			try {
-				const component = content
-					? (_tui: TUI, theme: Theme) => ({
-						render: (width: number) => renderActiveSubagentWidgetContent(content, width, {
-							dim: (text) => theme.fg("dim", text),
-						}),
-						invalidate: () => {},
-					})
-					: undefined;
-				sessionContext.ui.setWidget(ACTIVE_SUBAGENT_WIDGET_ID, component, { placement: "aboveEditor" });
-			} catch {
-				// Ignore a stale or closing UI; run cleanup must still complete.
-			}
+			// The coordinator caches the lines and calls `render` at draw time with
+			// the terminal width, so the subagent keeps its own wrapping and inset.
+			pi.events.emit(PANELS_CONTENT_EVENT, {
+				id: SUBAGENT_PANEL_ID,
+				content,
+				render: (lines: readonly string[], width: number) =>
+					renderActiveSubagentWidgetContent(lines, width, {
+						dim: (text) => sessionContext?.ui.theme.fg("dim", text) ?? text,
+					}),
+			});
 		},
 		// Ticks re-read the registry so elapsed time (and any state change that
 		// did not emit a progress update) keeps moving during silent periods.
@@ -912,15 +920,40 @@ export default function (pi: ExtensionAPI) {
 		contextWindowForModel,
 	});
 
-	// Collapse the active-subagents widget to a single summary line. The widget is
-	// non-interactive, so this is the only way to reclaim its rows (for example
-	// while a floating Watch panel would otherwise overlap it).
-	pi.registerShortcut(Key.alt("p"), {
-		description: "Collapse or expand the active-subagents panel",
-		handler: async (ctx) => {
-			const collapsed = activeWidget.toggleCollapsed();
-			ctx.ui.notify(collapsed ? "Subagent panel collapsed" : "Subagent panel expanded", "info");
-		},
+	// Panel coordinator bridge. The coordinator owns Alt+P and broadcasts which
+	// panel is active; the widget starts collapsed and is expanded only while the
+	// subagents panel is selected. The bridge keeps the Watch overlay's temporary
+	// suppression separate from the active panel so a cycle change made while
+	// Watch is open survives the restore. See ../panels/contract.ts for the
+	// protocol.
+	const panelBridge = new SubagentPanelBridge((collapsed) => activeWidget.setCollapsed(collapsed));
+	const hasActiveSubagentRuns = (): boolean => registry.list().some((run) => !run.completedAt);
+	const publishPanelVisibility = (): void => {
+		const visible = hasActiveSubagentRuns();
+		if (panelBridge.noteVisibility(visible)) {
+			pi.events.emit(PANELS_VISIBILITY_EVENT, { id: SUBAGENT_PANEL_ID, visible });
+		}
+	};
+	// Announce the panel on every session start. `register` also makes the
+	// coordinator re-broadcast the active panel (always `null`/collapsed until a
+	// cycle key), so a panel that starts after the coordinator still learns the
+	// current selection. Registration never expands the panel.
+	const announceSubagentPanel = (): void => {
+		const visible = hasActiveSubagentRuns();
+		// Seed the de-dup state so the first widget refresh does not re-announce.
+		panelBridge.noteVisibility(visible);
+		pi.events.emit(PANELS_REGISTER_EVENT, {
+			id: SUBAGENT_PANEL_ID,
+			label: SUBAGENT_PANEL_LABEL,
+			order: SUBAGENT_PANEL_ORDER,
+			visible,
+		});
+	};
+	// Subscribed for the whole extension lifetime; unsubscribed on shutdown so
+	// `/reload` cannot leave a stale listener on the shared event bus.
+	const offPanelActive = pi.events.on(PANELS_ACTIVE_EVENT, (payload) => {
+		const active = parsePanelActive(payload);
+		if (active) panelBridge.handleActive(active.activeId);
 	});
 
 	let nameState: SessionNameState = { agentIds: new Set(), dispatchIds: new Set() };
@@ -1063,6 +1096,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		activeWidget.refresh(registry.list());
+		publishPanelVisibility();
 	}
 
 	// Resolve a model's context window for the chat usage line's `ctx:<n>%`. The
@@ -1149,24 +1183,13 @@ export default function (pi: ExtensionAPI) {
 	 */
 	const WATCH_OVERLAY_HEIGHT_RATIO = 0.7;
 
-	/**
-	 * Collapse the active-subagents widget for the duration of a watch panel so
-	 * the two surfaces do not compete for the same rows, then restore the prior
-	 * state. Returns a no-op restore when the widget was already collapsed.
-	 */
-	function collapseWidgetForWatch(): () => void {
-		const wasCollapsed = activeWidget.isCollapsed;
-		if (!wasCollapsed) activeWidget.setCollapsed(true);
-		return () => {
-			if (!wasCollapsed) activeWidget.setCollapsed(false);
-		};
-	}
-
 	async function openAttachOverlay(target: AttachOverlayTarget, ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) return;
 		// Watch floats over the editor, so keep the widget out of its way while it
-		// is open and put it back exactly as the user left it afterwards.
-		const restoreWidget = target.watchOnly ? collapseWidgetForWatch() : undefined;
+		// is open. Suppression is a flag, not a snapshot: if the user cycles
+		// panels while Watch is open, clearing the flag re-derives the collapsed
+		// state from the current active panel instead of undoing the cycle.
+		if (target.watchOnly) panelBridge.setWatchSuppress(true);
 		try {
 			const buildView = (tui: TUI, theme: Theme, done: (result: null) => void) => {
 				const editorTheme: EditorTheme = {
@@ -1237,7 +1260,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 		} finally {
 			closeActiveAttach = undefined;
-			restoreWidget?.();
+			if (target.watchOnly) panelBridge.setWatchSuppress(false);
 		}
 	}
 
@@ -1889,6 +1912,7 @@ export default function (pi: ExtensionAPI) {
 		// Forget the previous widget content so the first refresh always
 		// republishes (and clears a stale widget from an earlier session).
 		activeWidget.reset();
+		announceSubagentPanel();
 		publishActiveSubagentWidget();
 		// Re-announce detached work: a reload replaces the Herdr integration, so
 		// its background lease starts empty.
@@ -1915,6 +1939,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (event) => {
 		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
 		pi.events.emit(STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT, {});
+		// Drop the panel subscription so `/reload` cannot leave a stale listener
+		// on the shared event bus, then forget the coordinator-derived state.
+		offPanelActive();
+		panelBridge.reset();
 		// Order matters: flip the shutdown flag, abort detached controllers,
 		// terminate active RPC children, await settled dispatch promises, then
 		// clear runtime state. Completion delivery is suppressed by the manager
