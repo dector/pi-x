@@ -1392,7 +1392,7 @@ async function showHiDialog(
 					tui.requestRender();
 				};
 
-				const dialogGroupOrder: DialogGroup[] = ["PROMPTS & NOTES", "AGENTS", "ACCESS & SAFETY"];
+				const dialogGroupOrder: DialogGroup[] = ["ACCESS & SAFETY", "AGENTS", "PROMPTS & NOTES"];
 				const mainActions: DialogAction[] = [
 					{
 						hotkey: "s",
@@ -1417,8 +1417,7 @@ async function showHiDialog(
 						run: () => runAfterClose(onOpenAgentsManager),
 					},
 					{
-						hotkey: Key.ctrlShift("r"),
-						hotkeyLabel: "Ctrl+R",
+						hotkey: "R",
 						label: "Agents rewiring…",
 						group: "AGENTS",
 						showStatusBadge: false,
@@ -1439,20 +1438,11 @@ async function showHiDialog(
 					},
 					{
 						hotkey: "r",
-						hotkeyAliases: ["R"],
 						label: "Reader mode",
 						group: "ACCESS & SAFETY",
 						toggleSeverity: "none",
 						isEnabled: (state) => state.readerOn,
 						run: onToggleReader,
-					},
-					{
-						hotkey: "+",
-						label: "Outer access",
-						group: "ACCESS & SAFETY",
-						toggleSeverity: "warning",
-						isEnabled: (state) => state.outerOn,
-						run: onToggleOuter,
 					},
 					{
 						hotkey: "!",
@@ -1461,6 +1451,14 @@ async function showHiDialog(
 						toggleSeverity: "danger",
 						isEnabled: (state) => state.yoloPlusOn,
 						run: onSetYoloPlus,
+					},
+					{
+						hotkey: "+",
+						label: "Outer access",
+						group: "ACCESS & SAFETY",
+						toggleSeverity: "warning",
+						isEnabled: (state) => state.outerOn,
+						run: onToggleOuter,
 					},
 					{
 						hotkey: "p",
@@ -1655,7 +1653,7 @@ async function showHiDialog(
 							const enabled = action.isEnabled(state);
 							const label = overrides?.label ?? action.label;
 							const shortcut = overrides?.hotkeyLabel ?? action.hotkeyLabel ?? action.hotkey;
-							const statusText = action.showStatusBadge === false ? "" : enabled ? "●" : "○";
+							const statusText = action.showStatusBadge === false ? "" : enabled ? "─●" : "○─";
 							const markerText = action.opensMenu ? "→" : statusText;
 							const rightText = [shortcut, markerText].filter(Boolean).join(" ");
 							const prefix = isSelected ? " › " : "   ";
@@ -1673,7 +1671,7 @@ async function showHiDialog(
 										: action.toggleSeverity === "warning"
 											? "warning"
 											: "success";
-								marker = theme.fg(color, enabled ? theme.bold(statusText) : statusText);
+								marker = enabled ? theme.fg(color, theme.bold(statusText)) : theme.fg("muted", statusText);
 							}
 							return fit(`${left}${gap}${styledShortcut}${marker ? ` ${marker}` : ""}`);
 						};

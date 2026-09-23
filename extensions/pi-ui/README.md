@@ -31,18 +31,18 @@ Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including
 
 Current dialog items:
 
+- **Access & Safety**
+  - `r - toggle reader mode`
+  - `! - YOLO+ mode`
+  - `+ - toggle outer mode`
+- **Agents**
+  - `a - subagents…` (opens the `/px:agents` batch list)
+  - `R - agents rewiring…` (opens the rewiring menu)
+  - `Ctrl+r - rewire agents` (toggle)
 - **Prompts & Notes**
   - `s - prompt stash…` (opens a stash submenu)
   - `p - prompt history…` (opens the tabbed history dialog)
   - `n/N - new note / browse notes…` (`n` opens the `/px:notes` editor, `N` opens the `/px:notes:list` browser)
-- **Agents**
-  - `a - subagents…` (opens the `/px:agents` batch list)
-  - `Ctrl+R - agents rewiring…` (opens the rewiring menu)
-  - `Ctrl+r - rewire agents` (toggle)
-- **Access & Safety**
-  - `r - toggle reader mode`
-  - `+ - toggle outer mode`
-  - `! - YOLO+ mode`
 - `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
 - `Enter - run selected action`
@@ -52,7 +52,7 @@ Current dialog items:
 Behavior details:
 
 - The dialog uses the status-bar frame language: purple heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
-- Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **Prompts & Notes**, **Agents**, and **Access & Safety** headings. Shortcuts and indicators are right-aligned in one column, with a four-space gutter after the widest action name; `→` and an ellipsis mark actions that open another screen, and `●`/`○` show toggle state.
+- Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **Access & Safety**, **Agents**, and **Prompts & Notes** headings. Shortcuts and indicators are right-aligned in one column, with a four-space gutter after the widest action name; `→` and an ellipsis mark actions that open another screen, and `─●`/`○─` show toggle state.
 - The selected row uses the same purple as the frame. Arrow navigation skips group headings.
 - Pressing `Esc` or `Backspace` in the main dialog closes it with no side effects.
 - Pressing `Ctrl+,` also closes the dialog (same toggle hotkey).
@@ -69,8 +69,8 @@ Behavior details:
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
 - Pressing `Ctrl+r` runs **Rewire agents**, emits event `px:subagent:rewire:toggle`, and closes the dialog.
-- Pressing `Ctrl+R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
-- Pressing `r` (or `R`) emits event `px:safe-mode:toggle-reader` and closes the dialog.
+- Pressing `R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
+- Pressing `r` emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
 - Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
 - Pressing `p` (or `P`) opens a full-width, tabbed prompt-history dialog in the same visual style:
@@ -83,7 +83,7 @@ Behavior details:
 - Pressing `n` emits event `px:notes:open` and closes the dialog; `notes` then opens its editor.
 - Pressing `N` emits event `px:notes:list` and closes the dialog; `notes` then opens its list browser.
 - Both notes actions are shown as a single row (`n/N`); pressing `Enter` on it defaults to `n` (editor).
-- Toggle dots use severity colors whether on (`●`) or off (`○`):
+- Toggle switches show on as `─●` (severity-colored) and off as `○─` (muted):
   - Reader mode: normal/success (green).
   - Outer access: warning (orange/amber from the active theme).
   - YOLO+ and agent rewiring: danger (red).
@@ -191,7 +191,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
     - `x` — request prompt-stash clear-all via `px:prompt-stash:clear-all`
     - `<-` / `Backspace` — return to main action dialog
   - `Ctrl+r` — request a subagent rewire toggle via `px:subagent:rewire:toggle`
-  - `Ctrl+R` — request the subagent rewire menu via `px:subagent:rewire:menu`
+  - `R` — request the subagent rewire menu via `px:subagent:rewire:menu`
   - `r` — request safe-mode reader toggle via `px:safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `px:safe-mode:toggle-outer`
   - `!` — request safe-mode `yolo+` toggle via `px:safe-mode:set-yolo-plus`
