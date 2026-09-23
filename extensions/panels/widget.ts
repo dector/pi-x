@@ -33,7 +33,10 @@ export class PanelsWidget {
 
 	constructor(private readonly source: PanelsRenderSource) {
 		this.component = {
-			render: (width: number) => this.source.renderAll(width),
+			render: (width: number) => {
+				const lines = this.source.renderAll(width);
+				return lines.length > 0 ? [...lines, ""] : lines;
+			},
 			invalidate: () => {},
 		};
 	}

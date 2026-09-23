@@ -206,7 +206,7 @@ describe("panels single widget", () => {
 		publishContent(harness, "subagents", ["S"]);
 
 		expect(harness.widgetCalls).toEqual([{ kind: "mount", placement: "aboveEditor" }]);
-		expect(harness.component()?.render(20)).toEqual(["S", "P"]);
+		expect(harness.component()?.render(20)).toEqual(["S", "P", ""]);
 	});
 
 	test("a refresh updates the mounted component without remounting", () => {
@@ -223,7 +223,7 @@ describe("panels single widget", () => {
 
 		expect(harness.widgetCalls).toEqual([{ kind: "mount", placement: "aboveEditor" }]);
 		expect(harness.requestRenders()).toBeGreaterThan(before);
-		expect(harness.component()?.render(20)).toEqual(["S", "P2"]);
+		expect(harness.component()?.render(20)).toEqual(["S", "P2", ""]);
 	});
 
 	test("undefined content removes the panel and clears the widget when empty", () => {
@@ -236,7 +236,7 @@ describe("panels single widget", () => {
 		publishContent(harness, "processes", ["P"]);
 
 		publishContent(harness, "subagents", undefined);
-		expect(harness.component()?.render(20)).toEqual(["P"]);
+		expect(harness.component()?.render(20)).toEqual(["P", ""]);
 
 		publishContent(harness, "processes", undefined);
 		expect(harness.widgetCalls[harness.widgetCalls.length - 1]).toEqual({ kind: "clear", placement: "aboveEditor" });
@@ -250,7 +250,7 @@ describe("panels single widget", () => {
 		expect(harness.component()).toBeUndefined();
 
 		harness.startSession();
-		expect(harness.component()?.render(20)).toEqual(["P"]);
+		expect(harness.component()?.render(20)).toEqual(["P", ""]);
 	});
 
 	test("a late registration mounts content that arrived before it", () => {
@@ -261,7 +261,7 @@ describe("panels single widget", () => {
 		expect(harness.component()).toBeUndefined();
 
 		registerPanel(harness, "processes", 20);
-		expect(harness.component()?.render(20)).toEqual(["P"]);
+		expect(harness.component()?.render(20)).toEqual(["P", ""]);
 	});
 
 	test("session_shutdown clears the widget and drops every bus subscription", () => {
