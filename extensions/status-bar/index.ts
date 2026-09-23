@@ -412,6 +412,7 @@ export function progressFooterLines(args: {
  * ```
  */
 class FrameStatusEditor extends CustomEditor {
+	private locked = false;
 	private readonly getDisplayMode: () => StatusBarDisplayMode;
 	private readonly bottomLeftProvider?: () => FrameContextParts | undefined;
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
@@ -452,6 +453,11 @@ class FrameStatusEditor extends CustomEditor {
 		this.interruptConfirmation = options.interruptConfirmation;
 		this.subduedColor = options.subduedColor;
 		this.highlightColor = options.highlightColor;
+	}
+
+	setLocked(locked: boolean): void {
+		this.locked = locked;
+		this.frameTui.requestRender();
 	}
 
 	/** Wrap pi's dynamic interrupt callback after the editor has been installed. */
@@ -594,6 +600,26 @@ class FrameStatusEditor extends CustomEditor {
 	 * outside the frame.
 	 */
 	render(width: number): string[] {
+		if (this.locked) {
+			const label = "LOCKED \u{f023}"; // Nerd Font fa-lock
+			if (width < 3) return ["", "", truncateToWidth(label, Math.max(0, width), ""), "", ""];
+			const innerWidth = width - 2;
+			const center = (text: string): string => {
+				const clipped = truncateToWidth(text, innerWidth, "");
+				const left = Math.floor((innerWidth - visibleWidth(clipped)) / 2);
+				return `${" ".repeat(left)}${clipped}${" ".repeat(innerWidth - left - visibleWidth(clipped))}`;
+			};
+			const row = (text: string): string => `${this.borderColor("┃")}${center(text)}${this.borderColor("┃")}`;
+			return [
+				this.borderColor(`╭${"━".repeat(innerWidth)}╮`),
+				row(""),
+				row(this.borderColor("╾━━━━╼")),
+				row(label),
+				row("Ctrl+,  ·  L to unlock"),
+				row(""),
+				this.borderColor(`╰${"━".repeat(innerWidth)}╯`),
+			];
+		}
 		if (!this.isBorderMode() || width < 3) {
 			return super.render(width);
 		}
@@ -1739,6 +1765,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return rgb;
 	};
 	let previousEditorFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
+	let lockMode = false;
+	pi.events.on("px:pi-ui:lock-state", (event: { locked: boolean }) => {
+		lockMode = event.locked;
+		frameEditor?.setLocked(lockMode);
+	});
 
 	const activeLayout = (): StatusBarLayout =>
 		displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
@@ -2067,6 +2098,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			requestEditorRender = () => tui.requestRender();
 			frameEditor = new FrameStatusEditor(tui, editorTheme, keybindings, options);
+			frameEditor.setLocked(lockMode);
 			return frameEditor;
 		});
 		if (!frameEditor) throw new Error("status-bar: pi did not create the editor synchronously");
@@ -2131,6 +2163,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.on("user_bash", refreshOnEvent);
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		lockMode = false;
 		if (ctx.hasUI) {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setWorkingIndicator();

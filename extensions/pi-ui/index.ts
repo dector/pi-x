@@ -25,6 +25,11 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
+const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
+type LockableTui = {
+	addInputListener: (listener: (data: string) => { consume: boolean } | undefined) => () => void;
+	requestRender: () => void;
+};
 const SELECT_LATEST_SHORTCUT = Key.alt("o");
 const TOGGLE_SELECTED_SHORTCUT = Key.ctrlAlt("o");
 const NAV_NEXT_SHORTCUT = Key.alt("j");
@@ -1260,6 +1265,8 @@ export async function showHiDialog(
 	ctx: ExtensionContext,
 	handlers: {
 		onToggleReader: () => void;
+		onToggleLock: () => void;
+		isLocked: () => boolean;
 		onToggleOuter: () => void;
 		onSetYoloPlus: () => void;
 		onShowPromptPreviews: () => Promise<void>;
@@ -1300,6 +1307,8 @@ export async function showHiDialog(
 			(tui, theme, _kb, done) => {
 				const {
 					onToggleReader,
+					onToggleLock,
+					isLocked,
 					onToggleOuter,
 					onSetYoloPlus,
 					onShowPromptPreviews,
@@ -1327,7 +1336,7 @@ export async function showHiDialog(
 					closeDialog();
 				}
 				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
-				type DialogGroup = "PROMPTS & NOTES" | "AGENTS" | "ACCESS & SAFETY";
+				type DialogGroup = "PROMPTS & NOTES" | "AGENTS" | "ACCESS & SAFETY" | "";
 				type DialogAction = {
 					hotkey: string;
 					hotkeyAliases?: string[];
@@ -1390,7 +1399,7 @@ export async function showHiDialog(
 					tui.requestRender();
 				};
 
-				const dialogGroupOrder: DialogGroup[] = ["ACCESS & SAFETY", "AGENTS", "PROMPTS & NOTES"];
+				const dialogGroupOrder: DialogGroup[] = ["ACCESS & SAFETY", "AGENTS", "PROMPTS & NOTES", ""];
 				const mainActions: DialogAction[] = [
 					{
 						hotkey: "s",
@@ -1492,6 +1501,14 @@ export async function showHiDialog(
 						closeAfterRun: false,
 						run: () => runAfterClose(() => void onOpenNote()),
 					},
+					{
+						hotkey: "L",
+						label: "Lock",
+						group: "",
+						toggleSeverity: "warning",
+						isEnabled: () => isLocked(),
+						run: onToggleLock,
+					},
 				];
 				mainActions.sort(
 					(left, right) => dialogGroupOrder.indexOf(left.group!) - dialogGroupOrder.indexOf(right.group!),
@@ -1554,12 +1571,14 @@ export async function showHiDialog(
 						.filter((action) => action.searchable !== false)
 						.map((action) => ({ action, menu: "stash" as const })),
 				];
-				const getActions = (): DialogAction[] => (activeMenu === "stash" ? stashActions : mainActions);
+				const getActions = (): DialogAction[] =>
+					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "stash" ? stashActions : mainActions;
 				const getSearchActions = (): SearchAction[] => {
 					const query = searchQuery.trim().toLowerCase();
 					if (!query) return [];
 					const terms = query.split(/\s+/).filter(Boolean);
 					return searchableActions.filter(({ action, menu }) => {
+						if (isLocked() && action.hotkey !== "L") return false;
 						const haystack = [
 							action.label,
 							action.hotkeyLabel ?? action.hotkey,
@@ -1573,7 +1592,7 @@ export async function showHiDialog(
 				};
 
 				const executeAction = (action: DialogAction | undefined, viaEnter = false): void => {
-					if (!action) return;
+					if (!action || (isLocked() && action.hotkey !== "L")) return;
 					if (!(viaEnter && action.toggleSeverity)) {
 						searchMode = false;
 						searchQuery = "";
@@ -1581,8 +1600,15 @@ export async function showHiDialog(
 					void (async () => {
 						try {
 							await action.run();
+							if (isLocked()) {
+								activeMenu = "main";
+								selectedIndex = 0;
+							}
 						} finally {
-							if (viaEnter && action.toggleSeverity) {
+							// Unlock always dismisses the dialog, including Enter from search.
+							if (action.hotkey === "L" && !isLocked()) {
+								closeDialog();
+							} else if (viaEnter && action.toggleSeverity) {
 								tui.requestRender();
 							} else if (action.closeAfterRun !== false) {
 								closeDialog();
@@ -1594,6 +1620,10 @@ export async function showHiDialog(
 				const matchesActionKey = (data: string, key: string): boolean => data === key || matchesKey(data, key);
 				const matchActionForInput = (data: string): DialogAction | undefined => {
 					for (const action of getActions()) {
+						if (action.hotkey === "L" && action.label === "Lock") {
+							if (data === "L" || matchesKey(data, Key.shift("l"))) return action;
+							continue;
+						}
 						if (matchesActionKey(data, action.hotkey)) return action;
 						if (action.hotkeyAliases?.some((candidate) => matchesActionKey(data, candidate))) return action;
 					}
@@ -1703,11 +1733,13 @@ export async function showHiDialog(
 						} else {
 							let previousGroup: DialogGroup | undefined;
 							getActions().forEach((action, index) => {
-								if (action.group && action.group !== previousGroup) {
+								if (action.group !== undefined && action.group !== previousGroup) {
 									if (previousGroup) lines.push(frame(""));
-									const headingPadding = Math.min(3, Math.floor((contentWidth - 1) / 2));
-									const headingIndent = " ".repeat(headingPadding + (headingPadding > 1 ? 1 : 0));
-									lines.push(frame(theme.fg("dim", `${headingIndent}${action.group}`)));
+									if (action.group) {
+										const headingPadding = Math.min(3, Math.floor((contentWidth - 1) / 2));
+										const headingIndent = " ".repeat(headingPadding + (headingPadding > 1 ? 1 : 0));
+										lines.push(frame(theme.fg("dim", `${headingIndent}${action.group}`)));
+									}
 									previousGroup = action.group;
 								}
 								lines.push(frame(actionLine(action, index === selectedIndex)));
@@ -1853,6 +1885,32 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let requestActionDialogClose: (() => void) | undefined;
 	let requestActionDialogRender: (() => void) | undefined;
 	let agentsRewireEnabled = false;
+	let locked = false;
+	let lockedTui: LockableTui | undefined;
+	let removeLockGate: (() => void) | undefined;
+
+	const installLockGate = (ctx: ExtensionContext): boolean => {
+		const tui = captureTuiReference(ctx) as LockableTui | undefined;
+		if (!tui || typeof tui.addInputListener !== "function") return false;
+		if (lockedTui === tui) return true;
+		removeLockGate?.();
+		lockedTui = tui;
+		removeLockGate = tui.addInputListener((data) => {
+			if (!locked) return undefined;
+			if (matchesKey(data, ACTION_DIALOG_TOGGLE_SHORTCUT)) return undefined;
+			// Block mouse events and the TUI's global debug key even while the dialog is open.
+			if (data.startsWith("\x1b[<") || matchesKey(data, Key.ctrlShift("d"))) return { consume: true };
+			return isActionDialogShown && requestActionDialogRender ? undefined : { consume: true };
+		});
+		return true;
+	};
+
+	const setLocked = (next: boolean) => {
+		locked = next;
+		pi.events.emit(LOCK_STATE_EVENT, { locked });
+		lockedTui?.requestRender();
+		requestActionDialogRender?.();
+	};
 
 	pi.events.on(STATUS_BAR_REWIRE_SET_EVENT, () => {
 		agentsRewireEnabled = true;
@@ -1905,14 +1963,14 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		setSelectedEntry(undefined);
-		captureTuiReference(ctx);
+		installLockGate(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		setSelectedEntry(undefined);
-		captureTuiReference(ctx);
+		installLockGate(ctx);
 		ensureUiBellPatched(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
@@ -1952,6 +2010,10 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		pendingInteractiveInputSerial = 0;
 		agentRunning = false;
 		agentsRewireEnabled = false;
+		setLocked(false);
+		removeLockGate?.();
+		removeLockGate = undefined;
+		lockedTui = undefined;
 		// Disabled: keep pi default busy indicator.
 		// stopAnimation(ctx);
 	});
@@ -2123,9 +2185,15 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 				requestActionDialogClose?.();
 				return;
 			}
+			if (!installLockGate(ctx)) {
+				notify(ctx, "pi-ui: lock mode needs an interactive TUI");
+				return;
+			}
 			await showHiDialog(
 				ctx,
 				{
+					onToggleLock: () => setLocked(!locked),
+					isLocked: () => locked,
 					onToggleReader: () => {
 						pi.events.emit(SAFE_MODE_TOGGLE_READER_EVENT, { ctx });
 					},

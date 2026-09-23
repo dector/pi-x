@@ -6,7 +6,7 @@ type Context = Parameters<typeof showHiDialog>[0];
 type Handlers = Parameters<typeof showHiDialog>[1];
 type Lifecycle = Parameters<typeof showHiDialog>[2];
 
-function openDialog() {
+function openDialog(initiallyLocked = false) {
 	let dialog!: Dialog;
 	let done!: () => void;
 	let renders = 0;
@@ -14,6 +14,7 @@ function openDialog() {
 	let reader = false;
 	let outer = false;
 	let rewire = false;
+	let locked = initiallyLocked;
 	let renderFromEvent: (() => void) | undefined;
 	const ctx = {
 		hasUI: true,
@@ -22,12 +23,14 @@ function openDialog() {
 			custom: (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => Dialog) =>
 				new Promise<void>((resolve) => {
 					done = () => { closes++; resolve(); };
-					dialog = factory({ requestRender: () => renders++ }, {}, {}, done);
+					dialog = factory({ requestRender: () => renders++ }, { fg: (_color: string, text: string) => text, bold: (text: string) => text }, {}, done);
 				}),
 		},
 	} as unknown as Context;
 	const handlers = {
 		onToggleReader: () => { reader = !reader; },
+		onToggleLock: () => { locked = !locked; },
+		isLocked: () => locked,
 		onToggleOuter: () => { outer = !outer; },
 		onSetYoloPlus: () => {},
 		onShowPromptPreviews: () => {},
@@ -49,7 +52,7 @@ function openDialog() {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get rewire() { return rewire; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get rewire() { return rewire; }, get locked() { return locked; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -86,6 +89,49 @@ describe("quick actions", () => {
 		ui.dialog.handleInput("\x12"); // Ctrl+r
 		await ui.finished;
 		expect(ui.rewire).toBe(true);
+		expect(ui.closes).toBe(1);
+	});
+
+	test("lock is the last, unheaded group; locked dialog only runs unlock", async () => {
+		const ui = openDialog();
+		const text = ui.dialog.render(80).join("\n");
+		expect(text).toMatch(/New note[^]*Lock/);
+		expect(text).not.toContain("Shift+L");
+		expect(text).toMatch(/Lock\s+L/);
+		ui.dialog.handleInput("L");
+		await ui.finished;
+		expect(ui.locked).toBe(true);
+
+		const again = openDialog(true);
+		expect(again.dialog.render(80).join("\n")).not.toContain("Reader mode");
+		again.dialog.handleInput("r");
+		await tick();
+		expect(again.reader).toBe(false);
+		again.dialog.handleInput("\r");
+		await again.finished;
+		expect(again.locked).toBe(false);
+		expect(again.closes).toBe(1);
+	});
+
+	test("only uppercase L toggles lock; lowercase l does nothing", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("l");
+		await tick();
+		expect(ui.locked).toBe(false);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("L");
+		await ui.finished;
+		expect(ui.locked).toBe(true);
+	});
+
+	test("unlock via hotkey closes the dialog", async () => {
+		const ui = openDialog(true);
+		ui.dialog.handleInput("l");
+		await tick();
+		expect(ui.locked).toBe(true);
+		ui.dialog.handleInput("L");
+		await ui.finished;
+		expect(ui.locked).toBe(false);
 		expect(ui.closes).toBe(1);
 	});
 

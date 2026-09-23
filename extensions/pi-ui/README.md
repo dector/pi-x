@@ -44,6 +44,8 @@ Current dialog items:
   - `p - prompt history…` (opens the tabbed history dialog)
   - `n - browse notes…` (opens the `/px:notes:list` browser)
   - `N - new note…` (opens the `/px:notes` editor)
+- **Lock** (last, unheaded group)
+  - `L - toggle lock mode`
 - `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
 - `Enter - run selected action`
@@ -52,6 +54,7 @@ Current dialog items:
 
 Behavior details:
 
+- Lock mode shows `LOCKED ` (Nerd Font `fa-lock`) instead of the editor, without clearing the draft. Terminal keys (including Esc, Ctrl+C, other shortcuts, and mouse input) are ignored until you open Quick Actions with `Ctrl+,` and toggle Lock. While locked, only the Lock action is available in Quick Actions; unlocking closes the dialog automatically. Lock state resets on session shutdown. The locked editor display uses the status-bar extension.
 - The dialog uses the status-bar frame language: white heavy lines (`━`/`┃`), rounded light corners, and tapered `╾`/`╼` joins where the border touches the title.
 - Terminal-background filling spans the full overlay width around the compact centered frame, with one empty row above and below. Actions are arranged under non-selectable **ACCESS & SAFETY**, **AGENTS**, and **PROMPTS & NOTES** headings, aligned with the selected-row `›` indicator. Shortcuts are right-aligned, and submenu arrows and toggle indicators start in the same column, with one blank column after them, at least five spaces between action labels and shortcuts at full width, and three columns of horizontal padding on each side (reduced on narrow terminals); a `›` after each menu label and `··` in the right indicator column mark actions that open another screen, and `─●`/`○─` show toggle state.
 - The selected row has a full-width black background with white text for contrast; toggle indicators retain their status colors. Arrow navigation skips group headings.
