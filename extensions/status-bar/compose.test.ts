@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	BORDER_GIT_MARKER_ICONS,
 	chooseTopBorderSegments,
 	compactFrameLabel,
 	composeBorderBottomLeft,
@@ -24,6 +25,7 @@ import {
 	styleSafeModeLabel,
 	renderStatusPill,
 } from "./compose.ts";
+import { GIT_STATS_COLORS } from "./git-stats.ts";
 import { resolveNetworkStatus, type NetworkPermissionState } from "./network.ts";
 
 // Wrap colored fragments so tests can assert exactly where a themed separator
@@ -323,44 +325,62 @@ describe("composeBorderBottomLeft (editor border)", () => {
 });
 
 describe("decorateBorderGitStats", () => {
-	const stats =
-		"\u001b[32m+1\u001b[0m \u001b[31m-2\u001b[0m \u001b[38;5;208mM4\u001b[0m · \u001b[32m+150\u001b[0m \u001b[31m-200\u001b[0m";
+	const ADD = GIT_STATS_COLORS.added;
+	const REM = GIT_STATS_COLORS.removed;
+	const MOD = GIT_STATS_COLORS.modified;
+	const RESET = "\u001b[0m";
+	const added = BORDER_GIT_MARKER_ICONS.additions;
+	const removed = BORDER_GIT_MARKER_ICONS.removals;
+	const modified = BORDER_GIT_MARKER_ICONS.modified;
+	const stats = { filesAdded: 1, filesRemoved: 2, filesModified: 4, linesAdded: 150, linesRemoved: 200 };
 
 	test("splits the file and changed-line groups, files first", () => {
 		expect(decorateBorderGitStats(stats)).toBe(
-			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m · \u001b[32m󰐖 150\u001b[0m \u001b[31m󰍵 200\u001b[0m",
+			`${ADD}${added} 1${RESET} ${REM}${removed} 2${RESET} ${MOD}${modified} 4${RESET} · ${ADD}${added} 150${RESET} ${REM}${removed} 200${RESET}`,
 		);
 	});
 
 	test("colors the group divider with the separator style", () => {
 		expect(decorateBorderGitStats(stats, { separator: (text) => `<sep>${text}</sep>` })).toBe(
-			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m<sep> · </sep>\u001b[32m󰐖 150\u001b[0m \u001b[31m󰍵 200\u001b[0m",
+			`${ADD}${added} 1${RESET} ${REM}${removed} 2${RESET} ${MOD}${modified} 4${RESET}<sep> · </sep>${ADD}${added} 150${RESET} ${REM}${removed} 200${RESET}`,
 		);
 	});
 
 	test("drops the changed-line group for narrow frames", () => {
 		expect(decorateBorderGitStats(stats, { includeLineCounts: false })).toBe(
-			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m",
+			`${ADD}${added} 1${RESET} ${REM}${removed} 2${RESET} ${MOD}${modified} 4${RESET}`,
 		);
 	});
 
-	test("mutes zero-valued items in both groups", () => {
+	test("mutes zero-valued items and colors the rest", () => {
 		const mute = (text: string) => `<mute>${text}</mute>`;
-		expect(decorateBorderGitStats("+1 -0 M7 · +353 -69", { mute })).toBe(
-			"󰐖 1 <mute>󰍵 0</mute> 󰦓 7 · 󰐖 353 󰍵 69",
+		expect(
+			decorateBorderGitStats(
+				{ filesAdded: 1, filesRemoved: 0, filesModified: 7, linesAdded: 353, linesRemoved: 69 },
+				{ mute },
+			),
+		).toBe(
+			`${ADD}${added} 1${RESET} <mute>${removed} 0</mute> ${MOD}${modified} 7${RESET} · ${ADD}${added} 353${RESET} ${REM}${removed} 69${RESET}`,
 		);
-		expect(decorateBorderGitStats("+0 -0 M2 · +0 -0", { mute })).toBe(
-			"<mute>󰐖 0</mute> <mute>󰍵 0</mute> 󰦓 2 · <mute>󰐖 0</mute> <mute>󰍵 0</mute>",
+		expect(
+			decorateBorderGitStats({ filesAdded: 0, filesRemoved: 0, filesModified: 2, linesAdded: 0, linesRemoved: 0 }, { mute }),
+		).toBe(
+			`<mute>${added} 0</mute> <mute>${removed} 0</mute> ${MOD}${modified} 2${RESET} · <mute>${added} 0</mute> <mute>${removed} 0</mute>`,
 		);
-		expect(decorateBorderGitStats("+0 -5 M7 · +0 -69", { mute })).toBe(
-			"<mute>󰐖 0</mute> 󰍵 5 󰦓 7 · <mute>󰐖 0</mute> 󰍵 69",
+		expect(
+			decorateBorderGitStats(
+				{ filesAdded: 0, filesRemoved: 5, filesModified: 7, linesAdded: 0, linesRemoved: 69 },
+				{ mute },
+			),
+		).toBe(
+			`<mute>${added} 0</mute> ${REM}${removed} 5${RESET} ${MOD}${modified} 7${RESET} · <mute>${added} 0</mute> ${REM}${removed} 69${RESET}`,
 		);
 	});
 
-	test("treats a file-only label as just the files group", () => {
-		expect(decorateBorderGitStats("\u001b[32m+1\u001b[0m \u001b[31m-2\u001b[0m \u001b[38;5;208mM4\u001b[0m")).toBe(
-			"\u001b[32m󰐖 1\u001b[0m \u001b[31m󰍵 2\u001b[0m \u001b[38;5;208m󰦓 4\u001b[0m",
-		);
+	test("leaves zero counts uncolored when no muted color is supplied", () => {
+		expect(
+			decorateBorderGitStats({ filesAdded: 0, filesRemoved: 0, filesModified: 0, linesAdded: 0, linesRemoved: 0 }),
+		).toBe(`${added} 0 ${removed} 0 ${modified} 0 · ${added} 0 ${removed} 0`);
 	});
 });
 

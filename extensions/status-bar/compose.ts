@@ -6,6 +6,8 @@
 // the rule that policy indicators share one label joined by exactly ` · ` even
 // when surrounding items switch to the compact separator.
 
+import { GIT_STATS_COLORS, type GitStats } from "./git-stats";
+
 /**
  * Border bridge between two labels that share the bottom edge. The outer cells
  * are light/heavy half glyphs, so the line stays thin where it touches a label
@@ -44,23 +46,11 @@ export const BORDER_SAFE_MODE_ICON = "󰕥 ";
 export const BORDER_NETWORK_ICON = "󰅟 ";
 export const BORDER_SUBAGENT_ICON = "󰚩 ";
 
-const BORDER_GIT_MARKER_ICONS = {
+export const BORDER_GIT_MARKER_ICONS = {
 	additions: "󰐖",
 	removals: "󰍵",
 	modified: "󰦓",
 } as const;
-
-const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;]*m/g;
-
-function stripAnsiSequences(text: string): string {
-	return text.replace(ANSI_ESCAPE_PATTERN, "");
-}
-
-/** First ANSI SGR sequence in a chunk, used as the producer color for a value. */
-function firstAnsiSequence(text: string): string {
-	const match = text.match(/\u001b\[[0-9;]*m/);
-	return match ? match[0] : "";
-}
 
 /** Leading ANSI SGR sequences of a label, i.e. its producer style prefix. */
 function leadingAnsiSequences(text: string): string {
@@ -95,29 +85,20 @@ function decorateBorderSubagentLabel(label: string, accentColor: (text: string) 
 		: accentColor(`${BORDER_SUBAGENT_ICON}${value}`);
 }
 
-/** Read `+N`/`-N`/`MN` from a git stats chunk; `undefined` when it does not match. */
-function readGitCount(chunk: string | undefined, marker: string): number | undefined {
-	if (!chunk) return undefined;
-	const plain = stripAnsiSequences(chunk);
-	if (!plain.startsWith(marker)) return undefined;
-	const value = Number.parseInt(plain.slice(marker.length), 10);
-	return Number.isFinite(value) ? value : undefined;
-}
-
 /**
- * Restyle the repo-stats label for the editor border as two explicit groups,
- * files first then changed lines, separated by ` · `:
+ * Render the dirty counters for the editor border as two explicit groups, files
+ * first then changed lines, separated by ` · `:
  *
- *   `+1 -2 M4 · +150 -200` -> `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`
+ *   `{1, 2, 4, 150, 200}` -> `󰅖 1 󰅵 2 󰆓 4 · 󰅖 150 󰅵 200`
  *
  * Both groups reuse the addition/removal icons; the modified count only exists
  * in the files group. Zero values use the caller's subdued color (via `mute`);
- * nonzero values keep the producer's ANSI colors. `separator` colors the group
+ * nonzero values use the shared git palette. `separator` colors the group
  * divider (defaults to uncolored). `includeLineCounts: false` drops the line
  * group for narrow frames.
  */
 export function decorateBorderGitStats(
-	label: string,
+	stats: GitStats,
 	options: {
 		mute?: (text: string) => string;
 		separator?: (text: string) => string;
@@ -128,47 +109,22 @@ export function decorateBorderGitStats(
 	const separator = options.separator ?? ((text: string) => text);
 	const includeLineCounts = options.includeLineCounts ?? true;
 
-	const separatorIndex = label.indexOf("·");
-	const filePart = separatorIndex === -1 ? label : label.slice(0, separatorIndex);
-	const linePart = separatorIndex === -1 ? undefined : label.slice(separatorIndex + 1);
-	const fileChunks = filePart.trim().split(/\s+/).filter(Boolean);
-	const hasLineGroup = linePart !== undefined && linePart.trim().length > 0;
-	const lineChunks = hasLineGroup ? linePart.trim().split(/\s+/).filter(Boolean) : [];
-
-	const fileAdd = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("+"));
-	const fileRemove = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("-"));
-	const fileModified = fileChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("M"));
-	const lineAdd = lineChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("+"));
-	const lineRemove = lineChunks.find((chunk) => stripAnsiSequences(chunk).startsWith("-"));
-
 	const renderItem = (icon: string, count: number, color: string): string => {
 		const item = `${icon} ${count}`;
 		return count === 0 ? mute(item) : paintAnsi(color, item);
 	};
 
 	const filesGroup = [
-		renderItem(
-			BORDER_GIT_MARKER_ICONS.additions,
-			readGitCount(fileAdd, "+") ?? 0,
-			firstAnsiSequence(fileAdd ?? ""),
-		),
-		renderItem(
-			BORDER_GIT_MARKER_ICONS.removals,
-			readGitCount(fileRemove, "-") ?? 0,
-			firstAnsiSequence(fileRemove ?? ""),
-		),
-		renderItem(
-			BORDER_GIT_MARKER_ICONS.modified,
-			readGitCount(fileModified, "M") ?? 0,
-			firstAnsiSequence(fileModified ?? ""),
-		),
+		renderItem(BORDER_GIT_MARKER_ICONS.additions, stats.filesAdded, GIT_STATS_COLORS.added),
+		renderItem(BORDER_GIT_MARKER_ICONS.removals, stats.filesRemoved, GIT_STATS_COLORS.removed),
+		renderItem(BORDER_GIT_MARKER_ICONS.modified, stats.filesModified, GIT_STATS_COLORS.modified),
 	].join(" ");
 
-	if (!includeLineCounts || !hasLineGroup) return filesGroup;
+	if (!includeLineCounts) return filesGroup;
 
 	const lineGroup = [
-		renderItem(BORDER_GIT_MARKER_ICONS.additions, readGitCount(lineAdd, "+") ?? 0, firstAnsiSequence(lineAdd ?? "")),
-		renderItem(BORDER_GIT_MARKER_ICONS.removals, readGitCount(lineRemove, "-") ?? 0, firstAnsiSequence(lineRemove ?? "")),
+		renderItem(BORDER_GIT_MARKER_ICONS.additions, stats.linesAdded, GIT_STATS_COLORS.added),
+		renderItem(BORDER_GIT_MARKER_ICONS.removals, stats.linesRemoved, GIT_STATS_COLORS.removed),
 	].join(" ");
 
 	return `${filesGroup}${separator(" · ")}${lineGroup}`;

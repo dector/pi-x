@@ -53,7 +53,7 @@ Producers publish content to the shared event bus:
 
 When `status-bar` receives a valid `px:status-bar:ping`, it emits `px:status-bar:pong` echoing the same `id`.
 
-`id` is the producer ID (for example `safe-mode`, `switch-thinking`, `repo-stats`).
+`id` is the producer ID (for example `safe-mode`, `switch-thinking`). Git dirty totals are produced internally and are not part of this contract.
 
 ## Rendering path
 
@@ -121,7 +121,7 @@ context/model/safe-mode info:
   omitted and the input/output/cache token breakdown moves to status line 1 (after
   the producer items), prefixed with the total-usage icon and with no cost suffix.
   `safe-mode`, `switch-thinking`, `context-watcher-model`, and
-  `context-watcher-percent` are hidden. The `repo-stats` dirty totals also move
+  `context-watcher-percent` are hidden. The git dirty totals also move
   from the first line to the frame top-right.
 - `legacy` (status-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout with the
@@ -170,18 +170,20 @@ full frame (heavy `┃` sides + light arc `╭ ╮ ╰ ╯` corners; set
 horizontal editor padding (`paddingX: 1`), and renders:
 
 - top-left: the model icon `󰙴 ` then active provider + model ID and thinking level (`󰙴 <ctx.model.provider>/<ctx.model.id> · <thinking>`, id-only when provider is missing; e.g. `󰙴 cdx/5.6-sol · high`), with exact-name aliases applied, colored with the frame border color. For explicit review levels, the review icon follows effort after a frame-colored ` · ` and uses the same frame-border color: off `󰛑`, minimal `󱀧`, normal `󰛐`, high `󰡬`. Auto is hidden, though its `󰈈` mapping remains in code. The thinking level is always the full level name (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); it is never abbreviated and has no arrow-only fallback, so on a frame too narrow for the label the model segment is dropped like any other. While streaming the model/effort portion runs a configurable animation (source constant `WORKING_ANIMATION`, env `PI_STATUS_BAR_WORKING_ANIMATION`): `comet` moves a bright lead with a fading trail across the label, `glitch` swaps a few random characters for matrix blocks (`▓▒░`, denser = brighter) with independent lifetimes; no spinner and no `Working` word.
-- top-right: `repo-stats` git dirty totals, rendered only when the repo is dirty.
-  They are split into two icon groups, files first then changed lines, separated by
-  ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The producer's `[ ]`/`|` and `+`/`-`/`M`
-  prefixes are replaced by Nerd Font icons (additions `󰐖`, removals `󰍵`, modified
-  `󰦓`); the files group also carries the modified-file count. Zero values render in
+- top-right: git dirty totals, collected internally by `git-stats.ts` and rendered
+  only when the repo is dirty. They are split into two icon groups, files first then
+  changed lines, separated by ` · `: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200`. The counters are
+  collected as numbers, so the `+`/`-`/`M` prefixes become Nerd Font icons
+  (additions `󰐖`, removals `󰍵`, modified `󰦓`) with no format parsing; the files group
+  also carries the modified-file count. Zero values render in
   the subdued accent (a darkened shade of the thinking color `thinkingOff`), while
-  non-zero values keep the producer's colors. On narrow
+  non-zero values use the shared git palette. On narrow
   frames the compact split form drops the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the
   changed-line group is dropped to keep the files group (`󰐖1󰍵2󰦓4`). The model label
   remains visible whenever it fits, and labels sharing the top edge need only one
-  heavy border dash between them. In `new` mode these totals are hidden from the
-  first line; in `legacy` mode they stay there.
+  heavy border dash between them. In `new` mode these totals stay on the border;
+  in `legacy` mode they move to the first line right section as
+  `+1 -2 M4 · +150 -200`.
 - bottom-left: context usage and cumulative cost, prefixed with the context icon
   `󰊚 ` and the price icon `󰇁 ` (`━━ 󰊚 15.9% 210k · 󰇁 0.03 `). The border form has no
   trailing `$`. The label is colored with the subdued accent (a darkened thinking

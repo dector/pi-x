@@ -20,7 +20,7 @@ Owns a single `flutter run --debug` process and exposes fast hot reload/restart 
 
 This extension publishes first-line status via the shared [`status-bar`](../status-bar/README.md) contract.
 
-It renders in the first-line `right` section with priority `200`, which places it before `repo-stats` (`100`) and `skill-stats` (`-100`) in the same section.
+It renders in the first-line `right` section with priority `200`, which places it before the status-bar git totals (`100`) and `skill-stats` (`-100`) in the same section.
 
 Example status:
 

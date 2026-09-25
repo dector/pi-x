@@ -150,7 +150,6 @@ extensions=(
   "permissions-core"
   "permissions-ui"
   "renew"
-  "repo-stats"
   "skill-stats"
   "flutter"
   "http"

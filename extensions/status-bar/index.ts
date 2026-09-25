@@ -68,6 +68,14 @@ import {
 	hasVisibleText,
 	sanitizeStatusText,
 } from "./compose";
+import {
+	collectGitSnapshot,
+	dirtyStats,
+	formatGitStatsText,
+	type GitStats,
+	GitStatsWatcher,
+	renderGitStatsLabel,
+} from "./git-stats";
 import { createProtectedInterrupt, InterruptConfirmationGuard, showInterruptConfirmation } from "./interrupt-confirmation";
 import { deepseekImageTokens, findImagePaths, parseImageDimensions } from "./image-tokens";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
@@ -85,7 +93,14 @@ const CONTEXT_WATCHER_IDS = {
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
-const REPO_STATS_ID = "repo-stats";
+// Git dirty totals are collected internally (git-stats.ts) and rendered on the
+// editor frame's top-right corner in `new` mode. In `legacy` mode they keep the
+// first-line right section, ordered like a producer at this priority.
+const GIT_STATS_ID = "git-stats";
+const GIT_STATS_FIRST_LINE_PRIORITY = 100;
+// The standalone `repo-stats` extension was folded in here. Its id is ignored on
+// the first line so a stale installed copy cannot duplicate the counters.
+const SUPERSEDED_FIRST_LINE_IDS = new Set(["repo-stats"]);
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
 const SUBAGENT_DEPTH_ICON = "󰚩";
@@ -250,8 +265,8 @@ type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefin
  * same-frame decision.
  */
 interface RelocatedBorderLabels {
-	/** Raw `repo-stats` git dirty totals moved off the top-right border. */
-	gitStats?: string;
+	/** Git dirty totals moved off the top-right border. */
+	gitStats?: GitStats;
 	/** Cost label moved off the bottom-left border (the usage meter stays). */
 	contextLabel?: string;
 }
@@ -271,8 +286,8 @@ interface FrameStatusEditorOptions {
 	topLeft?: FrameStatusProvider;
 	/** Recommended review level, rendered after the top-left model effort. */
 	topLeftReview?: FrameStatusProvider;
-	/** Top-right corner label (git dirty totals). */
-	topRight?: FrameStatusProvider;
+	/** Dirty counters rendered as the top-right corner label. */
+	topRightGitStats?: () => GitStats | undefined;
 	/** Bottom-right corner label (unsent message token size). Receives the current editor text. */
 	bottomRight?: (text: string) => string | undefined;
 	/** Sink for labels relocated off the border on narrow frames (status line 2). */
@@ -398,7 +413,7 @@ export class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topLeftReviewProvider?: FrameStatusProvider;
-	private readonly topRightProvider?: FrameStatusProvider;
+	private readonly topRightGitStats?: () => GitStats | undefined;
 	private readonly bottomRightProvider?: (text: string) => string | undefined;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
 	private readonly getWorkingAnimation: () => WorkingAnimation;
@@ -426,7 +441,7 @@ export class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
 		this.topLeftProvider = options.topLeft;
 		this.topLeftReviewProvider = options.topLeftReview;
-		this.topRightProvider = options.topRight;
+		this.topRightGitStats = options.topRightGitStats;
 		this.bottomRightProvider = options.bottomRight;
 		this.relocatedLabels = options.relocatedLabels;
 		this.getWorkingAnimation = options.getWorkingAnimation;
@@ -566,9 +581,9 @@ export class FrameStatusEditor extends CustomEditor {
 	 * them to status line 2 (no compact/files-only fallback).
 	 */
 	private topRightSegment(): string {
-		const label = this.topRightProvider?.();
-		if (!hasVisibleText(label)) return "";
-		const decorated = decorateBorderGitStats(sanitizeStatusText(label), {
+		const stats = this.topRightGitStats?.();
+		if (!stats) return "";
+		const decorated = decorateBorderGitStats(stats, {
 			mute: this.subduedColor,
 			separator: (text) => this.borderColor(text),
 		});
@@ -717,10 +732,9 @@ export class FrameStatusEditor extends CustomEditor {
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
 		});
-		const rawGitLabel = this.topRightProvider?.();
+		const rawGitStats = this.topRightGitStats?.();
 		if (this.relocatedLabels) {
-			this.relocatedLabels.gitStats =
-				hasVisibleText(chosen.right) || !hasVisibleText(rawGitLabel) ? undefined : rawGitLabel;
+			this.relocatedLabels.gitStats = hasVisibleText(chosen.right) ? undefined : rawGitStats;
 		}
 		const selectedModelLabel = chosen.left === modelPlaceholder ? modelLabel : undefined;
 		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel) : "";
@@ -1738,6 +1752,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let subagentDepth: number | undefined;
 	let reviewLevel: StatusBarReviewLevel | undefined;
 	let displayMode: StatusBarDisplayMode = loadDisplayMode();
+	// Git dirty totals for the current cwd, collected internally. `undefined`
+	// while the repo is clean or `ctx.cwd` is not inside a git repo.
+	let gitStats: GitStats | undefined;
 	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
 	let lastContext: ExtensionContext | undefined;
@@ -1783,9 +1800,25 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return false;
 	};
 
-	// In `new` mode the repo dirty totals live on the editor frame top-right, so
-	// they are hidden from the first line to avoid duplication.
-	const isFirstLineSuppressed = (id: string): boolean => displayMode === "new" && id === REPO_STATS_ID;
+	// In `new` mode the git dirty totals live on the editor frame top-right, so
+	// they are not published on the first line (no duplication). In `legacy`
+	// mode the frame is hidden and the counters return to the first line as an
+	// internally-owned entry, ordered like a producer at the same priority.
+	const internalFirstLineEntries = (): Array<[string, FirstLineEntry]> => {
+		if (displayMode === "new" || !gitStats) return [];
+		return [
+			[
+				GIT_STATS_ID,
+				{
+					// The footer only renders with a UI, so the label is always colorized.
+					content: renderGitStatsLabel(gitStats, true),
+					section: "right",
+					priority: GIT_STATS_FIRST_LINE_PRIORITY,
+					order: Number.MAX_SAFE_INTEGER,
+				},
+			],
+		];
+	};
 
 	const renderFirstLineSection = (
 		section: StatusBarSection,
@@ -1793,7 +1826,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		attensionCoreSuffix?: string,
 		rewireContent?: string,
 	): string | undefined => {
-		const entries = [...firstLineById.entries()];
+		const entries = [...firstLineById.entries(), ...internalFirstLineEntries()];
 		if (section === "right" && hasVisibleText(rewireContent)) {
 			entries.push([
 				REWIRE_STATUS_ID,
@@ -1808,7 +1841,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		const items = entries
 			.filter(
 				([id, entry]) =>
-					entry.section === section && hasVisibleText(entry.content) && !isFirstLineSuppressed(id),
+					!SUPERSEDED_FIRST_LINE_IDS.has(id) && entry.section === section && hasVisibleText(entry.content),
 			)
 			.sort(([, a], [, b]) => b.priority - a.priority || a.order - b.order)
 			.map(([id, entry]) => {
@@ -1825,16 +1858,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	const hasFirstLineContent = (): boolean => {
 		if (rewireTarget) return true;
-		for (const [id, entry] of firstLineById.entries()) {
-			if (hasVisibleText(entry.content) && !isFirstLineSuppressed(id)) return true;
-		}
-		return false;
+		const entries = [...firstLineById.entries(), ...internalFirstLineEntries()];
+		return entries.some(([id, entry]) => !SUPERSEDED_FIRST_LINE_IDS.has(id) && hasVisibleText(entry.content));
 	};
 
 	const requestRender = (): void => {
 		requestFooterRender?.();
 		requestEditorRender?.();
 	};
+
+	// Git dirty totals live inside the status bar (single consumer), so the
+	// watcher feeds local state instead of a first-line producer contract.
+	const gitStatsWatcher = new GitStatsWatcher((stats) => {
+		gitStats = stats;
+		requestRender();
+	});
 
 	// Live cache of the effective network state from permissions-core. `current`
 	// is `undefined` when the core is absent, so no token is rendered. Live
@@ -1981,9 +2019,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					// the border) and the git dirty totals to status line 2 (left and right).
 					// Merge them into the section content here so crowding accounts for them.
 					const relocatedContext = displayMode === "new" ? relocatedBorderLabels.contextLabel : undefined;
-					const relocatedGitRaw = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
-					const relocatedGit = hasVisibleText(relocatedGitRaw)
-						? decorateBorderGitStats(sanitizeStatusText(relocatedGitRaw), {
+					const relocatedGitStats = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
+					const relocatedGit = relocatedGitStats
+						? decorateBorderGitStats(relocatedGitStats, {
 								mute: (value) => styleDarkAccent(theme, value),
 								separator: (value) => theme.fg("thinkingOff", value),
 							})
@@ -2062,7 +2100,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				),
 			topLeftReview: () =>
 				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
-			topRight: () => firstLineById.get(REPO_STATS_ID)?.content,
+			topRightGitStats: () => gitStats,
 			bottomRight: (text) =>
 				buildMessageSizeLabel(text, activeContext().ui.theme, collectImageTokens(text, activeContext().cwd)),
 			relocatedLabels: relocatedBorderLabels,
@@ -2157,6 +2195,19 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.on("input", refreshOnEvent);
 	pi.on("user_bash", refreshOnEvent);
 
+	// The working tree can change at any of these points; the watcher debounces
+	// and only re-renders when the counters actually changed.
+	const refreshGitStats = async (_event: unknown, ctx: ExtensionContext): Promise<void> => {
+		gitStatsWatcher.schedule(ctx.cwd);
+	};
+
+	pi.on("session_start", refreshGitStats);
+	pi.on("session_tree", refreshGitStats);
+	pi.on("turn_start", refreshGitStats);
+	pi.on("turn_end", refreshGitStats);
+	pi.on("input", refreshGitStats);
+	pi.on("user_bash", refreshGitStats);
+
 	pi.on("session_shutdown", async (_event, ctx) => {
 		lockMode = false;
 		if (ctx.hasUI) {
@@ -2183,6 +2234,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		progressStore.deactivate();
 		subagentDepth = undefined;
 		reviewLevel = undefined;
+		gitStatsWatcher.dispose();
+		gitStats = undefined;
 		requestFooterRender = undefined;
 	});
 
@@ -2306,6 +2359,23 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			} else {
 				ctx.ui.notify(`status-bar display mode: ${requested}`, "info");
 			}
+		},
+	});
+
+	pi.registerCommand("px:status-bar-git-stats", {
+		description: "Show the current git dirty totals rendered by the status bar",
+		handler: async (_args, ctx) => {
+			const snapshot = collectGitSnapshot(ctx.cwd);
+			if (!ctx.hasUI) return;
+			if (!snapshot) {
+				ctx.ui.notify("git stats: current cwd is not a git repo", "warning");
+				return;
+			}
+			const summary = dirtyStats(snapshot) ? formatGitStatsText(snapshot.stats) : "(clean)";
+			ctx.ui.notify(
+				`git stats: ${summary} (repo=${snapshot.repoRoot}, branch=${snapshot.branch}, dirty=${snapshot.isDirty})`,
+				"info",
+			);
 		},
 	});
 

@@ -156,19 +156,20 @@ labels are rendered in the frame corners:
   when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - Pressing the configured interrupt key (Escape by default) while an agent operation is active opens a `y/n` confirmation instead of aborting immediately. Declining (or pressing Escape again) keeps the operation running, and idle Escape behavior is unchanged.
-- **top-right** — git dirty totals from `repo-stats`, rendered as two icon groups,
-  files first then changed lines, separated by ` · `:
+- **top-right** — git dirty totals collected internally by `status-bar`
+  (`git-stats.ts`), rendered as two icon groups, files first then changed lines,
+  separated by ` · `:
   `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
-  producer's `[ ]`/`|` markers and `+`/`-`/`M` prefixes are replaced by Nerd Font
-  icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group also carries
-  the modified-file count. Zero values render in the subdued accent (a darkened
-  shade of the thinking color `thinkingOff`), while non-zero values keep the
-  producer's colors. On narrow frames the compact split form drops
+  counters are collected as numbers and rendered directly: the `+`/`-`/`M` prefixes
+  become Nerd Font icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group
+  also carries the modified-file count. Zero values render in the subdued accent
+  (a darkened shade of the thinking color `thinkingOff`), while non-zero values use
+  the shared git palette. On narrow frames the compact split form drops
   the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
   files group (`󰐖1󰍵2󰦓4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode
-  the totals are hidden from the first line to avoid duplication; in `legacy` mode
-  they stay on the first line.
+  the totals stay on the border; in `legacy` mode they move to the first line
+  right section as `+1 -2 M4 · +150 -200`.
 - **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage/cost.
   - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
     network-to-context bridge is tapered on both label sides, so the line reads
@@ -335,11 +336,12 @@ Second-line producers:
 - `safe-mode`
 - `switch-thinking`
 
-Context usage (`context-watcher-*` IDs) is now produced internally by `status-bar`.
+Context usage (`context-watcher-*` IDs) and the git dirty totals are now produced
+internally by `status-bar`. The first-line id `repo-stats` (former standalone
+extension) is ignored, so a stale installed copy cannot duplicate the counters.
 
 First-line producers (example):
 
-- `repo-stats`
 - `attension-core` (special-case: when active, its content is still prefixed before cwd/branch)
 
 Extra-row producers:
@@ -356,6 +358,8 @@ Extra-row producers:
   - Sets test content for a second-line ID and re-renders.
 - `/px:status-bar-clear <id>`
   - Clears test content for a second-line ID and re-renders.
+- `/px:status-bar-git-stats`
+  - Shows the currently rendered git dirty totals (with repo root, branch, and dirty flag).
 
 ## Install
 
@@ -370,6 +374,7 @@ Required files:
 - `contract.ts`
 - `network.ts`
 - `compose.ts`
+- `git-stats.ts`
 - `image-tokens.ts`
 
 Then run `/reload`.

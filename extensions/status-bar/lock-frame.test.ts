@@ -4,6 +4,8 @@ import { FrameStatusEditor } from "./index.ts";
 
 type Options = ConstructorParameters<typeof FrameStatusEditor>[3];
 
+const GIT_STATS = { filesAdded: 1, filesRemoved: 2, filesModified: 4, linesAdded: 150, linesRemoved: 200 };
+
 function makeEditor(mode: "new" | "legacy" = "new", decorationColors = false) {
 	const relocatedLabels: NonNullable<Options["relocatedLabels"]> = {};
 	const tui = { requestRender() {} } as ConstructorParameters<typeof FrameStatusEditor>[0];
@@ -13,7 +15,7 @@ function makeEditor(mode: "new" | "legacy" = "new", decorationColors = false) {
 		getWorkingAnimation: () => "comet",
 		interruptConfirmation: {} as Options["interruptConfirmation"],
 		topLeft: () => "MODEL",
-		topRight: () => "GIT",
+		topRightGitStats: () => GIT_STATS,
 		bottomLeft: () => ({ usage: "USAGE", cost: "COST" }),
 		bottomLeftStatus: () => "SAFE-MODE",
 		lockedStripeColor: decorationColors ? (text) => `\u001b[2m${text}\u001b[0m` : undefined,
@@ -32,7 +34,7 @@ describe("locked editor frame", () => {
 		const lines = editor.render(80);
 		expect(lines[0]).toStartWith("╭━╾ MODEL");
 		expect(lines[0]).toEndWith("╮");
-		expect(lines[0]).toContain("󰐖 0");
+		expect(lines[0]).toContain(`󰐖 ${GIT_STATS.filesAdded}`);
 		expect(lines.at(-1)).toContain("USAGE");
 		expect(lines.at(-1)).toContain("COST");
 		expect(lines.at(-1)).toContain("DRAFT unsent");
@@ -75,7 +77,7 @@ describe("locked editor frame", () => {
 		expect(lines[0]).toEndWith("╮");
 		expect(lines.at(-1)).toStartWith("╰");
 		expect(lines.at(-1)).toEndWith("╯");
-		expect(relocatedLabels.gitStats).toBe("GIT");
+		expect(relocatedLabels.gitStats).toEqual(GIT_STATS);
 		expect(relocatedLabels.contextLabel).toBe("COST");
 		expect(lines.every((line) => visibleWidth(line) === 20)).toBe(true);
 		const tiny = editor.render(12);
