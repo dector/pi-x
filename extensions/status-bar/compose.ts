@@ -232,8 +232,10 @@ export function formatRewireStatusLabel(
 	providerAliases: Readonly<Record<string, string>> = {},
 	modelAliases: Readonly<Record<string, string>> = {},
 	inherit = false,
+	inheritAll = false,
 ): string {
-	if (inherit) return `${REWIRE_ICON}Inherit`;
+	if (inheritAll) return `${REWIRE_ICON}Inherit`;
+	if (inherit) return `${REWIRE_ICON}Inherit · ${thinkingLevel}`;
 	const separator = model.indexOf("/");
 	const provider = separator === -1 ? undefined : model.slice(0, separator);
 	const modelId = separator === -1 ? model : model.slice(separator + 1);

@@ -1111,7 +1111,8 @@ function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload 
 		maybe.model.trim().length > 0 &&
 		typeof maybe.thinkingLevel === "string" &&
 		maybe.thinkingLevel.trim().length > 0 &&
-		(maybe.inherit === undefined || typeof maybe.inherit === "boolean")
+		(maybe.inherit === undefined || typeof maybe.inherit === "boolean") &&
+		(maybe.inheritAll === undefined || typeof maybe.inheritAll === "boolean")
 	);
 }
 
@@ -1908,6 +1909,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 										providerAliases,
 										modelAliases,
 										rewireTarget.inherit,
+										rewireTarget.inheritAll,
 									),
 								)
 							: undefined;
@@ -2221,6 +2223,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			model: payload.model.trim(),
 			thinkingLevel: payload.thinkingLevel.trim(),
 			...(payload.inherit ? { inherit: true } : {}),
+			...(payload.inheritAll ? { inheritAll: true } : {}),
 		};
 		requestRender();
 	});

@@ -85,8 +85,12 @@ describe("pure text helpers", () => {
 		);
 	});
 
-	test("labels an inherited rewire target without an effort suffix", () => {
-		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 󰒟 Inherit");
+	test("keeps the configured effort for model-only inheritance", () => {
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 󰒟 Inherit · high");
+	});
+
+	test("omits the effort suffix for Inherit All", () => {
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true, true)).toBe("󰚩 󰒟 Inherit");
 	});
 
 	test("compactFrameLabel removes value spacing without damaging ANSI colors", () => {

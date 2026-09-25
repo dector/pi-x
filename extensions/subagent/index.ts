@@ -925,10 +925,13 @@ export default function (pi: ExtensionAPI) {
 	};
 	const publishRewireStatus = (): void => {
 		if (rewireConfig?.enabled) {
+			const inheritAll = isInheritAllRewire(rewireConfig);
 			pi.events.emit(STATUS_BAR_REWIRE_SET_EVENT, {
 				model: rewireConfig.model,
 				thinkingLevel: rewireConfig.thinkingLevel,
-				...(isInheritedRewire(rewireConfig) ? { inherit: true } : {}),
+				...(isInheritedRewire(rewireConfig)
+					? { inherit: !inheritAll, ...(inheritAll ? { inheritAll: true } : {}) }
+					: {}),
 			});
 			return;
 		}

@@ -62,8 +62,10 @@ export interface StatusBarFirstLineClearPayload {
 export interface StatusBarRewireSetPayload {
 	model: string;
 	thinkingLevel: string;
-	/** The model is resolved from the parent when this is true. */
+	/** The model (and only the model) is resolved from the parent when true. */
 	inherit?: boolean;
+	/** The parent model and thinking level are both resolved when true. */
+	inheritAll?: boolean;
 }
 
 export interface StatusBarSubagentDepthSetPayload {

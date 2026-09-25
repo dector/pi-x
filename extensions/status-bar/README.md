@@ -67,7 +67,7 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - When session rewiring is enabled, the first-line right section shows a red
   `󰚩 󰒟 <provider>/<model> · <effort>` immediately before the skills counter. Provider
   and model aliases are applied, for example `󰚩 󰒟 cdx/5.6-sol · high`. Inherited
-  rewires show only `󰚩 󰒟 Inherit` while either inherited mode is active.
+  `Inherit model` shows `󰚩 󰒟 Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 󰒟 Inherit`.
 - `new` display mode appends the context token breakdown to the first-line right
   section, after the producer items (that is, after the skills `󰐱 n/m` counter
   when present). It is prefixed with the total-usage icon and omits the cost
