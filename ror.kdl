@@ -1,5 +1,5 @@
 default task="dev"
 
 task dev {
-  cmd "./pitest --include all"
+  cmd "./pitest --include-all"
 }
