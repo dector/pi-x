@@ -31,27 +31,47 @@ for arg in "$@"; do
 	esac
 done
 
-EXT_ARGS=()
-while IFS= read -r -d '' index_file; do
+# Always load the entrypoint file, never the extension directory. Passing a
+# directory that contains a prompts/ (or skills/, themes/) subdir makes Pi treat
+# it as a resource package and skip the entrypoint, so its tools would never
+# register. Loading the file explicitly also keeps it visible in Pi's verbose
+# extension list. Conventional resources must then be passed separately.
+add_extension() {
+	local index_file="$1"
+	local ext_dir
 	ext_dir="$(dirname "$index_file")"
+
+	EXT_ARGS+=("-e" "$index_file")
+	[[ -d "$ext_dir/skills" ]] && EXT_ARGS+=("--skill" "$ext_dir/skills")
+	[[ -d "$ext_dir/prompts" ]] && EXT_ARGS+=("--prompt-template" "$ext_dir/prompts")
+	[[ -d "$ext_dir/themes" ]] && EXT_ARGS+=("--theme" "$ext_dir/themes")
+
+	# The trailing `[[ ... ]] && ...` above can return non-zero; with `set -e`
+	# that would abort the caller. Report success explicitly.
+	return 0
+}
+
+EXT_ARGS=()
+
+# Repo extensions: load tracked ones, or every one with --include-all.
+while IFS= read -r -d '' index_file; do
 	rel_index="${index_file#"$SCRIPT_DIR"/}"
 
 	tracked=0
 	git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$rel_index" >/dev/null 2>&1 && tracked=1
 
 	if [[ $tracked -eq 1 || $INCLUDE_ALL -eq 1 ]]; then
-		# Always load the entrypoint file, never the extension directory.
-		# Passing a directory that contains a prompts/ (or skills/, themes/)
-		# subdir makes Pi treat it as a resource package and skip the
-		# entrypoint, so its tools would never register. Loading the file
-		# explicitly also keeps it visible in Pi's verbose extension list.
-		# Conventional resources must then be passed separately.
-		EXT_ARGS+=("-e" "$index_file")
-		[[ -d "$ext_dir/skills" ]] && EXT_ARGS+=("--skill" "$ext_dir/skills")
-		[[ -d "$ext_dir/prompts" ]] && EXT_ARGS+=("--prompt-template" "$ext_dir/prompts")
-		[[ -d "$ext_dir/themes" ]] && EXT_ARGS+=("--theme" "$ext_dir/themes")
+		add_extension "$index_file"
 	fi
 done < <(find "$EXTENSIONS_DIR" -mindepth 2 -maxdepth 2 -type f -name "index.ts" -print0 | sort -z)
+
+# Dev-only extensions under ./dev/extensions are always loaded by pitest.
+DEV_EXTENSIONS_DIR="$SCRIPT_DIR/dev/extensions"
+if [[ -d "$DEV_EXTENSIONS_DIR" ]]; then
+	while IFS= read -r -d '' index_file; do
+		add_extension "$index_file"
+	done < <(find "$DEV_EXTENSIONS_DIR" -mindepth 2 -maxdepth 2 -type f -name "index.ts" -print0 | sort -z)
+fi
 
 if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
 	echo "Error: no extensions found under $EXTENSIONS_DIR" >&2
