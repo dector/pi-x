@@ -1475,15 +1475,6 @@ export async function showHiDialog(
 						run: onToggleOuter,
 					},
 					{
-						hotkey: Key.ctrl("f"),
-						hotkeyLabel: "Ctrl+f",
-						label: "Focus mode",
-						group: "ACCESS & SAFETY",
-						toggleSeverity: "none",
-						isEnabled: (state) => state.focusOn,
-						run: onToggleFocus,
-					},
-					{
 						hotkey: "p",
 						hotkeyAliases: ["P"],
 						label: "Prompt history…",
@@ -1517,6 +1508,15 @@ export async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(() => void onOpenNote()),
+					},
+					{
+						hotkey: Key.ctrl("f"),
+						hotkeyLabel: "Ctrl+f",
+						label: "Focus mode",
+						group: "",
+						toggleSeverity: "none",
+						isEnabled: (state) => state.focusOn,
+						run: onToggleFocus,
 					},
 					{
 						hotkey: "L",

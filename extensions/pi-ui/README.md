@@ -35,7 +35,6 @@ Current dialog items:
   - `r - toggle reader mode`
   - `Ctrl+d - DANGER mode` (toggles `yolo+`)
   - `+ - toggle outer mode`
-  - `Ctrl+f - toggle focus mode` (the focus-mode reading column)
 - **Agents**
   - `a - subagents…` (opens the `/px:agents` batch list)
   - `R - agents rewiring…` (opens the rewiring menu, including `Inherit model` and `Inherit All`)
@@ -45,7 +44,8 @@ Current dialog items:
   - `p - prompt history…` (opens the tabbed history dialog)
   - `n - browse notes…` (opens the `/px:notes:list` browser)
   - `N - new note…` (opens the `/px:notes` editor)
-- **Lock** (last, unheaded group)
+- **Lock** (last, unheaded group; Focus mode sits directly above it)
+  - `Ctrl+f - toggle focus mode` (the focus-mode reading column)
   - `L - toggle lock mode`
 - `/ - search all main and prompt-stash actions`
 - `↑/↓ - move selection`
