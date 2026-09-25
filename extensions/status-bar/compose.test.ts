@@ -239,16 +239,16 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		}
 	});
 
-	test("DANGER has red rounded caps and one continuous red background behind the icon and text", () => {
-		const danger = "\x1b[48;5;88;38;2;211;143;143mDANGER\x1b[0m";
-		const pill = "\x1b[38;5;88m\x1b[0m\x1b[48;5;88;38;2;211;143;143m󰕥 DANGER\x1b[0m\x1b[38;5;88m\x1b[0m";
-		expect(composeBorderBottomLeft({ statusLabel: danger, networkLabel: "?", borderColor: border })).toBe(
+	test("yolo+ has a red shield and DGR pill", () => {
+		const dgr = "\x1b[48;5;88;38;2;211;143;143mDGR\x1b[0m";
+		const pill = "\x1b[38;5;88m\x1b[0m\x1b[48;5;88;38;2;211;143;143m󰕥 DGR\x1b[0m\x1b[38;5;88m\x1b[0m";
+		expect(composeBorderBottomLeft({ statusLabel: dgr, networkLabel: "?", borderColor: border })).toBe(
 			`«━╾ »${pill}« · »«󰅟 ?»« »`,
 		);
-		expect(composeBorderBottomLeft({ statusLabel: danger, contextLabel: "CTX", borderColor: border })).toBe(
+		expect(composeBorderBottomLeft({ statusLabel: dgr, contextLabel: "CTX", borderColor: border })).toBe(
 			`«━╾ »${pill}« ╼━╾ »CTX« »`,
 		);
-		expect(composeBorderBottomLeft({ statusLabel: danger, borderColor: border })).toBe(
+		expect(composeBorderBottomLeft({ statusLabel: dgr, borderColor: border })).toBe(
 			`«━╾ »${pill}« »`,
 		);
 	});

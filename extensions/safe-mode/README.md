@@ -35,14 +35,14 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
 
 Status bar indicator:
 - non-paranoid + `outerAccess=false`: `SMART`, `READER`, `YOLO`
-- non-paranoid + `outerAccess=true`: `SMART+`, `READER+`, `DANGER` (the status-bar name for `yolo+`)
+- non-paranoid + `outerAccess=true`: `SMART+`, `READER+`, `DGR` for `yolo+`
 - paranoid always: `PARANOID`
 
 In the new editor border, all modes render as rounded pills (`󰕥 MODE`):
-SMART is purple, READER green, PARANOID blue, YOLO bright red, and DANGER dark
-red with muted rose text. Legacy status-line labels retain producer formatting.
+SMART is purple, READER green, PARANOID blue, YOLO bright red, and the `DGR`
+pill for `yolo+` is dark red with muted rose text. Legacy status-line labels retain producer formatting.
 
-Notifications and list output keep the safe-mode name (for example `YOLO+` in UI notifications). The status bar displays `DANGER`; Quick Actions calls the toggle `DANGER mode`.
+Notifications and list output keep the safe-mode name (for example `YOLO+` in UI notifications). The status bar displays `DGR` for `yolo+`; Quick Actions calls the toggle `DANGER mode`.
 
 ## Read-only `git` tool auto-allow
 

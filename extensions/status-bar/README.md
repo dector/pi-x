@@ -202,7 +202,7 @@ labels are rendered in the frame corners:
     It stays uncolored when context percent is unknown.
 - **safe-mode** (bottom-left, before context) — rounded `󰕥 MODE` pills:
   purple `SMART`, green `READER`, blue `PARANOID`, brighter red `YOLO`, and dark
-  red `DANGER` for `yolo+`. Other outer-access modes retain their `+` suffix.
+  red `DGR` for `yolo+`. Other outer-access modes retain their `+` suffix.
   Pill caps match their backgrounds; text uses a lighter shade of each mode's
   color. Rendered only while the `safe-mode` producer has published content.
   Legacy status-line labels keep their producer formatting.

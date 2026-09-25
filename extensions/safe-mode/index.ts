@@ -352,8 +352,8 @@ function modeLabel(mode: SafeMode, outerAccess: boolean, options?: { ui?: boolea
 }
 
 export function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
-	// Only the status-bar display calls yolo+ DANGER; commands and state keep the yolo+ name.
-	if (mode === "yolo" && outerAccess) return "\x1b[48;5;88;38;2;211;143;143mDANGER\x1b[0m";
+	// Show DGR for yolo+ in the status bar; commands and state keep the yolo+ name.
+	if (mode === "yolo" && outerAccess) return "\x1b[48;5;88;38;2;211;143;143mDGR\x1b[0m";
 	const label = modeLabel(mode, outerAccess, { ui: true, brackets: false });
 	switch (mode) {
 		case "yolo":
