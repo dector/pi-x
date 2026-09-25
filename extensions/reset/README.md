@@ -5,7 +5,9 @@ the active model and thinking level, safe mode and outer access, session-approve
 exact bash commands, network policy, review level, and subagent rewire/delegation
 depth through owner-scoped handoff events. The owners apply state after the new
 runtime's `session_start`; model/effort changes are handled by the replacement
-reset extension instance. Owner acknowledgements are bounded to five seconds.
+reset extension instance. Pi creates a new event bus per session, so the reset
+instance exposes a process-local bridge to the replacement bus. Owner
+acknowledgements are bounded to five seconds; missing ones produce a warning.
 
 Other approvals, project bash approvals, progress, and UI state are not copied.
 Managed `proc` processes survive by default. `/reset -proc` asks the process

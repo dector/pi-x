@@ -2,49 +2,39 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { parseResetArguments } from "./arguments.ts";
 import { PROC_STOP_ALL_REPLY_EVENT, PROC_STOP_ALL_REQUEST_EVENT, type ProcStopAllResult } from "../proc/stop-all.ts";
 
-const TRANSFERRED_ENTRY_TYPES = new Set(["permissions-core", "review-level"]);
-
-interface CustomEntryLike {
-	type?: unknown;
-	customType?: unknown;
-	data?: unknown;
+interface ResetBridge {
+	sessionId: string;
+	cwd: string;
+	pi: ExtensionAPI;
+	applyModel(provider: string | undefined, modelId: string | undefined, thinkingLevel: string): Promise<boolean>;
 }
 
-export function transferableSettings(branch: unknown): Array<{ type: string; data: unknown }> {
-	if (!Array.isArray(branch)) return [];
-	const latest = new Map<string, unknown>();
-	for (const entry of branch as CustomEntryLike[]) {
-		if (entry?.type === "custom" && typeof entry.customType === "string" && TRANSFERRED_ENTRY_TYPES.has(entry.customType)) {
-			latest.set(entry.customType, entry.data);
-		}
-	}
-	return [...latest].map(([type, data]) => ({ type, data }));
+function activeBridge(): ResetBridge | undefined {
+	return (globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge;
 }
 
 export default function resetExtension(pi: ExtensionAPI): void {
-	let unsubscribeHandoff: (() => void) | undefined;
 	pi.on("session_start", (_event, ctx) => {
-		unsubscribeHandoff?.();
-		const sessionId = ctx.sessionManager.getSessionId();
-		const cwd = ctx.cwd;
-		unsubscribeHandoff = pi.events.on("px:reset:handoff:apply", async (payload) => {
-			if (!payload || typeof payload !== "object") return;
-			const value = payload as { transferId?: unknown; targetSessionId?: unknown; cwd?: unknown; provider?: unknown; modelId?: unknown; thinkingLevel?: unknown };
-			if (value.targetSessionId !== sessionId || value.cwd !== cwd || typeof value.transferId !== "string") return;
-			const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-			if (typeof value.thinkingLevel !== "string" || !levels.includes(value.thinkingLevel)) return;
-			if (typeof value.provider === "string" && typeof value.modelId === "string") {
-				const models = await ctx.modelRegistry.getAvailable();
-				const model = models.find((candidate) => candidate.provider === value.provider && candidate.id === value.modelId);
-				if (model) await pi.setModel(model);
-			}
-			pi.setThinkingLevel(value.thinkingLevel as any);
-			pi.events.emit("px:reset:settings:ack", { transferId: value.transferId, owner: "model", targetSessionId: sessionId, cwd });
-		});
+		const bridge: ResetBridge = {
+			sessionId: ctx.sessionManager.getSessionId(),
+			cwd: ctx.cwd,
+			pi,
+			async applyModel(provider, modelId, thinkingLevel) {
+				const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+				if (!levels.includes(thinkingLevel)) return false;
+				if (provider && modelId && (ctx.model?.provider !== provider || ctx.model?.id !== modelId)) {
+					const models = await ctx.modelRegistry.getAvailable();
+					const model = models.find((candidate) => candidate.provider === provider && candidate.id === modelId);
+					if (!model || !(await pi.setModel(model))) return false;
+				}
+				pi.setThinkingLevel(thinkingLevel as ReturnType<typeof pi.getThinkingLevel>);
+				return true;
+			},
+		};
+		(globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge = bridge;
 	});
 	pi.on("session_shutdown", () => {
-		unsubscribeHandoff?.();
-		unsubscribeHandoff = undefined;
+		if (activeBridge()?.pi === pi) delete (globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge;
 	});
 
 	pi.registerCommand("reset", {
@@ -111,20 +101,27 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 	unsubscribeSnapshot();
 	const result = await ctx.newSession({
 		withSession: async (newCtx) => {
+			// Pi creates a new event bus for every session. The old `pi.events` cannot
+			// reach replacement extensions; their fresh reset instance publishes this
+			// process-local bridge during session_start.
+			const targetSessionId = newCtx.sessionManager.getSessionId();
+			const bridge = activeBridge();
+			if (!bridge || bridge.sessionId !== targetSessionId || bridge.cwd !== newCtx.cwd) {
+				newCtx.ui.notify("/reset: replacement extension is unavailable; settings were not transferred.", "warning");
+				return;
+			}
 			if (stopProc) {
-				const stopped = await stopManagedProcesses(pi, newCtx.sessionManager.getSessionId());
+				const stopped = await stopManagedProcesses(bridge.pi, targetSessionId);
 				if (!stopped) newCtx.ui.notify("/reset -proc: process manager did not respond; processes may still be running.", "warning");
 				else if (stopped.timedOut.length) newCtx.ui.notify(`/reset -proc: processes did not stop: ${stopped.timedOut.join(", ")}`, "warning");
 			}
-			// This event is handled by the replacement extension instance, whose
-			// setters are bound to the new runtime. Never use this stale API's setters.
-			const targetSessionId = newCtx.sessionManager.getSessionId();
-			const expected = ["model", ...[...snapshots.keys()].filter((owner) => owner !== "model")];
+			const expected = [...snapshots.keys()];
 			const completed = new Set<string>();
 			let unsubscribeAck: (() => void) | undefined;
 			let timeout: ReturnType<typeof setTimeout> | undefined;
 			const acknowledged = new Promise<void>((resolve) => {
-				unsubscribeAck = pi.events.on("px:reset:settings:ack", (payload) => {
+				if (expected.length === 0) resolve();
+				unsubscribeAck = bridge.pi.events.on("px:reset:settings:ack", (payload) => {
 					if (!payload || typeof payload !== "object") return;
 					const ack = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown };
 					if (ack.transferId !== requestId || ack.targetSessionId !== targetSessionId || ack.cwd !== newCtx.cwd) return;
@@ -132,22 +129,21 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 					if (expected.every((owner) => completed.has(owner))) resolve();
 				});
 			});
-			pi.events.emit("px:reset:handoff:apply", {
-				transferId: requestId,
-				targetSessionId,
-				cwd: newCtx.cwd,
-				provider: model?.provider,
-				modelId: model?.id,
-				thinkingLevel,
-			});
-			for (const [owner, state] of snapshots) {
-				pi.events.emit("px:reset:settings:apply", { transferId: requestId, owner, targetSessionId, cwd: newCtx.cwd, state });
-			}
 			try {
-				const timedOut = new Promise<never>((_, reject) => {
-					timeout = setTimeout(() => reject(new Error("reset handoff acknowledgement timeout")), 5000);
-				});
-				await Promise.race([acknowledged, timedOut]);
+				if (!(await bridge.applyModel(model?.provider, model?.id, thinkingLevel))) {
+					newCtx.ui.notify("/reset: model or thinking level could not be restored.", "warning");
+				}
+				for (const [owner, state] of snapshots) {
+					bridge.pi.events.emit("px:reset:settings:apply", { transferId: requestId, owner, targetSessionId, cwd: newCtx.cwd, state });
+				}
+				if (expected.length) {
+					const timedOut = new Promise<void>((resolve) => {
+						timeout = setTimeout(resolve, 5000);
+					});
+					await Promise.race([acknowledged, timedOut]);
+					const missing = expected.filter((owner) => !completed.has(owner));
+					if (missing.length) newCtx.ui.notify(`/reset: settings not fully transferred (${missing.join(", ")}).`, "warning");
+				}
 			} finally {
 				if (timeout) clearTimeout(timeout);
 				unsubscribeAck?.();
