@@ -125,9 +125,9 @@ Integration contract (important):
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 
-### 4) Transcript selection, toggle, and navigation (Alt+J, Alt+K, Alt+O)
+### 4) Transcript selection, toggle, and navigation (Alt+PgDn, Alt+PgUp, Alt+O)
 
-`Alt+J` / `Alt+K` move a transcript selection one entry down / up and scroll that entry to the top of the viewport. Every visible entry counts, collapsed or not: user messages, assistant messages, tool calls, `!` bash runs, custom messages and entries, summaries, and skill invocations.
+`Alt+PgDn` / `Alt+PgUp` move a transcript selection one entry down / up and scroll that entry to the top of the viewport. Every visible entry counts, collapsed or not: user messages, assistant messages, tool calls, `!` bash runs, custom messages and entries, summaries, and skill invocations.
 
 Entries with nothing to show are skipped, so navigation follows what you actually see:
 
@@ -146,7 +146,7 @@ The selected entry is marked by the active **selection marker** (`PI_UI_SELECTIO
 - compaction and branch summaries
 - skill invocation messages
 
-Entries without a collapsed state (plain user and assistant messages) answer with a notification instead. After a reload, nothing is selected: press `Alt+K` once to select the newest entry, then `Alt+O`.
+Entries without a collapsed state (plain user and assistant messages) answer with a notification instead. After a reload, nothing is selected: press `Alt+PgUp` once to select the newest entry, then `Alt+O`.
 
 Implementation notes:
 
@@ -182,7 +182,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
 
 ### Shortcut
 
-- `Alt+J` / `Alt+K` — select and scroll to the next / previous transcript entry
+- `Alt+PgDn` / `Alt+PgUp` — select and scroll to the next / previous transcript entry
 - `Alt+End` / `Alt+O` — select the last transcript entry; `Alt+Home` (Alt+Start) — the first
 - `Ctrl+Alt+O` — toggle the selected transcript entry (same as clicking it)
 - `Ctrl+,` — toggle the `pi-ui` action dialog

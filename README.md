@@ -23,7 +23,7 @@ This repo currently contains the following extension(s):
 | [`sqlite`](extensions/sqlite/README.md) | Adds a `sqlite` query tool for file-backed and in-memory databases, with read-only/mutating SQL classification for safe-mode integration. | `sqlite3` CLI |
 | [`interactive-bash`](extensions/interactive-bash/README.md) | Runs selected user `!` commands in a true interactive terminal (stdin works for prompts, sudo password entry, and interactive scripts). | |
 | [`git`](extensions/git/README.md) | Adds a `git` tool and `/px:git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support. | `git` CLI |
-| [`pi-ui`](extensions/pi-ui/README.md) | UI tweaks: configurable working indicator, input-expected bell, `Ctrl+,` action dialog, and transcript selection (`Alt+J`/`Alt+K` select and scroll, `Alt+O` toggles the selected entry). | |
+| [`pi-ui`](extensions/pi-ui/README.md) | UI tweaks: configurable working indicator, input-expected bell, `Ctrl+,` action dialog, and transcript selection (`Alt+PgDn`/`Alt+PgUp` select and scroll, `Alt+O` toggles the selected entry). | |
 | [`pi-nvim`](extensions/pi-nvim/README.md) | Unix-socket bridge for sending prompts into a running pi session from compatible Neovim clients. | compatible Neovim plugin |
 | [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/px:attension-core-test` command. | |
 | [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/px file.md`). | |

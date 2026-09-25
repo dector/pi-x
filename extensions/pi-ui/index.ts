@@ -32,8 +32,8 @@ type LockableTui = {
 };
 const SELECT_LATEST_SHORTCUT = Key.alt("o");
 const TOGGLE_SELECTED_SHORTCUT = Key.ctrlAlt("o");
-const NAV_NEXT_SHORTCUT = Key.alt("j");
-const NAV_PREVIOUS_SHORTCUT = Key.alt("k");
+const NAV_NEXT_SHORTCUT = Key.alt("pageDown");
+const NAV_PREVIOUS_SHORTCUT = Key.alt("pageUp");
 // Alt+Start on keyboards that label Home as Start.
 const NAV_FIRST_SHORTCUT = Key.alt("home");
 const NAV_LAST_SHORTCUT = Key.alt("end");
@@ -422,7 +422,7 @@ export function describeEntry(component: unknown): string {
 	return ENTRY_LABELS[name] ?? name.replace(/Component$/, "");
 }
 
-/** Transcript entry currently selected with Alt+J / Alt+K. */
+/** Transcript entry currently selected with Alt+PgDn / Alt+PgUp. */
 export function getSelectedEntry(): TrackedEntry | undefined {
 	const state = (globalThis as Record<string, unknown>)[SELECTION_KEY] as { component: TrackedEntry } | undefined;
 	return state?.component;
@@ -2105,11 +2105,11 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerShortcut(TOGGLE_SELECTED_SHORTCUT, {
-		description: "Toggle the selected transcript entry (Alt+J/Alt+K to select)",
+		description: "Toggle the selected transcript entry (Alt+PgDn/Alt+PgUp to select)",
 		handler: async (ctx) => {
 			const outcome = toggleSelectedEntry(captureTuiReference(ctx));
 			if (outcome.status === "no-selection") {
-				notify(ctx, "pi-ui: nothing selected — use Alt+J/Alt+K to select an entry");
+				notify(ctx, "pi-ui: nothing selected — use Alt+PgDn/Alt+PgUp to select an entry");
 			} else if (outcome.status === "not-expandable") {
 				notify(ctx, `pi-ui: ${outcome.label} has nothing to collapse`);
 			} else if (outcome.status === "unavailable") {
