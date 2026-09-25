@@ -6,10 +6,10 @@ describe("/reset arguments", () => {
 		expect(parseResetArguments("  ")).toEqual({ ok: true, options: { keepAgents: false, stopProc: false } });
 	});
 
-	test("reserves and clearly rejects deferred active-work options", () => {
-		expect(parseResetArguments("+agents").message).toContain("checkpoint 2");
-		expect(parseResetArguments("-proc").message).toContain("checkpoint 2");
-		expect(parseResetArguments("+agents -proc").ok).toBe(false);
+	test("accepts active-work options in either order", () => {
+		expect(parseResetArguments("+agents")).toEqual({ ok: true, options: { keepAgents: true, stopProc: false } });
+		expect(parseResetArguments("-proc")).toEqual({ ok: true, options: { keepAgents: false, stopProc: true } });
+		expect(parseResetArguments("-proc +agents")).toEqual({ ok: true, options: { keepAgents: true, stopProc: true } });
 	});
 
 	test("rejects unknown flags instead of silently ignoring them", () => {

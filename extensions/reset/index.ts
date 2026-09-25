@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { parseResetArguments } from "./arguments.ts";
+import { PROC_STOP_ALL_REPLY_EVENT, PROC_STOP_ALL_REQUEST_EVENT, type ProcStopAllResult } from "../proc/stop-all.ts";
 
 const TRANSFERRED_ENTRY_TYPES = new Set(["permissions-core", "review-level"]);
 
@@ -54,12 +55,39 @@ export default function resetExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(parsed.message.trim(), "warning");
 				return;
 			}
-			await resetSession(pi, ctx);
+			if (parsed.options.keepAgents) {
+				ctx.ui.notify("/reset +agents is not yet available; no session was changed.", "warning");
+				return;
+			}
+			await resetSession(pi, ctx, parsed.options.stopProc);
 		},
 	});
 }
 
-async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: string): Promise<ProcStopAllResult | undefined> {
+	const id = `reset-proc-${targetSessionId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = (result?: ProcStopAllResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			off();
+			resolve(result);
+		};
+		const off = pi.events.on(PROC_STOP_ALL_REPLY_EVENT, (payload) => {
+			if (!payload || typeof payload !== "object") return;
+			const reply = payload as Partial<ProcStopAllResult>;
+			if (reply.id !== id || !Array.isArray(reply.stopped) || !Array.isArray(reply.timedOut)) return;
+			if (![...reply.stopped, ...reply.timedOut].every((name) => typeof name === "string")) return;
+			finish(reply as ProcStopAllResult);
+		});
+		const timer = setTimeout(() => finish(), 6_000);
+		pi.events.emit(PROC_STOP_ALL_REQUEST_EVENT, { id });
+	});
+}
+
+async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stopProc: boolean): Promise<void> {
 	const model = ctx.model;
 	const thinkingLevel = pi.getThinkingLevel();
 	const requestId = `reset-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -83,6 +111,11 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 	unsubscribeSnapshot();
 	const result = await ctx.newSession({
 		withSession: async (newCtx) => {
+			if (stopProc) {
+				const stopped = await stopManagedProcesses(pi, newCtx.sessionManager.getSessionId());
+				if (!stopped) newCtx.ui.notify("/reset -proc: process manager did not respond; processes may still be running.", "warning");
+				else if (stopped.timedOut.length) newCtx.ui.notify(`/reset -proc: processes did not stop: ${stopped.timedOut.join(", ")}`, "warning");
+			}
 			// This event is handled by the replacement extension instance, whose
 			// setters are bound to the new runtime. Never use this stale API's setters.
 			const targetSessionId = newCtx.sessionManager.getSessionId();
