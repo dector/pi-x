@@ -168,38 +168,13 @@ function formatCost(total: number): string {
 	return `$${total.toFixed(2)}`;
 }
 
-// Thinking level abbreviations shown in the editor frame label (3-4 symbols, lowercase).
-const THINKING_LEVEL_ABBREVIATIONS: Record<string, string> = {
-	off: "off",
-	minimal: "min",
-	low: "low",
-	medium: "med",
-	high: "high",
-	xhigh: "xhi",
-	max: "max",
-};
-
-// Arrow indicators appended to the abbreviation. Higher levels point up, lower
-// levels point down; extra arrows mark extremes.
-const THINKING_LEVEL_INDICATORS: Record<string, string> = {
-	off: "✘",
-	minimal: "🡻🡻",
-	low: "🡻",
-	medium: "🡺",
-	high: "🢁",
-	xhigh: "🢁🢁",
-	max: "🢁🢁🢁",
-};
-
-// Wide screens show only the abbreviation; compact (narrow) screens fall back
-// to the arrow indicator without text.
-function formatThinkingLevel(level: string | undefined, options?: { compact?: boolean }): string {
+// The editor frame shows the full thinking level name, never an abbreviation
+// or arrow shortcut.
+function formatThinkingLevel(level: string | undefined): string {
 	if (typeof level !== "string") return "---";
 	const normalized = level.trim().toLowerCase();
 	if (!normalized) return "---";
-	const abbreviation = THINKING_LEVEL_ABBREVIATIONS[normalized] ?? normalized.slice(0, 4).toLowerCase();
-	if (options?.compact) return THINKING_LEVEL_INDICATORS[normalized] ?? abbreviation;
-	return abbreviation;
+	return normalized;
 }
 
 function formatCostTrailing(total: number): string {
@@ -570,9 +545,9 @@ export class FrameStatusEditor extends CustomEditor {
 			.join("");
 	}
 
-	/** Resolve the top-left model/effort label, optionally in compact (arrows-only) form. */
-	private topLeftLabel(compact: boolean): string | undefined {
-		const label = this.topLeftProvider?.({ compact });
+	/** Resolve the top-left model/effort label. */
+	private topLeftLabel(): string | undefined {
+		const label = this.topLeftProvider?.();
 		return hasVisibleText(label) ? label : undefined;
 	}
 
@@ -726,22 +701,18 @@ export class FrameStatusEditor extends CustomEditor {
 		// their full split form; on a narrow frame that no longer fits, so the label is
 		// relocated to status line 2 (no compact/files-only fallback). If even the model
 		// alone does not fit, the model still wins and the totals relocate.
-		const fullModelLabel = this.topLeftLabel(false);
-		const compactModelLabel = this.topLeftLabel(true);
+		const modelLabel = this.topLeftLabel();
 		const reviewLabel = this.topLeftReviewProvider?.();
 		const reviewSuffix = hasVisibleText(reviewLabel) ? ` · ${reviewLabel}` : "";
-		// Measure uncolored placeholders so only the selected model variant runs
-		// through the stateful working animation renderer.
-		const fullModelPlaceholder = fullModelLabel
-			? `${FRAME_LEFT_CORNER_OPEN}${fullModelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
-			: "";
-		const compactModelPlaceholder = compactModelLabel
-			? `${FRAME_LEFT_CORNER_OPEN}${compactModelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
+		// Measure the uncolored placeholder so only the model label runs through
+		// the stateful working animation renderer.
+		const modelPlaceholder = modelLabel
+			? `${FRAME_LEFT_CORNER_OPEN}${modelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
 			: "";
 		const fullRightSegment = this.topRightSegment();
 		const chosen = chooseTopBorderSegments({
 			width,
-			leftSegments: [fullModelPlaceholder, compactModelPlaceholder],
+			leftSegments: [modelPlaceholder],
 			rightSegments: [fullRightSegment],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
@@ -751,12 +722,7 @@ export class FrameStatusEditor extends CustomEditor {
 			this.relocatedLabels.gitStats =
 				hasVisibleText(chosen.right) || !hasVisibleText(rawGitLabel) ? undefined : rawGitLabel;
 		}
-		const selectedModelLabel =
-			chosen.left === fullModelPlaceholder
-				? fullModelLabel
-				: chosen.left === compactModelPlaceholder
-					? compactModelLabel
-					: undefined;
+		const selectedModelLabel = chosen.left === modelPlaceholder ? modelLabel : undefined;
 		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel) : "";
 		const rightSegment = chosen.right;
 
@@ -959,15 +925,14 @@ export function styleDarkAccent(
 	return fgRgb(mixRgb(base, { r: 0, g: 0, b: 0 }, DARK_ACCENT_MIX), text);
 }
 
-// Border (top-left) model label: "provider/model-id (EFFORT)" with alias tables
-// applied, id-only when provider is missing. Effort is the abbreviation on wide
-// screens and the arrow indicator on narrow ones.
+// Border (top-left) model label: "provider/model-id · EFFORT" with alias tables
+// applied, id-only when provider is missing. The effort is always the full
+// thinking level name.
 function buildBorderModelLabel(
 	ctx: ExtensionContext,
 	providerAliases: StatusBarAliasMap,
 	modelAliases: StatusBarAliasMap,
 	thinkingLevel: string | undefined,
-	compactEffort: boolean,
 ): string | undefined {
 	const model = ctx.model;
 	if (!model?.id) return undefined;
@@ -975,7 +940,7 @@ function buildBorderModelLabel(
 	const providerLabel = model.provider ? (providerAliases[model.provider] ?? model.provider) : undefined;
 	const base = providerLabel ? `${providerLabel}/${modelLabel}` : modelLabel;
 	if (typeof thinkingLevel !== "string" || !thinkingLevel.trim()) return `${MODEL_DISPLAY_GLYPH}${base}`;
-	return `${MODEL_DISPLAY_GLYPH}${base} · ${formatThinkingLevel(thinkingLevel, { compact: compactEffort })}`;
+	return `${MODEL_DISPLAY_GLYPH}${base} · ${formatThinkingLevel(thinkingLevel)}`;
 }
 
 function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
@@ -2084,13 +2049,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			},
 			bottomLeftSubagent: () =>
 				subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, activeContext().ui.theme),
-			topLeft: (opts) =>
+			topLeft: () =>
 				buildBorderModelLabel(
 					activeContext(),
 					providerAliases,
 					modelAliases,
 					pi.getThinkingLevel(),
-					opts?.compact ?? false,
 				),
 			topLeftReview: () =>
 				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
