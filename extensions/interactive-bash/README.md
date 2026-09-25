@@ -11,7 +11,7 @@ This extension intercepts `user_bash` and executes matching commands with `stdio
 
 - Intercepts **user `!` commands only** (not agent `bash` tool calls)
 - Uses your shell (`$SHELL`, fallback `/bin/bash`)
-- Suspends pi TUI, runs command in full-screen terminal, then restores TUI
+- Suspends pi TUI, runs command in full-screen terminal, shows its exit code, and waits for Enter before restoring TUI
 
 ## Usage
 

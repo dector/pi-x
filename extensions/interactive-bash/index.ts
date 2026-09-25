@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readSync } from "node:fs";
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -131,17 +132,29 @@ export default function (pi: ExtensionAPI) {
 			tui.stop();
 			process.stdout.write("\x1b[2J\x1b[H");
 
-			const shell = process.env.SHELL || "/bin/bash";
-			const result = spawnSync(shell, ["-lc", command], {
-				cwd: event.cwd,
-				stdio: "inherit",
-				env: process.env,
-			});
+			let exitCode = 1;
+			try {
+				const shell = process.env.SHELL || "/bin/bash";
+				const result = spawnSync(shell, ["-lc", command], {
+					cwd: event.cwd,
+					stdio: "inherit",
+					env: process.env,
+				});
+				exitCode = result.status ?? (result.signal ? 130 : 1);
 
-			tui.start();
-			tui.requestRender(true);
+				const color = exitCode === 0 ? "\x1b[32m" : "\x1b[31m";
+				process.stdout.write(`\n${color}Command finished with exit code: ${exitCode}\x1b[0m\nPress Enter to close...`);
+				const key = Buffer.alloc(1);
+				while (readSync(process.stdin.fd, key, 0, 1, null) > 0) {
+					if (key[0] === 10 || key[0] === 13) break;
+					// Consume the full line so typed characters don't leak into pi's editor.
+				}
+			} finally {
+				tui.start();
+				tui.requestRender(true);
+			}
 
-			done(result.status ?? (result.signal ? 130 : 1));
+			done(exitCode);
 			return { render: () => [], invalidate: () => {} };
 		});
 
