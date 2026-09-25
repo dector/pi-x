@@ -150,7 +150,6 @@ extensions=(
   "permissions-core"
   "permissions-ui"
   "renew"
-  "skill-stats"
   "flutter"
   "http"
   "interactive-bash"

@@ -17,7 +17,6 @@ This repo currently contains the following extension(s):
 | [`safe-mode`](extensions/safe-mode/README.md) | Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. | `status-bar`, `bash-parser` |
 | [`permissions-core`](extensions/permissions-core/README.md) | Headless network permission provider: validates and classifies `perm:net` requests and owns the session network policy (Auto, explicit, PARANOID). | `hub` |
 | [`permissions-ui`](extensions/permissions-ui/README.md) | Adds the `/px:net` selector to configure the network policy through permissions-core. | `permissions-core` |
-| [`skill-stats`](extensions/skill-stats/README.md) | Publishes `SKILLS: n/m` for unique `SKILL.md` files successfully read in the current session. | `status-bar` |
 | [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/px:flutter run`, `/px:flutter reload`, `/px:flutter restart`, `/px:flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `status-bar`, `flutter` CLI |
 | [`proc`](extensions/proc/README.md) | Runs and manages long-lived background processes with a `proc` tool, per-process log cursors, and a collapsible above-editor Processes widget. | `panels` |
 | [`http`](extensions/http/README.md) | Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`. | `cheerio`, `pandoc` for `http_md` |

@@ -80,6 +80,13 @@ import { createProtectedInterrupt, InterruptConfirmationGuard, showInterruptConf
 import { deepseekImageTokens, findImagePaths, parseImageDimensions } from "./image-tokens";
 import { NetworkStateStore, resolveNetworkStatus } from "./network";
 import { formatProgressRow, ProgressObserver } from "./progress";
+import {
+	countLoadedSkills,
+	countSessionSkills,
+	renderSkillStatsLabel,
+	type SkillStats,
+	SkillStatsTracker,
+} from "./skill-stats";
 
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
@@ -98,9 +105,14 @@ const SAFE_MODE_ID = "safe-mode";
 // first-line right section, ordered like a producer at this priority.
 const GIT_STATS_ID = "git-stats";
 const GIT_STATS_FIRST_LINE_PRIORITY = 100;
-// The standalone `repo-stats` extension was folded in here. Its id is ignored on
-// the first line so a stale installed copy cannot duplicate the counters.
-const SUPERSEDED_FIRST_LINE_IDS = new Set(["repo-stats"]);
+// Read-skill counter, also collected internally (skill-stats.ts). It always
+// renders on the first line right section, ordered behind the other items.
+const SKILL_STATS_ID = "skill-stats";
+const SKILL_STATS_FIRST_LINE_PRIORITY = -100;
+// The standalone `repo-stats` and `skill-stats` extensions were folded in here.
+// Their ids are ignored on the first line so a stale installed copy cannot
+// duplicate the counters.
+const SUPERSEDED_FIRST_LINE_IDS = new Set(["repo-stats", "skill-stats"]);
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
 const SUBAGENT_DEPTH_ICON = "󰚩";
@@ -1755,6 +1767,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// Git dirty totals for the current cwd, collected internally. `undefined`
 	// while the repo is clean or `ctx.cwd` is not inside a git repo.
 	let gitStats: GitStats | undefined;
+	// Unique `SKILL.md` files read this session, over the skills pi loaded.
+	let skillStats: SkillStats | undefined;
 	const workingAnimation = loadWorkingAnimation();
 	const { providerAliases, modelAliases } = loadAliases();
 	let lastContext: ExtensionContext | undefined;
@@ -1800,14 +1814,15 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return false;
 	};
 
-	// In `new` mode the git dirty totals live on the editor frame top-right, so
-	// they are not published on the first line (no duplication). In `legacy`
-	// mode the frame is hidden and the counters return to the first line as an
-	// internally-owned entry, ordered like a producer at the same priority.
+	// Git dirty totals live on the editor frame in `new` mode, so they are not
+	// published on the first line (no duplication). In `legacy` mode the frame is
+	// hidden and the counters return to the first line as an internally-owned
+	// entry, ordered like a producer at the same priority. The skill counter
+	// always lives on the first line.
 	const internalFirstLineEntries = (): Array<[string, FirstLineEntry]> => {
-		if (displayMode === "new" || !gitStats) return [];
-		return [
-			[
+		const entries: Array<[string, FirstLineEntry]> = [];
+		if (displayMode === "legacy" && gitStats) {
+			entries.push([
 				GIT_STATS_ID,
 				{
 					// The footer only renders with a UI, so the label is always colorized.
@@ -1816,8 +1831,20 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					priority: GIT_STATS_FIRST_LINE_PRIORITY,
 					order: Number.MAX_SAFE_INTEGER,
 				},
-			],
-		];
+			]);
+		}
+		if (skillStats) {
+			entries.push([
+				SKILL_STATS_ID,
+				{
+					content: renderSkillStatsLabel(skillStats, true),
+					section: "right",
+					priority: SKILL_STATS_FIRST_LINE_PRIORITY,
+					order: Number.MAX_SAFE_INTEGER,
+				},
+			]);
+		}
+		return entries;
 	};
 
 	const renderFirstLineSection = (
@@ -1871,6 +1898,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// watcher feeds local state instead of a first-line producer contract.
 	const gitStatsWatcher = new GitStatsWatcher((stats) => {
 		gitStats = stats;
+		requestRender();
+	});
+
+	// Skill read counter lives here too, for the same reason: nothing else
+	// consumes the first-line event it used to publish.
+	const skillStatsTracker = new SkillStatsTracker((stats) => {
+		skillStats = stats;
 		requestRender();
 	});
 
@@ -2164,6 +2198,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		// Only an active session may apply live network/progress `changed` events.
 		networkStore.activate();
 		progressStore.activate();
+		skillStatsTracker.startSession(countSessionSkills(ctx));
 		bindContextAndRender(ctx);
 		// Refresh in the background; a live `changed` event also updates state.
 		void networkStore.refresh();
@@ -2208,6 +2243,21 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.on("input", refreshGitStats);
 	pi.on("user_bash", refreshGitStats);
 
+	// Skill reads arrive as read tool results; the denominator is refreshed
+	// before each agent run from the skills pi assembled for that run.
+	pi.on("before_agent_start", async (event) => {
+		skillStatsTracker.setLoaded(countLoadedSkills(event.systemPromptOptions));
+	});
+
+	pi.on("tool_result", async (event, ctx) => {
+		skillStatsTracker.recordRead({
+			toolName: event.toolName,
+			isError: event.isError,
+			input: event.input,
+			cwd: ctx.cwd,
+		});
+	});
+
 	pi.on("session_shutdown", async (_event, ctx) => {
 		lockMode = false;
 		if (ctx.hasUI) {
@@ -2236,6 +2286,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		reviewLevel = undefined;
 		gitStatsWatcher.dispose();
 		gitStats = undefined;
+		skillStatsTracker.reset();
+		skillStats = undefined;
 		requestFooterRender = undefined;
 	});
 
@@ -2376,6 +2428,22 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				`git stats: ${summary} (repo=${snapshot.repoRoot}, branch=${snapshot.branch}, dirty=${snapshot.isDirty})`,
 				"info",
 			);
+		},
+	});
+
+	pi.registerCommand("px:status-bar-skill-stats", {
+		description: "Show the counted SKILL.md paths and the loaded skill denominator",
+		handler: async (_args, ctx) => {
+			const paths = skillStatsTracker.readPathsList();
+			const message = [
+				`skill stats: ${skillStatsTracker.snapshot().read}/${skillStatsTracker.snapshot().loaded}`,
+				paths.length > 0 ? paths.join("\n") : "No SKILL.md files counted yet.",
+			].join("\n");
+			if (ctx.hasUI) {
+				ctx.ui.notify(message, "info");
+			} else {
+				console.log(message);
+			}
 		},
 	});
 

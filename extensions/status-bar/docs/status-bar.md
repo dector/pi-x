@@ -53,7 +53,7 @@ Producers publish content to the shared event bus:
 
 When `status-bar` receives a valid `px:status-bar:ping`, it emits `px:status-bar:pong` echoing the same `id`.
 
-`id` is the producer ID (for example `safe-mode`, `switch-thinking`). Git dirty totals are produced internally and are not part of this contract.
+`id` is the producer ID (for example `safe-mode`, `switch-thinking`). The git dirty totals and the skill counter are produced internally and are not part of this contract; the first-line ids `repo-stats` and `skill-stats` are ignored.
 
 ## Rendering path
 

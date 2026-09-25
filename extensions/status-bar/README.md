@@ -59,18 +59,23 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
   - highest `priority` first (default `0`)
   - tie-breaker: stable first-registration order
   - item delimiter: ` · `
-- If no first-line producer exists, fallback to the built-in cwd/branch/session line.
+- The first-line right section also owns two internally collected items, ordered
+  like producers: the git dirty totals (priority `100`, only in `legacy` mode) and
+  the skill counter `󰐱 <read>/<loaded>` (priority `-100`, both modes). The skill
+  counter tracks unique successfully-read `SKILL.md` files this session over the
+  skills pi loaded, refreshed before each agent run; it resets with the session.
+- If no first-line producer or internal item exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
 - In `new` display mode the git branch carries the border branch icon inside the
   parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
   mode keeps the plain `~/pi-x (trunk)` form.
 - When session rewiring is enabled, the first-line right section shows a red
-  `󰚩 󰒟 <provider>/<model> · <effort>` immediately before the skills counter. Provider
+  `󰚩 󰒟 <provider>/<model> · <effort>` immediately before the skill counter. Provider
   and model aliases are applied, for example `󰚩 󰒟 cdx/5.6-sol · high`. Inherited
   `Inherit model` shows `󰚩 󰒟 Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 󰒟 Inherit`.
 - `new` display mode appends the context token breakdown to the first-line right
-  section, after the producer items (that is, after the skills `󰐱 n/m` counter
-  when present). It is prefixed with the total-usage icon and omits the cost
+  section, after the producer items (that is, after the `󰐱 <read>/<loaded>` skill
+  counter when present). It is prefixed with the total-usage icon and omits the cost
   suffix: `󰓡 ↑<input>/↓<output>/<cacheRead>`.
 
 ### Extra rows
@@ -265,7 +270,7 @@ labels are rendered in the frame corners:
   - Editor frame shows the corner labels (top-left model icon + model · thinking + review, top-right git totals, bottom-left safe-mode · network + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
   - The input/output/cache token breakdown moves to status line 1, right after the
-    producer items (after the skills counter), prefixed with the total-usage icon,
+    producer items (after the skill counter), prefixed with the total-usage icon,
     and omits the cost suffix because the border already shows cost.
   - `safe-mode`, the effective network token, `switch-thinking` (favorite thinking modes), model, and percent are hidden from the status line.
 - `legacy` — status-bar priority.
@@ -336,9 +341,10 @@ Second-line producers:
 - `safe-mode`
 - `switch-thinking`
 
-Context usage (`context-watcher-*` IDs) and the git dirty totals are now produced
-internally by `status-bar`. The first-line id `repo-stats` (former standalone
-extension) is ignored, so a stale installed copy cannot duplicate the counters.
+Context usage (`context-watcher-*` IDs), the git dirty totals, and the skill
+counter are now produced internally by `status-bar`. The first-line ids
+`repo-stats` and `skill-stats` (former standalone extensions) are ignored, so a
+stale installed copy cannot duplicate the counters.
 
 First-line producers (example):
 
@@ -360,6 +366,8 @@ Extra-row producers:
   - Clears test content for a second-line ID and re-renders.
 - `/px:status-bar-git-stats`
   - Shows the currently rendered git dirty totals (with repo root, branch, and dirty flag).
+- `/px:status-bar-skill-stats`
+  - Shows the skill counter with the counted absolute `SKILL.md` paths.
 
 ## Install
 
@@ -375,6 +383,7 @@ Required files:
 - `network.ts`
 - `compose.ts`
 - `git-stats.ts`
+- `skill-stats.ts`
 - `image-tokens.ts`
 
 Then run `/reload`.
