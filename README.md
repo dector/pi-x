@@ -33,6 +33,7 @@ This repo currently contains the following extension(s):
 | [`hub`](extensions/hub/README.md) | Central signal hub: routes and arbitrates capability requests between extensions (`perm:shell`, `perm:io`, `perm:net`, `perm:agent`, `perm:tool`). | |
 | [`subagent`](extensions/subagent/README.md) | Delegates single, parallel, and chained tasks to isolated RPC child agents. Async by default with automatic completion injection, plus explicit `execution: "blocking"`. Includes permission inheritance, approval relay, model-callable `action: "stop"`/`"steer"` controls, `/px:agents` runtime controls, session-wide model/effort rewiring (including `Inherit model`/`Inherit All` at child start) via `/px:agents:rewire`, an above-editor active-subagents widget, and `/px:agent:log`. | `panels`; `safe-mode` optional |
 | [`panels`](extensions/panels/README.md) | Coordinates above-editor panels in a stable order. Both start collapsed; `Alt+P` cycles forward and `Alt+Shift+P` cycles backward. | |
+| [`narrow`](extensions/narrow/README.md) | Keeps pi inside a reading column on wide monitors: `/px:narrow [on [N]\|off\|set N\|bias [N]\|status]`, persisted globally, default 100 columns centered, `bias -100` moves it flush left, no margin on a screen that already fits. | |
 
 ## Network permissions (`perm:net`)
 

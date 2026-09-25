@@ -160,6 +160,7 @@ extensions=(
   "notes"
   "git"
   "pi-nvim"
+  "narrow"
   "herdr-agent-state"
 )
 
