@@ -15,6 +15,8 @@ running in the Processes widget above the editor.
   by default, expands to a bounded list while the `processes` panel is active.
 - Processes survive `/reload`, `/new`, `/resume`, and `/fork`; they are stopped
   when pi quits.
+- An event-bus stop-all request lets lifecycle orchestrators stop managed running
+  processes before replacing a session.
 - `safe-mode` integration: read-only actions auto-allow, mutations ask.
 
 ## Tool
@@ -105,6 +107,27 @@ off; they remain in `list` until `forget`. When more processes are visible than
 fit, the last line shows `… N more`.
 
 The `proc` tool works without `panels`; the Processes widget requires it.
+
+## Lifecycle event contract (`-proc`)
+
+A reset/lifecycle orchestrator opts into stopping managed processes by emitting
+`px:proc:stop-all:request` with exactly `{ id: string }`. The non-empty
+correlation id must be at most 128 characters. Invalid payloads are ignored and
+receive no reply. The proc extension snapshots records in `running` state when
+it receives the request (already-stopping and exited records are untouched),
+then sends SIGTERM to each snapshot process group and escalates to SIGKILL using
+the normal ~3s stop timer.
+
+It replies on `px:proc:stop-all:reply` with
+`{ id, stopped: string[], timedOut: string[] }`. `stopped` names exited by
+settlement; `timedOut` names still not exited at the deadline. Settlement is
+bounded to 4 seconds, so callers should correlate by `id` and treat any timed-out
+names as not confirmed stopped. The reply reports process outcomes; it does not
+remove records from the registry. The registry intentionally survives session
+replacement and `/reload`, so the request operates on all currently registered
+owned processes, not merely processes started in the current session. The event
+listener is removed on extension shutdown/reload; emit while proc is loaded and
+before the orchestrator replaces the session.
 
 ## Configuration
 

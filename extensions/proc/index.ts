@@ -7,6 +7,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+	PROC_STOP_ALL_MAX_WAIT_MS,
+	PROC_STOP_ALL_REPLY_EVENT,
+	PROC_STOP_ALL_REQUEST_EVENT,
+	stopAllRunningProcesses,
+	validateProcStopAllRequest,
+} from "./stop-all.ts";
+import {
 	hasVisibleProcessEntries,
 	ProcessesWidget,
 	renderProcessesWidgetContent,
@@ -108,6 +115,7 @@ interface GlobalProcState {
 	config: ProcConfig;
 	widget?: ProcessesWidget;
 	panelActiveUnsubscribe?: () => void;
+	stopAllUnsubscribe?: () => void;
 	lastPanelVisible?: boolean;
 }
 
@@ -201,6 +209,23 @@ function wakeWaiters(record: ProcRecord): void {
 	const waiters = [...record.waiters];
 	record.waiters.clear();
 	for (const waiter of waiters) waiter();
+}
+
+function waitForProcessExit(record: ProcRecord): Promise<void> {
+	if (record.state === "exited") return Promise.resolve();
+	return new Promise((resolvePromise) => {
+		let settled = false;
+		const finish = (): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			record.waiters.delete(finish);
+			resolvePromise();
+		};
+		const timer = setTimeout(finish, PROC_STOP_ALL_MAX_WAIT_MS + 100);
+		record.waiters.add(finish);
+		if (record.state === "exited") finish();
+	});
 }
 
 function clearStopTimers(record: ProcRecord): void {
@@ -1000,6 +1025,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 	// Re-registering the widget on a reload would otherwise leave the previous
 	// instance's subscription alive on a shared event bus.
 	globalState.panelActiveUnsubscribe?.();
+	globalState.stopAllUnsubscribe?.();
 
 	const widget = new ProcessesWidget({
 		setWidget: (content) => {
@@ -1032,6 +1058,16 @@ export default function procExtension(pi: ExtensionAPI): void {
 		const activeId = (payload as { activeId?: unknown } | undefined)?.activeId;
 		widget.setActive(activeId === PANEL_ID);
 	});
+	globalState.stopAllUnsubscribe = pi.events.on(PROC_STOP_ALL_REQUEST_EVENT, async (payload) => {
+		const request = validateProcStopAllRequest(payload);
+		if (!request) return;
+		const result = await stopAllRunningProcesses(
+			globalState.records,
+			(record) => stopProcess(record, undefined, false),
+			waitForProcessExit,
+		);
+		pi.events.emit(PROC_STOP_ALL_REPLY_EVENT, { id: request.id, ...result });
+	});
 
 	const startSession = (ctx: ExtensionContext): void => {
 		globalState.pi = pi;
@@ -1055,6 +1091,8 @@ export default function procExtension(pi: ExtensionAPI): void {
 		// holding the old widget and context on the shared event bus.
 		globalState.panelActiveUnsubscribe?.();
 		globalState.panelActiveUnsubscribe = undefined;
+		globalState.stopAllUnsubscribe?.();
+		globalState.stopAllUnsubscribe = undefined;
 		// Clear the coordinator's cached content before dropping the session.
 		widget.clear();
 		if (globalState.ctx) globalState.ctx = undefined;
