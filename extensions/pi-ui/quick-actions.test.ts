@@ -13,6 +13,7 @@ function openDialog(initiallyLocked = false) {
 	let closes = 0;
 	let reader = false;
 	let outer = false;
+	let doomCalls = 0;
 	let rewire = false;
 	let locked = initiallyLocked;
 	let renderFromEvent: (() => void) | undefined;
@@ -32,7 +33,7 @@ function openDialog(initiallyLocked = false) {
 		onToggleLock: () => { locked = !locked; },
 		isLocked: () => locked,
 		onToggleOuter: () => { outer = !outer; },
-		onSetYoloPlus: () => {},
+		onSetYoloPlus: () => { doomCalls++; },
 		onShowPromptPreviews: () => {},
 		onPromptStashStash: () => {},
 		onPromptStashPop: () => {},
@@ -52,7 +53,7 @@ function openDialog(initiallyLocked = false) {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get rewire() { return rewire; }, get locked() { return locked; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -82,6 +83,21 @@ describe("quick actions", () => {
 		expect(ui.renders).toBeGreaterThan(0);
 		ui.dialog.handleInput("\x1b");
 		await ui.finished;
+	});
+
+	test("DANGER mode uses Ctrl+d to toggle yolo+ and closes the dialog", async () => {
+		const ui = openDialog();
+		const text = ui.dialog.render(80).join("\n");
+		expect(text).toMatch(/DANGER mode\s+Ctrl\+d/);
+		expect(text).not.toContain("YOLO+");
+		ui.dialog.handleInput("!");
+		await tick();
+		expect(ui.doomCalls).toBe(0);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("\x04"); // Ctrl+d
+		await ui.finished;
+		expect(ui.doomCalls).toBe(1);
+		expect(ui.closes).toBe(1);
 	});
 
 	test("rewire hotkey still closes the dialog", async () => {

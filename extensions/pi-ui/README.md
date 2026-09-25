@@ -33,7 +33,7 @@ Current dialog items:
 
 - **Access & Safety**
   - `r - toggle reader mode`
-  - `! - YOLO+ mode`
+  - `Ctrl+d - DANGER mode` (toggles `yolo+`)
   - `+ - toggle outer mode`
 - **Agents**
   - `a - subagents…` (opens the `/px:agents` batch list)
@@ -76,7 +76,7 @@ Behavior details:
 - Pressing `R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
-- Pressing `!` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
+- Pressing `Ctrl+d` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
 - Selecting any of these toggles with `Enter` keeps the dialog open.
 - Pressing `p` (or `P`) opens a full-width, tabbed prompt-history dialog in the same visual style:
   - **User prompts** starts at the latest prompt; `↑`/`PgUp` moves back to `-1`, `-2`, and older prompts, while `↓`/`PgDn` moves newer.
@@ -91,7 +91,7 @@ Behavior details:
 - Toggle switches show on as `─●` (severity-colored) and off as `○─` (muted):
   - Reader mode: normal/success (green).
   - Outer access: warning (orange/amber from the active theme).
-  - YOLO+ and agent rewiring: danger (red).
+  - DANGER mode (`yolo+`) and agent rewiring: danger (red).
 - Safe-mode rows read live state from the current `safe-mode` session data.
 - Agent rewiring mirrors the subagent extension's published rewire status.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
@@ -199,7 +199,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
   - `R` — request the subagent rewire menu via `px:subagent:rewire:menu`
   - `r` — request safe-mode reader toggle via `px:safe-mode:toggle-reader`
   - `+` — request safe-mode outer toggle via `px:safe-mode:toggle-outer`
-  - `!` — request safe-mode `yolo+` toggle via `px:safe-mode:set-yolo-plus`
+  - `Ctrl+d` — request safe-mode `yolo+` toggle (DANGER mode) via `px:safe-mode:set-yolo-plus`
   - `p` — open the tabbed prompt-history dialog
     - `←`/`→` or `h`/`l` — switch between User prompts, First prompt, and Agent responses
     - `↑`/`PgUp` and `↓`/`PgDn` — browse older and newer entries on the history tabs

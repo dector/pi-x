@@ -1451,8 +1451,9 @@ export async function showHiDialog(
 						run: onToggleReader,
 					},
 					{
-						hotkey: "!",
-						label: "YOLO+",
+						hotkey: Key.ctrl("d"),
+						hotkeyLabel: "Ctrl+d",
+						label: "DANGER mode",
 						group: "ACCESS & SAFETY",
 						toggleSeverity: "danger",
 						isEnabled: (state) => state.yoloPlusOn,

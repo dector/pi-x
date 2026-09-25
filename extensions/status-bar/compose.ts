@@ -359,9 +359,14 @@ export interface BorderBottomLeftArgs {
 export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const accentColor = args.accentColor ?? args.borderColor;
 	const hasContext = hasVisibleText(args.contextLabel);
-	const safeModeLabel = hasVisibleText(args.statusLabel)
-		? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
-		: undefined;
+	const isDanger = hasVisibleText(args.statusLabel) && stripAnsi(sanitizeStatusText(args.statusLabel!)) === "DANGER";
+	// DANGER red (ANSI 88). Caps use red foreground; the icon and label share the red background.
+	const redCap = (glyph: string): string => `\x1b[38;5;88m${glyph}\x1b[0m`;
+	const safeModeLabel = isDanger
+		? `${redCap("")}${leadingAnsiSequences(args.statusLabel!)}${BORDER_SAFE_MODE_ICON}DANGER\x1b[0m${redCap("")}`
+		: hasVisibleText(args.statusLabel)
+			? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
+			: undefined;
 	const networkLabel = hasVisibleText(args.networkLabel)
 		? decorateBorderNetworkLabel(args.networkLabel, accentColor)
 		: undefined;

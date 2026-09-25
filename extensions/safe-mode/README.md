@@ -35,11 +35,10 @@ Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for
 
 Status bar indicator:
 - non-paranoid + `outerAccess=false`: `SMART`, `READER`, `YOLO`
-- non-paranoid + `outerAccess=true`: `SMART!`, `READER!`, `YOLO!`
+- non-paranoid + `outerAccess=true`: `SMART+`, `READER+`, `DANGER` (the status-bar name for `yolo+`; the new editor border shows `󰕥 DANGER` with dark red caps/background and muted rose text)
 - paranoid always: `PARANOID`
 
-Notifications and list output still wrap the label in brackets (for example
-`Safe mode: [SMART]`).
+Notifications and list output keep the safe-mode name (for example `YOLO+` in UI notifications). The status bar displays `DANGER`; Quick Actions calls the toggle `DANGER mode`.
 
 ## Read-only `git` tool auto-allow
 
