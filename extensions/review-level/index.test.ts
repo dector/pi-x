@@ -12,19 +12,20 @@ function setup(branch: unknown[] = []) {
 	const entries: Array<{ type: string; data: unknown }> = [];
 	const notifications: Array<{ message: string; type: string }> = [];
 	const pickerTitles: string[] = [];
-	const pi = {
-		events: {
-			emit: (channel: string, payload: unknown) => {
-				emitted.push({ channel, payload });
-				for (const handler of eventHandlers.get(channel) ?? []) handler(payload);
-			},
-			on: (channel: string, handler: (payload: unknown) => void) => {
-				const handlers = eventHandlers.get(channel) ?? [];
-				handlers.push(handler);
-				eventHandlers.set(channel, handlers);
-				return () => eventHandlers.set(channel, handlers.filter((candidate) => candidate !== handler));
-			},
+	const bus = {
+		emit: (channel: string, payload: unknown) => {
+			emitted.push({ channel, payload });
+			for (const handler of eventHandlers.get(channel) ?? []) handler(payload);
 		},
+		on: (channel: string, handler: (payload: unknown) => void) => {
+			const handlers = eventHandlers.get(channel) ?? [];
+			handlers.push(handler);
+			eventHandlers.set(channel, handlers);
+			return () => eventHandlers.set(channel, handlers.filter((candidate) => candidate !== handler));
+		},
+	};
+	const pi = {
+		events: bus,
 		on(event: string, handler: Handler) {
 			const handlers = lifecycle.get(event) ?? [];
 			handlers.push(handler);
@@ -58,7 +59,7 @@ function setup(branch: unknown[] = []) {
 			},
 		},
 	};
-	return { lifecycle, commands, emitted, entries, notifications, pickerTitles, ctx };
+	return { lifecycle, commands, emitted, entries, notifications, pickerTitles, ctx, bus };
 }
 
 async function fire(handlers: Map<string, Handler[]>, event: string, payload: unknown, ctx: unknown) {
@@ -77,6 +78,28 @@ describe("review-level extension", () => {
 		const sections = { existing: "keep" };
 		await fire(state.lifecycle, "before_agent_start", { systemPromptOptions: { sections } }, state.ctx);
 		expect(sections).toEqual({ existing: "keep" });
+	});
+
+	test("applies a reset handoff and acknowledges it", async () => {
+		const state = setup();
+		await fire(state.lifecycle, "session_start", {}, state.ctx);
+		state.emitted.length = 0;
+		state.bus.emit("px:reset:settings:apply", {
+			transferId: "r1",
+			owner: "review-level",
+			targetSessionId: "test-session",
+			cwd: "/tmp/project",
+			state: { level: "high" },
+		});
+		expect(state.entries).toEqual([{ type: "review-level", data: { level: "high" } }]);
+		expect(state.emitted).toContainEqual({
+			channel: "px:status-bar:review-level:set",
+			payload: { level: "high" },
+		});
+		expect(state.emitted).toContainEqual({
+			channel: "px:reset:settings:ack",
+			payload: { transferId: "r1", owner: "review-level", targetSessionId: "test-session", cwd: "/tmp/project" },
+		});
 	});
 
 	test("restores the latest branch setting and injects its recommendation", async () => {

@@ -18,6 +18,7 @@ import {
 import {
 	SAFE_MODE_STATE_EVENTS,
 	TOOL_AUTHORIZED_EVENT,
+	parseSafeModeSnapshot,
 	parseSafeModeStateRequest,
 	parseSafeModeStateSet,
 	parseToolAuthorized,
