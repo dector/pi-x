@@ -10,12 +10,14 @@ export const USAGE = [
 	"/px:focus bias       show the current bias",
 	"/px:focus bias -50   slide the column left, -100 is flush against the left edge",
 	"/px:focus bias 100   slide it right, 0 (the default) is centered",
+	"/px:focus config     open the settings dialog",
 	"/px:focus status     show the current state",
 ].join("\n");
 
 export type FocusModeAction =
 	| { kind: "toggle" }
 	| { kind: "status" }
+	| { kind: "config" }
 	| { kind: "enable"; width?: number; bias?: number }
 	| { kind: "disable" }
 	| { kind: "showBias" }
@@ -78,6 +80,9 @@ export function parseFocusModeCommand(input: string): ParsedCommand {
 		case "status":
 			if (extra !== undefined) return { error: "focus: status does not take an argument" };
 			return { kind: "status" };
+		case "config":
+			if (extra !== undefined) return { error: "focus: config does not take an argument" };
+			return { kind: "config" };
 		case "on":
 		case "enable": {
 			if (extra === undefined) return { kind: "enable" };
@@ -113,6 +118,7 @@ export const COMPLETIONS = [
 	{ value: "set", label: "set <columns>[/<bias>]", description: "set the width, optionally the bias, and enable it" },
 	{ value: "bias", label: "bias <percent>", description: "slide the column sideways, -100 is flush left, 0 is centered, 100 is flush right" },
 	{ value: "toggle", label: "toggle", description: "flip between focus mode and full width" },
+	{ value: "config", label: "config", description: "open the settings dialog" },
 	{ value: "status", label: "status", description: "show the current state" },
 ];
 

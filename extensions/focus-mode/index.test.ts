@@ -6,8 +6,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Set before anything touches the state module, and resolved per call, so the
 // real ~/.pi file is never written by a test run.
-const statePath = join(mkdtempSync(join(tmpdir(), "focus-mode-ext-")), "state.json");
-process.env.PI_FOCUS_MODE_STATE_PATH = statePath;
+const stateRoot = mkdtempSync(join(tmpdir(), "focus-mode-ext-"));
+process.env.PI_FOCUS_MODE_STATE_PATH = join(stateRoot, "state.json");
+let stateCount = 0;
 
 const focusModeExtension = (await import("./index")).default;
 const { loadGlobalState, globalStatePath } = await import("./state");
@@ -19,6 +20,9 @@ type Command = {
 };
 
 function setup() {
+	// A fresh state file per test, so one test's writes never reach the next.
+	const statePath = join(stateRoot, `state-${stateCount++}.json`);
+	process.env.PI_FOCUS_MODE_STATE_PATH = statePath;
 	const commands = new Map<string, Command>();
 	const events = new Map<string, Array<() => void | Promise<void>>>();
 	const pi = {
@@ -59,7 +63,8 @@ function setup() {
 
 describe("px:focus command", () => {
 	test("never touches the real state file", () => {
-		expect(globalStatePath()).toBe(statePath);
+		setup();
+		expect(globalStatePath()).toContain(stateRoot);
 	});
 
 	test("registers the command with completions", () => {
@@ -67,6 +72,23 @@ describe("px:focus command", () => {
 		const command = commands.get("px:focus");
 		expect(command?.description).toContain("reading column");
 		expect(command?.getArgumentCompletions?.("").map((item) => item.value)).toContain("set");
+	});
+
+	test("config is offered in the completions and needs a terminal", async () => {
+		const { commands, run } = setup();
+		expect(commands.get("px:focus")?.getArgumentCompletions?.("").map((item) => item.value)).toContain("config");
+		// The test context has no TUI mode, so the dialog is refused, not opened.
+		const result = await run("config");
+		expect(result?.type).toBe("warning");
+		expect(result?.message).toContain("interactive terminal");
+	});
+
+	test("the deprecated /px:narrow alias still works", async () => {
+		const { commands, state } = setup();
+		const alias = commands.get("px:narrow");
+		expect(alias?.description).toContain("Deprecated");
+		await alias?.handler("set 90", { hasUI: true, ui: { notify: () => {} } });
+		expect(state().width).toBe(90);
 	});
 
 	test("defaults to an enabled 100 column column", () => {

@@ -63,3 +63,13 @@ describe("parseFocusModeCommand", () => {
 		expect(parseFocusModeCommand("set 5000")).toMatchObject({ error: expect.stringContaining("between 20 and 2000") });
 	});
 });
+
+describe("config", () => {
+	test("opens the dialog", () => {
+		expect(parseFocusModeCommand("config")).toEqual({ kind: "config" });
+	});
+
+	test("takes no argument", () => {
+		expect(parseFocusModeCommand("config now")).toMatchObject({ error: expect.stringContaining("does not take an argument") });
+	});
+});

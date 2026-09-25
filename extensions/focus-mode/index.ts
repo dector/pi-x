@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { FocusModeConfigDialog } from "./config";
 import { USAGE, focusModeCompletions, parseFocusModeCommand } from "./command";
 import { loadGlobalState, saveGlobalState, type FocusModeStateV1 } from "./state";
 import { FocusModeViewport } from "./viewport";
@@ -24,10 +25,10 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 	let current: FocusModeStateV1 = persisted;
 	let reportedLoadError = false;
 
-	/** Push a configuration into the terminal and persist it. */
-	const applyState = (next: FocusModeStateV1): { message: string; type: "info" | "warning" } => {
+	/** Push a configuration into the terminal, and persist it unless it is session only. */
+	const applyState = (next: FocusModeStateV1, persist = true): { message: string; type: "info" | "warning" } => {
 		current = next;
-		const saved = saveGlobalState(next);
+		const saved = persist ? saveGlobalState(next) : { ok: true as const };
 
 		if (!isInteractiveTerminal()) {
 			// The preference is still recorded, it just has nothing to apply to.
@@ -35,9 +36,35 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 		}
 
 		viewport.configure({ enabled: next.enabled, target: next.width, bias: next.bias });
+		if (!persist) return { message: `${viewport.describe()} (this session only)`, type: "info" };
 		return saved.ok
 			? { message: viewport.describe(), type: "info" }
 			: { message: `${viewport.describe()}\n${saved.error}`, type: "warning" };
+	};
+
+	/** `/px:focus config`: the settings dialog, which applies only on demand. */
+	const openConfig = async (ctx: ExtensionContext): Promise<void> => {
+		if (ctx.mode !== "tui" || !ctx.hasUI) {
+			notify(ctx, "focus: config needs an interactive terminal", "warning");
+			return;
+		}
+		await ctx.ui.custom<null>((tui, theme, _keybindings, done) => {
+			const dialog = new FocusModeConfigDialog(
+				tui,
+				theme,
+				() => viewport.desiredGeometry().realWidth,
+				{ ...current },
+				(next, persist) => {
+					const { message, type } = applyState(next, persist);
+					notify(ctx, message, type);
+				},
+				() => done(null),
+			);
+			return dialog;
+		}, {
+			overlay: true,
+			overlayOptions: { anchor: "center", width: "100%", minWidth: 40, maxHeight: "90%", margin: 1 },
+		});
 	};
 
 	// Applied at load time, before pi renders its first frame.
@@ -64,6 +91,11 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 			const parsed = parseFocusModeCommand(args);
 			if ("error" in parsed) {
 				notify(ctx, `${parsed.error}\n${USAGE}`, "warning");
+				return;
+			}
+
+			if (parsed.kind === "config") {
+				await openConfig(ctx);
 				return;
 			}
 

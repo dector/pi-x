@@ -13,6 +13,7 @@ every line across the screen.
 /px:focus bias       show the current bias
 /px:focus bias -50   slide the column left, -100 is flush against the left edge
 /px:focus bias 100   slide it right, 0 (the default) is centered
+/px:focus config     open the settings dialog
 /px:focus status     show the current state
 ```
 
@@ -26,6 +27,72 @@ frame of the next session. `PI_FOCUS_MODE_STATE_PATH` overrides the location.
 Defaults are `on` at 100 columns, centered. On a screen that is already 100
 columns wide or narrower there is no margin at all: pi is told the real width
 and its output is byte for byte what it would have been without this extension.
+
+## The config dialog
+
+`/px:focus config` opens a settings screen in the same frame language as
+`Ctrl+,` quick actions. Because the dialog is drawn through the same output
+transform, it appears inside the reading column it is editing.
+
+```text
+╭━╾ Focus ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+┃                                             ┃
+┃  › Enabled                              ● on ┃
+┃    Width                                 100 ┃
+┃    Bias                                    0 ┃
+┃                                             ┃
+┃                200                          ┃
+┃    ┌──────────────────────────────┐         ┃
+┃    │        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓       │         ┃
+┃    └──────────────────────────────┘         ┃
+┃    50            100           50           ┃
+┃                                             ┃
+┃    ↺ Reset to defaults                     R ┃
+┃                                             ┃
+┃    Apply                              ↵ save ┃
+┃    Apply for session     ↵ this session only ┃
+┃                                             ┃
+┃  j k move · h l change · H L fine           ┃
+┃  ↵ presets · r row · R all · 0 center · esc ┃
+╰─────────────────────────────────────────────╯
+```
+
+The number above the bar is the terminal width, the bar is the screen to scale,
+and the numbers under it are the left margin, the column and the leftover, drawn
+where they actually sit.
+
+### Keys
+
+| key | action |
+|---|---|
+| `j` `k` | move between rows |
+| `h` `l` | Width ±5, Bias ±25 |
+| `H` `L` | Width ±1, Bias ±5 |
+| `↵` | toggle Enabled, open the presets on Width/Bias, act on a button |
+| `r` | reset the selected row (on Bias that is `0`) |
+| `R` | reset everything to on / 100 / centered |
+| `0` | center the bias |
+| `esc` | close, or ask what to do with unsaved changes |
+
+### Presets
+
+`↵` on Width scrolls `80 · 100 · 120`; on Bias it scrolls
+`-100 · -80 · -25 · 0 · 25 · 80 · 100`. The value you already have is spliced
+into the list in the right place when it is not a preset, so a custom `90`
+scrolls as `80 · 90 · 100 · 120` and is never lost. `↵` picks, `esc` keeps what
+you had.
+
+### Apply
+
+Nothing is written or repainted while you edit. Two buttons at the bottom:
+
+- **Apply** writes the config and applies it.
+- **Apply for session** applies the same values but leaves the saved file
+  alone, so the change dies with the session.
+
+`esc` closes straight away when the draft still matches what you opened with.
+If you changed something it asks first: `s` save, `S` session only, `d` discard,
+`c` keep editing.
 
 ## Bias
 
