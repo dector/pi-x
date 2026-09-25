@@ -336,6 +336,24 @@ export function decorateBorderSafeModeLabel(
 	return `${icon}${styleSafeModeLabel(label, borderColor)}`;
 }
 
+// Explicit status-pill palette. The + variants keep their base mode's color.
+const SAFE_MODE_PILL_COLORS: Record<string, { bg: string; fg: string }> = {
+	SMART: { bg: "#554075", fg: "#dbc8f4" },
+	PARANOID: { bg: "#284d80", fg: "#c1d9ff" },
+	READER: { bg: "#215d39", fg: "#bce4c5" },
+	YOLO: { bg: "#d70000", fg: "#ffe0e0" },
+	DANGER: { bg: "88", fg: "#d38f8f" },
+};
+
+/** Render a rounded badge; colors are #rrggbb or an ANSI-256 index (for DANGER's existing red). */
+export function renderStatusPill(text: string, bg: string, fg: string): string {
+	const rgb = (hex: string): string => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(";");
+	const color = (hexOrIndex: string, channel: 38 | 48): string =>
+		/^\d+$/.test(hexOrIndex) ? `${channel};5;${hexOrIndex}` : `${channel};2;${rgb(hexOrIndex)}`;
+	const cap = (glyph: string): string => `\x1b[${color(bg, 38)}m${glyph}\x1b[0m`;
+	return `${cap("")}\x1b[${color(bg, 48)};${color(fg, 38)}m${text}\x1b[0m${cap("")}`;
+}
+
 export interface BorderBottomLeftArgs {
 	contextLabel?: string;
 	statusLabel?: string;
@@ -359,11 +377,11 @@ export interface BorderBottomLeftArgs {
 export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const accentColor = args.accentColor ?? args.borderColor;
 	const hasContext = hasVisibleText(args.contextLabel);
-	const isDanger = hasVisibleText(args.statusLabel) && stripAnsi(sanitizeStatusText(args.statusLabel!)) === "DANGER";
-	// DANGER red (ANSI 88). Caps use red foreground; the icon and label share the red background.
-	const redCap = (glyph: string): string => `\x1b[38;5;88m${glyph}\x1b[0m`;
-	const safeModeLabel = isDanger
-		? `${redCap("")}${leadingAnsiSequences(args.statusLabel!)}${BORDER_SAFE_MODE_ICON}DANGER\x1b[0m${redCap("")}`
+	const mode = args.statusLabel ? stripAnsi(sanitizeStatusText(args.statusLabel)) : "";
+	const baseMode = mode.replace(/\+$/, "");
+	const pillColors = Object.hasOwn(SAFE_MODE_PILL_COLORS, baseMode) ? SAFE_MODE_PILL_COLORS[baseMode] : undefined;
+	const safeModeLabel = pillColors
+		? renderStatusPill(`${BORDER_SAFE_MODE_ICON}${mode}`, pillColors.bg, pillColors.fg)
 		: hasVisibleText(args.statusLabel)
 			? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
 			: undefined;

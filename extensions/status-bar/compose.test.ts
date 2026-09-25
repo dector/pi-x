@@ -22,6 +22,7 @@ import {
 	hasVisibleText,
 	sanitizeStatusText,
 	styleSafeModeLabel,
+	renderStatusPill,
 } from "./compose.ts";
 import { resolveNetworkStatus, type NetworkPermissionState } from "./network.ts";
 
@@ -29,6 +30,8 @@ import { resolveNetworkStatus, type NetworkPermissionState } from "./network.ts"
 // landed instead of only seeing the plain text.
 const border = (text: string) => `«${text}»`;
 const accent = (text: string) => `‹${text}›`;
+const smartPill = renderStatusPill("󰕥 SMART", "#554075", "#dbc8f4");
+const paranoidPill = renderStatusPill("󰕥 PARANOID", "#284d80", "#c1d9ff");
 
 const LEGACY_IDS = ["safe-mode", "switch-thinking"];
 
@@ -176,7 +179,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« ╼━╾ »15.9% 210k · 0.03$« »");
+		expect(out).toBe(`«━╾ »${smartPill}« · »«󰅟 ?»« ╼━╾ »15.9% 210k · 0.03$« »`);
 		expect(out.indexOf("SMART")).toBeLessThan(out.indexOf("󰅟 ?"));
 		expect(out.indexOf("󰅟 ?")).toBeLessThan(out.indexOf("15.9%"));
 	});
@@ -189,7 +192,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« · »«󰚩 ✓»« »");
+		expect(out).toBe(`«━╾ »${smartPill}« · »«󰅟 ?»« · »«󰚩 ✓»« »`);
 		expect(out.indexOf("󰅟 ?")).toBeLessThan(out.indexOf("󰚩 ✓"));
 	});
 
@@ -210,7 +213,7 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			borderColor: border,
 		});
 
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ?»« ╼━╾ »15.9% 210k« »");
+		expect(out).toBe(`«━╾ »${smartPill}« · »«󰅟 ?»« ╼━╾ »15.9% 210k« »`);
 		expect(out).not.toContain("━━━");
 	});
 
@@ -220,7 +223,20 @@ describe("composeBorderBottomLeft (editor border)", () => {
 			networkLabel: "✓?",
 			borderColor: border,
 		});
-		expect(out).toBe("«━╾ »«󰕥 »«SMART»« · »«󰅟 ✓?»« »");
+		expect(out).toBe(`«━╾ »${smartPill}« · »«󰅟 ✓?»« »`);
+	});
+
+	test("uses pill colors for every safe mode, including outer-access variants", () => {
+		for (const [label, bg, fg] of [
+			["SMART+", "#554075", "#dbc8f4"],
+			["READER", "#215d39", "#bce4c5"],
+			["READER+", "#215d39", "#bce4c5"],
+			["YOLO", "#d70000", "#ffe0e0"],
+			["PARANOID", "#284d80", "#c1d9ff"],
+		] as const) {
+			const out = composeBorderBottomLeft({ statusLabel: label, borderColor: border });
+			expect(out).toBe(`«━╾ »${renderStatusPill(`󰕥 ${label}`, bg, fg)}« »`);
+		}
 	});
 
 	test("DANGER has red rounded caps and one continuous red background behind the icon and text", () => {
@@ -235,6 +251,11 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		expect(composeBorderBottomLeft({ statusLabel: danger, borderColor: border })).toBe(
 			`«━╾ »${pill}« »`,
 		);
+	});
+
+	test("unknown producer labels still render without a pill", () => {
+		const out = composeBorderBottomLeft({ statusLabel: "__proto__", borderColor: border });
+		expect(out).toBe("«━╾ »󰕥 __proto__« »");
 	});
 
 	test("keeps the network indicator with no safe-mode producer", () => {
@@ -271,15 +292,15 @@ describe("composeBorderBottomLeft (editor border)", () => {
 
 	test("keeps safe mode when the core is absent", () => {
 		const out = composeBorderBottomLeft({ statusLabel: "PARANOID", borderColor: border });
-		expect(out).toBe("«━╾ »󰕥 PARANOID« »");
+		expect(out).toBe(`«━╾ »${paranoidPill}« »`);
 	});
 
-	test("colors the safe-mode icon like the producer, not the border", () => {
+	test("uses the mode's pill palette, not the producer's foreground styling", () => {
 		const out = composeBorderBottomLeft({
 			statusLabel: "\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m",
 			borderColor: border,
 		});
-		expect(out).toBe("«━╾ »\u001b[1m\u001b[38;5;196m󰕥 \u001b[0m\u001b[1m\u001b[38;5;196mPARANOID\u001b[0m« »");
+		expect(out).toBe(`«━╾ »${paranoidPill}« »`);
 	});
 
 	test("context-only output still renders", () => {

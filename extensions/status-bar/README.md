@@ -200,11 +200,12 @@ labels are rendered in the frame corners:
   - The label uses the subdued accent (a darkened thinking color) up to 20%,
     `text` up to 30%, `warning` up to 50%, and `error` above 50%.
     It stays uncolored when context percent is unknown.
-- **safe-mode** (bottom-left, before context) — the `󰕥 ` icon followed by
-  `SMART`, `READER`, `YOLO`, `PARANOID`, plus `+` when outer access is on.
-  Rendered only while the `safe-mode` producer has published content. `SMART` and
-  its icon are colored with the frame border color; other modes keep the producer's
-  own color on both the icon and the text.
+- **safe-mode** (bottom-left, before context) — rounded `󰕥 MODE` pills:
+  purple `SMART`, green `READER`, blue `PARANOID`, brighter red `YOLO`, and dark
+  red `DANGER` for `yolo+`. Other outer-access modes retain their `+` suffix.
+  Pill caps match their backgrounds; text uses a lighter shade of each mode's
+  color. Rendered only while the `safe-mode` producer has published content.
+  Legacy status-line labels keep their producer formatting.
 - **top-left** — the model icon `󰙴 ` followed by provider + model + thinking level,
   then an explicit review icon after a frame-colored separator (`<effort> · <review>`).
   Review uses the same frame-border purple: off `󰛑`, minimal `󱀧`, normal `󰛐`,
