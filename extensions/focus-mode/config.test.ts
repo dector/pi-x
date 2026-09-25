@@ -3,6 +3,7 @@ import { Theme } from "@earendil-works/pi-coding-agent";
 import {
 	BIAS_PRESETS,
 	FocusModeConfigDialog,
+	type LiveMode,
 	mergePreset,
 	previewFor,
 	renderBarBlock,
@@ -31,9 +32,17 @@ const theme = new Theme(COLORS, BACKGROUND, "truecolor");
 
 const base = (over: Partial<FocusModeStateV1> = {}): FocusModeStateV1 => ({ version: 1, enabled: true, width: 100, bias: 0, ...over });
 
+interface Change {
+	state: FocusModeStateV1;
+	mode: LiveMode;
+}
+
 interface Harness {
 	dialog: FocusModeConfigDialog;
-	applied: () => { state: FocusModeStateV1; persist: boolean } | null;
+	/** Every change the dialog pushed to the terminal, in order. */
+	changes: () => Change[];
+	applied: () => Change | null;
+	lastApplied: () => Change | null;
 	closed: () => number;
 	press: (...keys: string[]) => void;
 	render: (width?: number) => string[];
@@ -41,15 +50,15 @@ interface Harness {
 
 function harness(term: number, over: Partial<FocusModeStateV1> = {}): Harness {
 	const tui = { requestRender: () => {} } as unknown as ConstructorParameters<typeof FocusModeConfigDialog>[0];
-	let applied: { state: FocusModeStateV1; persist: boolean } | null = null;
+	const changes: Change[] = [];
 	let closed = 0;
 	const dialog = new FocusModeConfigDialog(
 		tui,
 		theme,
 		() => term,
 		base(over),
-		(state, persist) => {
-			applied = { state, persist };
+		(state, mode) => {
+			changes.push({ state, mode });
 		},
 		() => {
 			closed += 1;
@@ -57,7 +66,9 @@ function harness(term: number, over: Partial<FocusModeStateV1> = {}): Harness {
 	);
 	return {
 		dialog,
-		applied: () => applied,
+		changes: () => changes,
+		applied: () => changes.find((c) => c.mode === "persist") ?? null,
+		lastApplied: () => changes.filter((c) => c.mode !== "preview").at(-1) ?? null,
 		closed: () => closed,
 		press: (...keys) => keys.forEach((key) => dialog.handleInput(key)),
 		render: (width = 100) => dialog.render(width).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")),
@@ -243,11 +254,12 @@ describe("preset scroller", () => {
 		expect(dialog.scroller_?.index).toBe(1);
 	});
 
-	test("scrolling previews the candidate in the width row before it is committed", () => {
-		const { dialog, press } = harness(240, { width: 90 });
+	test("scrolling previews the candidate, live and in the row", () => {
+		const { dialog, press, changes } = harness(240, { width: 90 });
 		press("j", KEY.enter, "l");
-		expect(dialog.state.width).toBe(90);
-		// the width row and the scroller both show 100 highlighted, draft still 90
+		// the value is live, not waiting on ↵
+		expect(dialog.state.width).toBe(100);
+		expect(changes().at(-1)).toMatchObject({ mode: "preview", state: { width: 100 } });
 		const text = dialog.render(100).join("\n");
 		expect(text).toContain("100");
 		expect(text).toContain("[100]");
@@ -255,19 +267,22 @@ describe("preset scroller", () => {
 		expect(dialog.render(100).join("\n")).toContain("[90]");
 	});
 
-	test("enter commits the highlighted preset", () => {
+	test("cancelling a scroller puts back the value it opened on", () => {
+		const { dialog, press, changes } = harness(240, { width: 90 });
+		press("j", KEY.enter, "l", "l", KEY.esc);
+		expect(dialog.mode_).toBe("edit");
+		expect(dialog.state.width).toBe(90);
+		expect(changes().at(-1)).toMatchObject({ mode: "preview", state: { width: 90 } });
+	});
+
+	test("enter keeps the highlighted preset", () => {
 		const { dialog, press } = harness(240, { width: 90 });
 		press("j", KEY.enter, "l", "l", KEY.enter);
 		expect(dialog.mode_).toBe("edit");
 		expect(dialog.state.width).toBe(120);
 	});
 
-	test("esc leaves the old value in place", () => {
-		const { dialog, press } = harness(240, { width: 90 });
-		press("j", KEY.enter, "l", "l", KEY.esc);
-		expect(dialog.mode_).toBe("edit");
-		expect(dialog.state.width).toBe(90);
-	});
+
 
 	test("bias presets carry the custom value too", () => {
 		const { dialog, press } = harness(240, { bias: -50 });
@@ -288,23 +303,23 @@ describe("apply", () => {
 		const { dialog, press, applied, closed } = harness(240);
 		press("j", "l", "j", "j", "j", KEY.enter);
 		expect(dialog.selectedRow).toBe("apply");
-		expect(applied()).toEqual({ state: base({ width: 105 }), persist: true });
+		expect(applied()).toEqual({ state: base({ width: 105 }), mode: "persist" });
 		expect(closed()).toBe(1);
 	});
 
 	test("apply for session does the same without persisting", () => {
-		const { dialog, press, applied, closed } = harness(240);
+		const { dialog, press, lastApplied, closed } = harness(240);
 		press("j", "j", "l"); // width, then bias: bias becomes 25
 		press("j", "j", "j", KEY.enter); // reset, apply, apply-session, activate
 		expect(dialog.selectedRow).toBe("apply-session");
-		expect(applied()).toEqual({ state: base({ bias: 25 }), persist: false });
+		expect(lastApplied()).toEqual({ state: base({ bias: 25 }), mode: "session" });
 		expect(closed()).toBe(1);
 	});
 
 	test("entering the reset row resets instead of applying", () => {
-		const { press, applied } = harness(240, { width: 133 });
+		const { press, lastApplied } = harness(240, { width: 133 });
 		press("j", "j", "j", KEY.enter);
-		expect(applied()).toBeNull();
+		expect(lastApplied()).toBeNull();
 	});
 });
 
@@ -338,19 +353,21 @@ describe("closing", () => {
 	});
 
 	test("nothing else is bound on the prompt", () => {
-		const { dialog, press, applied, closed } = harness(240);
+		const { dialog, press, lastApplied, closed } = harness(240);
 		press("j", "l", KEY.esc, "s", "S", "c", "q");
-		expect(applied()).toBeNull();
+		expect(lastApplied()).toBeNull();
 		expect(closed()).toBe(0);
 		expect(dialog.mode_).toBe("confirm");
 	});
 
-	test("discard drops the changes and closes", () => {
-		const { dialog, press, applied, closed } = harness(240);
+	test("discard puts the terminal back and closes", () => {
+		const { dialog, press, changes, lastApplied, closed } = harness(240, { width: 120 });
 		press("j", "l", KEY.esc, "d");
-		expect(applied()).toBeNull();
+		expect(lastApplied()).toBeNull();
 		expect(closed()).toBe(1);
-		expect(dialog.state).toEqual(base());
+		// the last thing the terminal heard is the snapshot being restored
+		expect(changes().at(-1)).toEqual({ state: base({ width: 120 }), mode: "preview" });
+		expect(dialog.state).toEqual(base({ width: 120 }));
 	});
 
 	test("esc on the prompt returns to the dialog with the draft intact", () => {
@@ -476,5 +493,53 @@ describe("quick actions parity", () => {
 		expect(enabled.slice(enabled.indexOf("┃") + 1)).toMatch(/^ {4}› Enabled/);
 		const unselected = plain.find((l) => l.includes("Width"))!;
 		expect(unselected.slice(unselected.indexOf("┃") + 1)).toMatch(/^ {6}Width/);
+	});
+});
+
+describe("live preview", () => {
+	test("every edit reaches the terminal as a preview, never a save", () => {
+		const { press, changes } = harness(240);
+		press("j", "l", "L"); // width 100 -> 105 -> 106
+		press("j", "l"); // bias 25
+		press("0"); // bias back to 0
+		const seen = changes();
+		expect(seen.length).toBeGreaterThanOrEqual(4);
+		expect(seen.every((change) => change.mode === "preview")).toBe(true);
+		expect(seen.at(-1)?.state).toEqual(base({ width: 106, bias: 0 }));
+	});
+
+	test("r and R preview too", () => {
+		const { press, changes } = harness(240, { width: 137, bias: -60 });
+		press("j", "r");
+		expect(changes().at(-1)).toMatchObject({ mode: "preview", state: { width: 100, bias: -60 } });
+		press("R");
+		expect(changes().at(-1)).toMatchObject({ mode: "preview", state: base() });
+	});
+
+	test("toggling Enabled previews the full width layout", () => {
+		const { press, changes } = harness(240);
+		press(KEY.enter);
+		expect(changes().at(-1)).toMatchObject({ mode: "preview", state: { enabled: false } });
+	});
+
+	test("esc on an untouched draft restores the snapshot anyway", () => {
+		const { press, changes, closed } = harness(240, { width: 120 });
+		press(KEY.esc);
+		expect(closed()).toBe(1);
+		expect(changes()).toEqual([{ state: base({ width: 120 }), mode: "preview" }]);
+	});
+
+	test("Apply does not restore afterwards", () => {
+		const { press, changes, closed } = harness(240, { width: 120 });
+		press("j", "l", "j", "j", "j", KEY.enter);
+		expect(closed()).toBe(1);
+		expect(changes().at(-1)).toEqual({ state: base({ width: 125 }), mode: "persist" });
+	});
+
+	test("Apply for session does not restore afterwards", () => {
+		const { press, changes, closed } = harness(240, { width: 120 });
+		press("j", "l", "j", "j", "j", "j", KEY.enter);
+		expect(closed()).toBe(1);
+		expect(changes().at(-1)).toEqual({ state: base({ width: 125 }), mode: "session" });
 	});
 });

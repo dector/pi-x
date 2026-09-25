@@ -20,6 +20,16 @@ every line across the screen.
 `set` takes an optional bias after a slash: `set 100/-50`. Leave it off and the
 current bias is kept, so `set 120` only changes the width.
 
+Add `-s` (or `--session`) anywhere to apply a change for this session without
+saving it:
+
+```text
+/px:focus -s set 100      applied now, the saved config is untouched
+/px:focus set 100 -s      the same
+/px:focus -s off          full width for now, saved config still says on
+/px:focus -s              toggle for this session
+```
+
 The width, the bias and the on/off state are global and persist in
 `~/.pi/agent/space.dector-focus-mode.json`, so the choice applies from the first
 frame of the next session. `PI_FOCUS_MODE_STATE_PATH` overrides the location.
@@ -76,26 +86,31 @@ where they actually sit.
 | `0` | center the bias |
 | `esc` | close, or ask what to do with unsaved changes |
 
+Every edit is **live**: the column moves on the terminal as you change it, the
+same as `/px:focus -s …`. That is a preview, not a change — nothing is written,
+and leaving the dialog any way other than Apply puts the layout back.
+
 ### Presets
 
 `↵` on Width scrolls `80 · 100 · 120`; on Bias it scrolls
 `-100 · -80 · -25 · 0 · 25 · 80 · 100`. The value you already have is spliced
 into the list in the right place when it is not a preset, so a custom `90`
-scrolls as `80 · 90 · 100 · 120` and is never lost. `↵` picks, `esc` keeps what
-you had.
+scrolls as `80 · 90 · 100 · 120` and is never lost. Scrolling previews the
+candidate live; `↵` keeps it and `esc` puts it back.
 
 ### Apply
 
-Nothing is written or repainted while you edit. Two buttons at the bottom:
+Edits are already on screen. The two buttons at the bottom decide what happens
+to them:
 
-- **Apply** writes the config and applies it.
-- **Apply for session** applies the same values but leaves the saved file
-  alone, so the change dies with the session.
+- **Apply** writes the config, so the change survives a restart.
+- **Apply for session** leaves the saved config alone, so the change dies with
+  the session.
 
 `esc` closes straight away when the draft still matches what you opened with.
-If you changed something it asks first, with two ways out: `d` throws the draft
-away, `esc` goes back to editing. To keep the changes, press `esc` and then
-Apply.
+If you changed something it asks first, with two ways out: `d` puts the layout
+back the way it was and closes, `esc` goes back to editing. To keep the
+changes, press `esc` and then Apply.
 
 ## Bias
 

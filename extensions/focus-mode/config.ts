@@ -28,7 +28,7 @@ const RESET_BG = "\x1b[49m";
 const ROWS = ["enabled", "width", "bias", "reset", "apply", "apply-session"] as const;
 type Row = (typeof ROWS)[number];
 type Mode = "edit" | "preset" | "confirm";
-type Scroller = { field: "width" | "bias"; values: number[]; index: number };
+type Scroller = { field: "width" | "bias"; values: number[]; index: number; previous: number };
 
 /** The preset list, with `current` spliced in when it is not already a preset. */
 export function mergePreset(current: number, presets: readonly number[]): number[] {
@@ -121,11 +121,21 @@ function isShift(data: string, letter: "h" | "l" | "j" | "k" | "r"): boolean {
 }
 
 /**
+ * How a change from the dialog reaches the terminal.
+ *
+ * - `preview`: applied live while editing, never written to the config file
+ * - `persist`: written to the config file and applied
+ * - `session`: applied, but the config file is left alone
+ */
+export type LiveMode = "preview" | "persist" | "session";
+
+/**
  * `/px:focus config`: a settings dialog over the reading column.
  *
- * Edits a draft. Nothing reaches the terminal or the state file until Apply is
- * pressed, and Apply for session applies the same draft without persisting it.
- * Esc closes on an untouched draft, and asks before dropping a changed one.
+ * Edits are applied to the terminal as you make them, so the column moves
+ * under the dialog while you tune it. That is a live preview, not a change:
+ * nothing is written until Apply, and leaving any other way puts the layout
+ * back the way the snapshot found it.
  */
 export class FocusModeConfigDialog implements Component, Focusable {
 	private draft: FocusModeStateV1;
@@ -142,7 +152,7 @@ export class FocusModeConfigDialog implements Component, Focusable {
 		private readonly theme: Theme,
 		private readonly getRealWidth: () => number,
 		initial: FocusModeStateV1,
-		private readonly onApply: (state: FocusModeStateV1, persist: boolean) => void,
+		private readonly onChange: (state: FocusModeStateV1, mode: LiveMode) => void,
 		private readonly done: () => void,
 	) {
 		this.draft = { ...initial };
@@ -182,86 +192,102 @@ export class FocusModeConfigDialog implements Component, Focusable {
 		return this.draft[field];
 	}
 
+	/** Set the draft and show it on the terminal straight away. */
+	private edit(next: Partial<FocusModeStateV1>): void {
+		this.draft = { ...this.draft, ...next };
+		this.onChange(this.draft, "preview");
+		this.tui.requestRender();
+	}
+
 	private change(delta: number, fine: boolean): void {
 		switch (ROWS[this.selected]) {
 			case "enabled":
-				this.draft = { ...this.draft, enabled: delta > 0 };
+				this.edit({ enabled: delta > 0 });
 				break;
 			case "width":
-				this.draft = {
-					...this.draft,
+				this.edit({
 					width: step(this.draft.width, delta * (fine ? WIDTH_FINE_STEP : WIDTH_STEP), MIN_WIDTH, MAX_WIDTH),
-				};
+				});
 				break;
 			case "bias":
-				this.draft = {
-					...this.draft,
-					bias: step(this.draft.bias, delta * (fine ? BIAS_FINE_STEP : BIAS_STEP), MIN_BIAS, MAX_BIAS),
-				};
+				this.edit({ bias: step(this.draft.bias, delta * (fine ? BIAS_FINE_STEP : BIAS_STEP), MIN_BIAS, MAX_BIAS) });
 				break;
 			default:
 				return;
 		}
-		this.tui.requestRender();
 	}
 
 	private resetRow(): void {
 		switch (ROWS[this.selected]) {
 			case "enabled":
-				this.draft = { ...this.draft, enabled: true };
+				this.edit({ enabled: true });
 				break;
 			case "width":
-				this.draft = { ...this.draft, width: DEFAULT_WIDTH };
+				this.edit({ width: DEFAULT_WIDTH });
 				break;
 			case "bias":
-				this.draft = { ...this.draft, bias: DEFAULT_BIAS };
+				this.edit({ bias: DEFAULT_BIAS });
 				break;
 			default:
 				return;
 		}
-		this.tui.requestRender();
 	}
 
 	private resetAll(): void {
-		this.draft = { version: 1, enabled: true, width: DEFAULT_WIDTH, bias: DEFAULT_BIAS };
-		this.tui.requestRender();
+		this.edit({ enabled: true, width: DEFAULT_WIDTH, bias: DEFAULT_BIAS });
 	}
 
 	private openScroller(field: "width" | "bias"): void {
 		const current = this.draft[field];
 		const values = mergePreset(current, field === "width" ? WIDTH_PRESETS : BIAS_PRESETS);
 		this.mode = "preset";
-		this.scroller = { field, values, index: Math.max(0, values.indexOf(current)) };
+		this.scroller = { field, values, index: Math.max(0, values.indexOf(current)), previous: current };
 		this.tui.requestRender();
 	}
 
+	/** Scrolling previews the candidate on the terminal as well as in the bar. */
 	private moveScroller(delta: number): void {
 		if (!this.scroller) return;
 		const last = this.scroller.values.length - 1;
-		this.scroller = { ...this.scroller, index: Math.min(last, Math.max(0, this.scroller.index + delta)) };
+		const index = Math.min(last, Math.max(0, this.scroller.index + delta));
+		if (index === this.scroller.index) return;
+		this.scroller = { ...this.scroller, index };
+		this.edit({ [this.scroller.field]: this.scroller.values[index] ?? this.scroller.previous });
 		this.tui.requestRender();
 	}
 
-	private commitScroller(): void {
+	/** Cancelling a scroller puts back the value it was opened on. */
+	private cancelScroller(): void {
 		if (!this.scroller) return;
-		const value = this.scroller.values[this.scroller.index];
-		if (value !== undefined) this.draft = { ...this.draft, [this.scroller.field]: value };
+		this.edit({ [this.scroller.field]: this.scroller.previous });
 		this.mode = "edit";
 		this.scroller = null;
 		this.tui.requestRender();
 	}
 
-	private apply(persist: boolean): void {
-		this.onApply({ ...this.draft }, persist);
+	private commitScroller(): void {
+		if (!this.scroller) return;
+		this.mode = "edit";
+		this.scroller = null;
+		this.tui.requestRender();
+	}
+
+	private apply(mode: LiveMode): void {
+		this.onChange(this.draft, mode);
+		this.done();
+	}
+
+	/** Leaving without Apply puts the terminal back the way the snapshot found it. */
+	private close(): void {
+		this.draft = { ...this.snapshot };
+		this.onChange(this.snapshot, "preview");
 		this.done();
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape)) {
 			if (this.mode === "preset") {
-				this.mode = "edit";
-				this.scroller = null;
-				this.tui.requestRender();
+				this.cancelScroller();
 				return;
 			}
 			if (this.mode === "confirm") {
@@ -274,16 +300,13 @@ export class FocusModeConfigDialog implements Component, Focusable {
 				this.tui.requestRender();
 				return;
 			}
-			this.done();
+			this.close();
 			return;
 		}
 
 		if (this.mode === "confirm") {
-			// Only two ways out: throw the draft away, or go back and keep it.
-			if (data === "d") {
-				this.draft = { ...this.snapshot };
-				this.done();
-			}
+			// Only two ways out: put it back, or go back and keep looking.
+			if (data === "d") this.close();
 			return;
 		}
 
@@ -329,15 +352,13 @@ export class FocusModeConfigDialog implements Component, Focusable {
 			return;
 		}
 		if (data === "0") {
-			this.draft = { ...this.draft, bias: DEFAULT_BIAS };
-			this.tui.requestRender();
+			this.edit({ bias: DEFAULT_BIAS });
 			return;
 		}
 		if (matchesKey(data, Key.enter)) {
 			switch (ROWS[this.selected]) {
 				case "enabled":
-					this.draft = { ...this.draft, enabled: !this.draft.enabled };
-					this.tui.requestRender();
+					this.edit({ enabled: !this.draft.enabled });
 					break;
 				case "width":
 					this.openScroller("width");
@@ -349,10 +370,10 @@ export class FocusModeConfigDialog implements Component, Focusable {
 					this.resetAll();
 					break;
 				case "apply":
-					this.apply(true);
+					this.apply("persist");
 					break;
 				case "apply-session":
-					this.apply(false);
+					this.apply("session");
 					break;
 			}
 		}
@@ -466,8 +487,8 @@ export class FocusModeConfigDialog implements Component, Focusable {
 		lines.push(this.frame(""));
 		const hints =
 			this.mode === "preset"
-				? "h l scroll · ↵ pick · esc cancel"
-				: "j k move · h l change · H L fine · ↵ presets";
+				? "h l scroll · ↵ keep · esc put it back"
+				: "live · j k move · h l change · H L fine · ↵ presets";
 		lines.push(this.frame(this.theme.fg("dim", ` ${hints}`)));
 		lines.push(this.frame(this.theme.fg("dim", " r row · R all · 0 center · esc close")));
 		return lines;

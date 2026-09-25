@@ -73,3 +73,29 @@ describe("config", () => {
 		expect(parseFocusModeCommand("config now")).toMatchObject({ error: expect.stringContaining("does not take an argument") });
 	});
 });
+
+describe("-s session flag", () => {
+	test("applies without persisting", () => {
+		expect(parseFocusModeCommand("-s set 100")).toEqual({ kind: "enable", width: 100, session: true });
+		expect(parseFocusModeCommand("set 100 -s")).toEqual({ kind: "enable", width: 100, session: true });
+		expect(parseFocusModeCommand("--session set 100/-50")).toEqual({ kind: "enable", width: 100, bias: -50, session: true });
+		expect(parseFocusModeCommand("-s bias -50")).toEqual({ kind: "setBias", bias: -50, session: true });
+		expect(parseFocusModeCommand("-s off")).toEqual({ kind: "disable", session: true });
+		expect(parseFocusModeCommand("-s")).toEqual({ kind: "toggle", session: true });
+	});
+
+	test("is optional and never changes the parse without it", () => {
+		expect(parseFocusModeCommand("set 100")).toEqual({ kind: "enable", width: 100 });
+		expect(parseFocusModeCommand("bias -50")).toEqual({ kind: "setBias", bias: -50 });
+	});
+
+	test("is ignored by the read only verbs", () => {
+		expect(parseFocusModeCommand("-s status")).toEqual({ kind: "status" });
+		expect(parseFocusModeCommand("-s config")).toEqual({ kind: "config" });
+		expect(parseFocusModeCommand("-s bias")).toEqual({ kind: "showBias" });
+	});
+
+	test("still reports bad input", () => {
+		expect(parseFocusModeCommand("-s sideways")).toMatchObject({ error: expect.stringContaining("unknown option") });
+	});
+});

@@ -12,16 +12,22 @@ export const USAGE = [
 	"/px:focus bias 100   slide it right, 0 (the default) is centered",
 	"/px:focus config     open the settings dialog",
 	"/px:focus status     show the current state",
+	"",
+	"add -s anywhere to apply without saving, for this session only:",
+	"/px:focus -s set 100",
 ].join("\n");
 
+/** `-s` / `--session`: apply it now, leave the saved config alone. */
+export const SESSION_FLAGS = new Set(["-s", "--session"]);
+
 export type FocusModeAction =
-	| { kind: "toggle" }
+	| { kind: "toggle"; session?: boolean }
 	| { kind: "status" }
 	| { kind: "config" }
-	| { kind: "enable"; width?: number; bias?: number }
-	| { kind: "disable" }
+	| { kind: "enable"; width?: number; bias?: number; session?: boolean }
+	| { kind: "disable"; session?: boolean }
 	| { kind: "showBias" }
-	| { kind: "setBias"; bias: number };
+	| { kind: "setBias"; bias: number; session?: boolean };
 
 export type ParsedCommand = FocusModeAction | { error: string };
 
@@ -62,12 +68,26 @@ function parseSetArgument(raw: string): { width: number; bias?: number } | { err
 	return typeof bias === "number" ? { width, bias } : bias;
 }
 
+/** The actions that change something, and so can carry the `-s` flag. */
+type ApplyingAction = Extract<FocusModeAction, { session?: boolean }>;
+
 /** Parse the argument string of `/px:focus`. */
 export function parseFocusModeCommand(input: string): ParsedCommand {
 	const tokens = input.trim().split(/\s+/).filter((token) => token.length > 0);
-	if (tokens.length === 0) return { kind: "toggle" };
 
-	const [verb, ...rest] = tokens;
+	// `-s` is accepted anywhere, so both `/px:focus -s set 100` and
+	// `/px:focus set 100 -s` mean the same thing.
+	let session = false;
+	const words: string[] = [];
+	for (const token of tokens) {
+		if (SESSION_FLAGS.has(token)) session = true;
+		else words.push(token);
+	}
+
+	const withSession = (action: ApplyingAction): ApplyingAction => (session ? { ...action, session: true } : action);
+	if (words.length === 0) return withSession({ kind: "toggle" });
+
+	const [verb, ...rest] = words;
 	const extra = rest[0];
 	if (rest.length > 1) {
 		return { error: `focus: unexpected argument "${rest.join(" ")}"` };
@@ -76,7 +96,7 @@ export function parseFocusModeCommand(input: string): ParsedCommand {
 	switch (verb.toLowerCase()) {
 		case "toggle":
 			if (extra !== undefined) return { error: "focus: toggle does not take an argument" };
-			return { kind: "toggle" };
+			return withSession({ kind: "toggle" });
 		case "status":
 			if (extra !== undefined) return { error: "focus: status does not take an argument" };
 			return { kind: "status" };
@@ -85,27 +105,29 @@ export function parseFocusModeCommand(input: string): ParsedCommand {
 			return { kind: "config" };
 		case "on":
 		case "enable": {
-			if (extra === undefined) return { kind: "enable" };
+			if (extra === undefined) return withSession({ kind: "enable" });
 			const width = parseWidth(extra);
-			return typeof width === "number" ? { kind: "enable", width } : width;
+			return typeof width === "number" ? withSession({ kind: "enable", width }) : width;
 		}
 		case "off":
 		case "disable": {
 			if (extra !== undefined) return { error: "focus: off does not take an argument" };
-			return { kind: "disable" };
+			return withSession({ kind: "disable" });
 		}
 		case "set": {
 			if (extra === undefined) return { error: "focus: set needs a column count, e.g. /px:focus set 100" };
 			const parsed = parseSetArgument(extra);
 			if ("error" in parsed) return parsed;
-			return parsed.bias === undefined
-				? { kind: "enable", width: parsed.width }
-				: { kind: "enable", width: parsed.width, bias: parsed.bias };
+			return withSession(
+				parsed.bias === undefined
+					? { kind: "enable", width: parsed.width }
+					: { kind: "enable", width: parsed.width, bias: parsed.bias },
+			);
 		}
 		case "bias": {
 			if (extra === undefined) return { kind: "showBias" };
 			const bias = parseBias(extra);
-			return typeof bias === "number" ? { kind: "setBias", bias } : bias;
+			return typeof bias === "number" ? withSession({ kind: "setBias", bias }) : bias;
 		}
 		default:
 			return { error: `focus: unknown option "${verb}"` };
@@ -120,6 +142,7 @@ export const COMPLETIONS = [
 	{ value: "toggle", label: "toggle", description: "flip between focus mode and full width" },
 	{ value: "config", label: "config", description: "open the settings dialog" },
 	{ value: "status", label: "status", description: "show the current state" },
+	{ value: "-s", label: "-s", description: "session only: apply it now, do not save it" },
 ];
 
 /** Autocomplete items for the argument prefix of `/px:focus`. */

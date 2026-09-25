@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { FocusModeConfigDialog } from "./config";
+import { FocusModeConfigDialog, type LiveMode } from "./config";
 import { USAGE, focusModeCompletions, parseFocusModeCommand } from "./command";
 import { loadGlobalState, saveGlobalState, type FocusModeStateV1 } from "./state";
 import { FocusModeViewport } from "./viewport";
@@ -42,7 +42,7 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 			: { message: `${viewport.describe()}\n${saved.error}`, type: "warning" };
 	};
 
-	/** `/px:focus config`: the settings dialog, which applies only on demand. */
+	/** `/px:focus config`: the settings dialog, which applies as you edit. */
 	const openConfig = async (ctx: ExtensionContext): Promise<void> => {
 		if (ctx.mode !== "tui" || !ctx.hasUI) {
 			notify(ctx, "focus: config needs an interactive terminal", "warning");
@@ -54,8 +54,14 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 				theme,
 				() => viewport.desiredGeometry().realWidth,
 				{ ...current },
-				(next, persist) => {
-					const { message, type } = applyState(next, persist);
+				(next, mode: LiveMode) => {
+					// A preview is the dialog moving the column under itself: applied
+					// to the terminal, never written, and undone if the dialog closes.
+					if (mode === "preview") {
+						if (isInteractiveTerminal()) viewport.configure({ enabled: next.enabled, target: next.width, bias: next.bias });
+						return;
+					}
+					const { message, type } = applyState(next, mode === "persist");
 					notify(ctx, message, type);
 				},
 				() => done(null),
@@ -131,7 +137,8 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 							? { ...current, bias: parsed.bias }
 							: { ...current, enabled: false };
 
-			const { message, type } = applyState(next);
+			// `-s` applies it for this session and leaves the saved config alone.
+			const { message, type } = applyState(next, parsed.session !== true);
 			notify(ctx, message, type);
 		},
 	};
