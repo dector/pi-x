@@ -978,7 +978,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		nextMode: SafeMode,
 		nextOuterAccess: boolean,
 		ctx: ExtensionContext,
-		options?: { preserveYoloPlusToggleState?: boolean; source?: string },
+		options?: { preserveYoloPlusToggleState?: boolean; source?: string; notify?: boolean },
 	): void {
 		const modeChanged = nextMode !== mode;
 		const outerChanged = nextOuterAccess !== outerAccess;
@@ -997,7 +997,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		} else if (options?.source) {
 			emitStateChanged(options.source);
 		}
-		if (ctx.hasUI) {
+		if (options?.notify !== false && ctx.hasUI) {
 			ctx.ui.notify(`Safe mode: ${statusLabel({ ui: true })}`, "info");
 		}
 	}
@@ -1301,9 +1301,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const state = request.state as { mode?: unknown; outerAccess?: unknown; sessionApprovedBashCommands?: unknown } | undefined;
 		const parsed = parseSafeModeSnapshot(state);
 		if (!parsed || !Array.isArray(state?.sessionApprovedBashCommands)) return;
-		if (!state.sessionApprovedBashCommands.every((command) => typeof command === "string")) return;
+		if (state.sessionApprovedBashCommands.length > 512) return;
+		if (!state.sessionApprovedBashCommands.every((command) => typeof command === "string" && command.length <= 4096)) return;
 		const alreadySelected = mode === parsed.mode && outerAccess === parsed.outerAccess;
-		setModeAndOuter(parsed.mode, parsed.outerAccess, activeContext, { source: "reset" });
+		setModeAndOuter(parsed.mode, parsed.outerAccess, activeContext, { source: "reset", notify: false });
 		if (alreadySelected) persistState();
 		autoApprovedBashCommandsForSession.clear();
 		for (const command of state.sessionApprovedBashCommands as string[]) autoApprovedBashCommandsForSession.add(command);

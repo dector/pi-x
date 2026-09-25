@@ -126,8 +126,9 @@ names as not confirmed stopped. The reply reports process outcomes; it does not
 remove records from the registry. The registry intentionally survives session
 replacement and `/reload`, so the request operates on all currently registered
 owned processes, not merely processes started in the current session. The event
-listener is removed on extension shutdown/reload; emit while proc is loaded and
-before the orchestrator replaces the session.
+listener is removed on extension shutdown/reload. `/reset -proc` emits the
+request on the replacement session's bus (after the fresh proc instance
+registers), so the stop happens in the new session rather than before teardown.
 
 ## Configuration
 

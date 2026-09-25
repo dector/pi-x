@@ -75,6 +75,26 @@ for (const available of [true, false]) test(`reset transfers through replacement
 	for (const handler of newHandlers.get("session_shutdown") ?? []) handler({}, newCtx);
 });
 
+test("missing replacement bridge warns and skips transfer", async () => {
+	let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+	const notices: string[] = [];
+	const pi = {
+		events: bus(),
+		getThinkingLevel: () => "off",
+		registerCommand: (_name: string, options: { handler: typeof command }) => { command = options.handler; },
+		on: () => {},
+	};
+	resetExtension(pi as unknown as ExtensionAPI);
+	const newCtx = { cwd: "/repo", sessionManager: { getSessionId: () => "new" }, ui: { notify: (m: string) => notices.push(m) } };
+	const ctx = {
+		cwd: "/repo", model: undefined, sessionManager: { getSessionId: () => "old" },
+		ui: { notify: (m: string) => notices.push(m) },
+		newSession: async ({ withSession }: { withSession: (c: unknown) => Promise<void> }) => { await withSession(newCtx); return { cancelled: false }; },
+	};
+	await command?.("", ctx as unknown as ExtensionCommandContext);
+	expect(notices.some((message) => message.includes("replacement extension is unavailable"))).toBe(true);
+});
+
 test("/reset +agents is refused without starting a new session", async () => {
 	let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let newSessions = 0;

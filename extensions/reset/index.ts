@@ -1,6 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { parseResetArguments } from "./arguments.ts";
-import { PROC_STOP_ALL_REPLY_EVENT, PROC_STOP_ALL_REQUEST_EVENT, type ProcStopAllResult } from "../proc/stop-all.ts";
+import {
+	PROC_STOP_ALL_MAX_WAIT_MS,
+	PROC_STOP_ALL_REPLY_EVENT,
+	PROC_STOP_ALL_REQUEST_EVENT,
+	type ProcStopAllResult,
+} from "../proc/stop-all.ts";
+import { THINKING_LEVELS } from "../subagent/rewire.ts";
 
 interface ResetBridge {
 	sessionId: string;
@@ -20,16 +27,20 @@ export default function resetExtension(pi: ExtensionAPI): void {
 			cwd: ctx.cwd,
 			pi,
 			async applyModel(provider, modelId, thinkingLevel) {
-				const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-				if (!levels.includes(thinkingLevel)) return false;
-				let restoredModel = true;
+				// Restore model and effort independently: a missing model must not also
+				// drop the reasoning effort, and vice versa.
+				let ok = true;
 				if (provider && modelId && (ctx.model?.provider !== provider || ctx.model?.id !== modelId)) {
 					const models = await ctx.modelRegistry.getAvailable();
 					const model = models.find((candidate) => candidate.provider === provider && candidate.id === modelId);
-					restoredModel = !!model && await pi.setModel(model);
+					ok = !!model && await pi.setModel(model);
 				}
-				pi.setThinkingLevel(thinkingLevel as ReturnType<typeof pi.getThinkingLevel>);
-				return restoredModel;
+				if (THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+					pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
+				} else {
+					ok = false;
+				}
+				return ok;
 			},
 		};
 		(globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge = bridge;
@@ -76,7 +87,7 @@ export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: st
 			if (![...reply.stopped, ...reply.timedOut].every((name) => typeof name === "string")) return;
 			finish(reply as ProcStopAllResult);
 		});
-		const timer = setTimeout(() => finish(), 6_000);
+		const timer = setTimeout(() => finish(), PROC_STOP_ALL_MAX_WAIT_MS + 2_000);
 		pi.events.emit(PROC_STOP_ALL_REQUEST_EVENT, { id });
 	});
 }
@@ -85,6 +96,10 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 	const model = ctx.model;
 	const thinkingLevel = pi.getThinkingLevel();
 	const requestId = `reset-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	// In-process event bus with a shared trust domain: a random correlation id
+	// plus per-owner/session/cwd validation, but no cryptographic provenance.
+	// Owners answer synchronously (documented protocol), so collecting and then
+	// unsubscribing in the same tick observes every current owner.
 	const snapshots = new Map<string, unknown>();
 	const onSnapshot = (payload: unknown): void => {
 		if (!payload || typeof payload !== "object") return;
@@ -111,7 +126,10 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 			const targetSessionId = newCtx.sessionManager.getSessionId();
 			const bridge = activeBridge();
 			if (!bridge || bridge.sessionId !== targetSessionId || bridge.cwd !== newCtx.cwd) {
-				newCtx.ui.notify("/reset: replacement extension is unavailable; settings were not transferred.", "warning");
+				newCtx.ui.notify(
+					"/reset: replacement extension is unavailable; settings were not transferred and -proc was not applied.",
+					"warning",
+				);
 				return;
 			}
 			if (stopProc) {

@@ -21,6 +21,18 @@ completions or leak them into the wrong session, so `/reset +agents` is refused
 without changing the session. Detach and finish active agents first, then
 `/reset`.
 
-Load this extension with the relevant state owners (`safe-mode`,
-`permissions-core`, `review-level`, and `subagent`) for their settings to transfer.
+## Usage
+
+```text
+/reset              fresh session, keep managed processes
+/reset -proc        fresh session and stop managed processes
+```
+
+## Dependencies
+
+Load the relevant state owners for their settings to transfer: `safe-mode`,
+`permissions-core`, `review-level`, and `subagent`. `-proc` requires the `proc`
+extension. Missing owners only affect their own setting and produce a warning;
+the session still resets.
+
 Run focused tests with `bun test extensions/reset`.

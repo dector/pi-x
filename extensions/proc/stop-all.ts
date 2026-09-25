@@ -28,15 +28,19 @@ export function validateProcStopAllRequest(value: unknown): ProcStopAllRequest |
 	return { id: request.id };
 }
 
-/** Stop just the running snapshot and settle within the supplied bounded interval. */
+/**
+ * Stop the running snapshot and settle within the supplied bounded interval.
+ * Records already `stopping` are waited for and reported (they are neither
+ * re-signalled nor silently treated as clean).
+ */
 export async function stopAllRunningProcesses<T extends ManagedProcessRef>(
 	records: readonly T[],
 	stop: (record: T) => void,
 	waitForExit: (record: T) => Promise<void>,
 	timeoutMs = PROC_STOP_ALL_MAX_WAIT_MS,
 ): Promise<Omit<ProcStopAllResult, "id">> {
-	const running = records.filter((record) => record.state === "running");
-	for (const record of running) {
+	const affected = records.filter((record) => record.state === "running" || record.state === "stopping");
+	for (const record of affected.filter((record) => record.state === "running")) {
 		try {
 			stop(record);
 		} catch {
@@ -44,10 +48,10 @@ export async function stopAllRunningProcesses<T extends ManagedProcessRef>(
 			// reports the final observed state, not an assumed successful signal.
 		}
 	}
-	if (running.length > 0) {
+	if (affected.length > 0) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		await Promise.race([
-			Promise.all(running.map((record) => waitForExit(record))).then(() => undefined),
+			Promise.all(affected.map((record) => waitForExit(record))).then(() => undefined),
 			new Promise<void>((resolve) => {
 				timer = setTimeout(resolve, Math.max(0, Math.min(timeoutMs, PROC_STOP_ALL_MAX_WAIT_MS)));
 			}),
@@ -55,7 +59,7 @@ export async function stopAllRunningProcesses<T extends ManagedProcessRef>(
 		if (timer) clearTimeout(timer);
 	}
 	return {
-		stopped: running.filter((record) => record.state === "exited").map((record) => record.name),
-		timedOut: running.filter((record) => record.state !== "exited").map((record) => record.name),
+		stopped: affected.filter((record) => record.state === "exited").map((record) => record.name),
+		timedOut: affected.filter((record) => record.state !== "exited").map((record) => record.name),
 	};
 }

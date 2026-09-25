@@ -19,7 +19,7 @@ test("request validation accepts only a bounded correlation id", () => {
 	}
 });
 
-test("stops only the running snapshot and reports settled and timed-out records", async () => {
+test("signals only running records and reports stopping records as affected", async () => {
 	const records = [
 		{ name: "live", state: "running" },
 		{ name: "already-stopping", state: "stopping" },
@@ -31,10 +31,12 @@ test("stops only the running snapshot and reports settled and timed-out records"
 		(record) => calls.push(record.name),
 		async (record) => {
 			if (record.name === "live") record.state = "exited";
+			if (record.name === "already-stopping") record.state = "exited";
 		},
 		10,
 	);
-	expect(await resultPromise).toEqual({ stopped: ["live"], timedOut: [] });
+	// `already-stopping` is waited for but never re-signalled.
+	expect(await resultPromise).toEqual({ stopped: ["live", "already-stopping"], timedOut: [] });
 	expect(calls).toEqual(["live"]);
 });
 
