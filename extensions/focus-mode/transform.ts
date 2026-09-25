@@ -1,7 +1,7 @@
 /**
  * Pure ANSI helpers used by the narrow viewport.
  *
- * Pi centers a narrow column by writing the same frame it would write at full
+ * Pi centers the reading column by writing the same frame it would write at full
  * width, but shifted right by `margin` cells. That only needs a column shift on
  * the handful of sequences pi uses to address a column:
  *

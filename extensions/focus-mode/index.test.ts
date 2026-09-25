@@ -6,10 +6,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Set before anything touches the state module, and resolved per call, so the
 // real ~/.pi file is never written by a test run.
-const statePath = join(mkdtempSync(join(tmpdir(), "narrow-ext-")), "state.json");
-process.env.PI_NARROW_STATE_PATH = statePath;
+const statePath = join(mkdtempSync(join(tmpdir(), "focus-mode-ext-")), "state.json");
+process.env.PI_FOCUS_MODE_STATE_PATH = statePath;
 
-const narrowExtension = (await import("./index")).default;
+const focusModeExtension = (await import("./index")).default;
 const { loadGlobalState, globalStatePath } = await import("./state");
 
 type Command = {
@@ -32,7 +32,7 @@ function setup() {
 		},
 	} as unknown as ExtensionAPI;
 
-	narrowExtension(pi);
+	focusModeExtension(pi);
 
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const ctx = {
@@ -47,8 +47,8 @@ function setup() {
 		events,
 		notifications,
 		run: async (args: string) => {
-			const command = commands.get("px:narrow");
-			if (!command) throw new Error("px:narrow is not registered");
+			const command = commands.get("px:focus");
+			if (!command) throw new Error("px:focus is not registered");
 			notifications.length = 0;
 			await command.handler(args, ctx);
 			return notifications.at(-1);
@@ -57,14 +57,14 @@ function setup() {
 	};
 }
 
-describe("px:narrow command", () => {
+describe("px:focus command", () => {
 	test("never touches the real state file", () => {
 		expect(globalStatePath()).toBe(statePath);
 	});
 
 	test("registers the command with completions", () => {
 		const { commands } = setup();
-		const command = commands.get("px:narrow");
+		const command = commands.get("px:focus");
 		expect(command?.description).toContain("reading column");
 		expect(command?.getArgumentCompletions?.("").map((item) => item.value)).toContain("set");
 	});
@@ -113,7 +113,7 @@ describe("px:narrow command", () => {
 		const result = await run("sideways");
 		expect(result?.type).toBe("warning");
 		expect(result?.message).toContain("unknown option");
-		expect(result?.message).toContain("/px:narrow set 100");
+		expect(result?.message).toContain("/px:focus set 100");
 		expect(state()).toEqual(before);
 	});
 

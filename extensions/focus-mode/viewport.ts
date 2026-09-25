@@ -25,7 +25,7 @@ const NUDGE_TIMEOUT_MS = 250;
  * Shared across extension reloads: pi re-imports extension modules in the same
  * process, and a second patch of the same streams would shift output twice.
  */
-const PATCH_KEY = Symbol.for("pi-x.narrow.patch");
+const PATCH_KEY = Symbol.for("pi-x.focus-mode.patch");
 
 export interface Geometry {
 	/** Real terminal width in columns. */
@@ -48,7 +48,7 @@ export interface InputStreamLike {
 	emit(event: string, ...args: unknown[]): unknown;
 }
 
-export interface NarrowOptions {
+export interface FocusModeOptions {
 	stdout?: OutputStreamLike;
 	stdin?: InputStreamLike;
 }
@@ -135,12 +135,12 @@ function readPatch(stdout: OutputStreamLike): PatchState | undefined {
  * This is built on process-level plumbing rather than pi internals so it
  * survives TUI mode switches, `/clear`, and pi recreating its renderer.
  */
-export class NarrowViewport {
+export class FocusModeViewport {
 	private readonly stdout: OutputStreamLike;
 	private readonly stdin: InputStreamLike | undefined;
 	private readonly state: PatchState;
 
-	constructor(options: NarrowOptions = {}) {
+	constructor(options: FocusModeOptions = {}) {
 		this.stdout = options.stdout ?? (process.stdout as unknown as OutputStreamLike);
 		this.stdin = options.stdin ?? (process.stdin as unknown as InputStreamLike);
 		this.state = readPatch(this.stdout) ?? {
@@ -342,14 +342,14 @@ export class NarrowViewport {
 	describe(): string {
 		const geometry = this.desiredGeometry();
 		if (!this.state.enabled) {
-			return `narrow: off (full width, ${geometry.realWidth} columns)`;
+			return `focus: off (full width, ${geometry.realWidth} columns)`;
 		}
 		if (!geometry.narrowed) {
-			return `narrow: on at ${this.state.target} columns, but the screen is only ${geometry.realWidth} wide (no margin)`;
+			return `focus: on at ${this.state.target} columns, but the screen is only ${geometry.realWidth} wide (no margin)`;
 		}
 
 		const where =
 			this.state.bias === 0 ? "centered" : `${this.state.bias < 0 ? "left" : "right"}-biased ${Math.abs(this.state.bias)}%`;
-		return `narrow: ${geometry.effectiveWidth} columns in ${geometry.realWidth}, ${geometry.margin} column left margin (${where})`;
+		return `focus: ${geometry.effectiveWidth} columns in ${geometry.realWidth}, ${geometry.margin} column left margin (${where})`;
 	}
 }

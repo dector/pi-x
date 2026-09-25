@@ -1,27 +1,27 @@
-# narrow
+# focus-mode
 
 Keeps pi inside a centered reading column so a wide monitor does not stretch
 every line across the screen.
 
 ```text
-/px:narrow            toggle the reading column
-/px:narrow on         enable it (default width 100)
-/px:narrow off        disable it, back to full width
-/px:narrow set 100           set the width and enable it
-/px:narrow set 100/-50      set the width, slide the column left, and enable it
-/px:narrow on 100     same as `set 100`
-/px:narrow bias       show the current bias
-/px:narrow bias -50   slide the column left, -100 is flush against the left edge
-/px:narrow bias 100   slide it right, 0 (the default) is centered
-/px:narrow status     show the current state
+/px:focus            toggle the reading column
+/px:focus on         enable it (default width 100)
+/px:focus off        disable it, back to full width
+/px:focus set 100           set the width and enable it
+/px:focus set 100/-50      set the width, slide the column left, and enable it
+/px:focus on 100     same as `set 100`
+/px:focus bias       show the current bias
+/px:focus bias -50   slide the column left, -100 is flush against the left edge
+/px:focus bias 100   slide it right, 0 (the default) is centered
+/px:focus status     show the current state
 ```
 
 `set` takes an optional bias after a slash: `set 100/-50`. Leave it off and the
 current bias is kept, so `set 120` only changes the width.
 
 The width, the bias and the on/off state are global and persist in
-`~/.pi/agent/space.dector-narrow.json`, so the choice applies from the first
-frame of the next session. `PI_NARROW_STATE_PATH` overrides the location.
+`~/.pi/agent/space.dector-focus-mode.json`, so the choice applies from the first
+frame of the next session. `PI_FOCUS_MODE_STATE_PATH` overrides the location.
 
 Defaults are `on` at 100 columns, centered. On a screen that is already 100
 columns wide or narrower there is no margin at all: pi is told the real width
@@ -48,8 +48,8 @@ For a 200 column screen with a 100 column reading column there are 100 cells of
 slack, so `bias -50` leaves 25 on the left and 75 on the right. Values outside
 `-100..100` are rejected by the parser; the computed margin is clamped so the
 column can never slide off screen. The bias is kept when you change the width
-with `set 120` (no bias half) or toggle narrow mode, and `bias 0` puts it back
-to centered. A bias is inert when narrow mode is off, or when the screen is not
+with `set 120` (no bias half) or toggle focus mode, and `bias 0` puts it back
+to centered. A bias is inert when focus mode is off, or when the screen is not
 wider than the reading column.
 
 ## How it works
@@ -57,7 +57,7 @@ wider than the reading column.
 pi reads its render width from `process.stdout.columns` and nothing else, and
 addresses columns with a small, fixed set of escape sequences. So:
 
-1. **Narrow** — `process.stdout.columns` is redefined to report
+1. **Width** — `process.stdout.columns` is redefined to report
    `min(100, realWidth)`. The whole interface wraps there: transcript, editor,
    footer, dialogs, markdown, code blocks.
 2. **Place** — `process.stdout.write` is wrapped and every column-addressing
@@ -82,10 +82,10 @@ renderer. A `/reload` shares the same patch instead of stacking a second one.
 
 - **pi internals.** The output transform matches the escape sequences pi
   currently emits. A future pi version that adds another column-addressing
-  sequence would render slightly off; `/px:narrow off` is always a clean escape
+  sequence would render slightly off; `/px:focus off` is always a clean escape
   hatch.
-- **Terminal resize** while narrow is on costs one full-width frame before the
-  narrow frame lands. Same for a `bias` change, since it moves the margin
+- **Terminal resize** while focus mode is on costs one full-width frame before the
+  narrowed frame lands. Same for a `bias` change, since it moves the margin
   without changing the width.
 - **Inline images** (kitty/iterm2) are placed relative to the cursor, which the
   shift moves, so they land in the column, but they are not independently
@@ -96,5 +96,5 @@ renderer. A `/reload` shares the same patch instead of stacking a second one.
 ## Tests
 
 ```bash
-bun test extensions/narrow
+bun test extensions/focus-mode
 ```

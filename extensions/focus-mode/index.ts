@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { USAGE, narrowCompletions, parseNarrowCommand } from "./command";
-import { loadGlobalState, saveGlobalState, type NarrowStateV1 } from "./state";
-import { NarrowViewport } from "./viewport";
+import { USAGE, focusModeCompletions, parseFocusModeCommand } from "./command";
+import { loadGlobalState, saveGlobalState, type FocusModeStateV1 } from "./state";
+import { FocusModeViewport } from "./viewport";
 
 function isInteractiveTerminal(): boolean {
 	const stdout = process.stdout as { isTTY?: boolean };
@@ -14,24 +14,24 @@ function notify(ctx: ExtensionContext, message: string, type: "info" | "warning"
 }
 
 /**
- * Keeps pi inside a centered reading column on wide monitors.
+ * Keeps pi inside a reading column on wide monitors.
  *
  * See README.md for the mechanism and the caveats.
  */
-export default function narrowExtension(pi: ExtensionAPI): void {
-	const viewport = new NarrowViewport();
+export default function focusModeExtension(pi: ExtensionAPI): void {
+	const viewport = new FocusModeViewport();
 	const { state: persisted, error: loadError } = loadGlobalState();
-	let current: NarrowStateV1 = persisted;
+	let current: FocusModeStateV1 = persisted;
 	let reportedLoadError = false;
 
 	/** Push a configuration into the terminal and persist it. */
-	const applyState = (next: NarrowStateV1): { message: string; type: "info" | "warning" } => {
+	const applyState = (next: FocusModeStateV1): { message: string; type: "info" | "warning" } => {
 		current = next;
 		const saved = saveGlobalState(next);
 
 		if (!isInteractiveTerminal()) {
 			// The preference is still recorded, it just has nothing to apply to.
-			return { message: "narrow: needs an interactive terminal, saved but not applied", type: "warning" };
+			return { message: "focus: needs an interactive terminal, saved but not applied", type: "warning" };
 		}
 
 		viewport.configure({ enabled: next.enabled, target: next.width, bias: next.bias });
@@ -57,11 +57,11 @@ export default function narrowExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.registerCommand("px:narrow", {
-		description: "Limit pi to a reading column (/px:narrow [on [N]|off|set N|bias [N]|status])",
-		getArgumentCompletions: (prefix: string) => narrowCompletions(prefix),
-		handler: async (args, ctx) => {
-			const parsed = parseNarrowCommand(args);
+	const command = {
+		description: "Limit pi to a reading column (/px:focus [on [N]|off|set N|bias [N]|status])",
+		getArgumentCompletions: (prefix: string) => focusModeCompletions(prefix),
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const parsed = parseFocusModeCommand(args);
 			if ("error" in parsed) {
 				notify(ctx, `${parsed.error}\n${USAGE}`, "warning");
 				return;
@@ -72,7 +72,7 @@ export default function narrowExtension(pi: ExtensionAPI): void {
 					ctx,
 					isInteractiveTerminal()
 						? viewport.describe()
-						: `narrow: on=${current.enabled} width=${current.width} bias=${current.bias} (not applied: no interactive terminal)`,
+						: `focus: on=${current.enabled} width=${current.width} bias=${current.bias} (not applied: no interactive terminal)`,
 					isInteractiveTerminal() ? "info" : "warning",
 				);
 				return;
@@ -80,11 +80,11 @@ export default function narrowExtension(pi: ExtensionAPI): void {
 
 			if (parsed.kind === "showBias") {
 				const where = current.bias === 0 ? "centered" : current.bias < 0 ? `${-current.bias}% to the left` : `${current.bias}% to the right`;
-				notify(ctx, `narrow bias: ${current.bias} (${where})`, "info");
+				notify(ctx, `focus bias: ${current.bias} (${where})`, "info");
 				return;
 			}
 
-			const next: NarrowStateV1 =
+			const next: FocusModeStateV1 =
 				parsed.kind === "toggle"
 					? { ...current, enabled: !current.enabled }
 					: parsed.kind === "enable"
@@ -102,5 +102,11 @@ export default function narrowExtension(pi: ExtensionAPI): void {
 			const { message, type } = applyState(next);
 			notify(ctx, message, type);
 		},
-	});
+	};
+
+	pi.registerCommand("px:focus", command);
+
+	// The extension used to be called narrow; keep the old name working so
+	// muscle memory does not break. Drop this when it stops being useful.
+	pi.registerCommand("px:narrow", { ...command, description: `Deprecated alias for /px:focus (${command.description})` });
 }

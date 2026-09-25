@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { NarrowViewport, resolveGeometry, resolveMargin } from "./viewport";
+import { FocusModeViewport, resolveGeometry, resolveMargin } from "./viewport";
 
 const ESC = "\u001B";
 
@@ -32,7 +32,7 @@ function setup(columns: number) {
 	const stdout = new FakeStdout();
 	stdout.columns = columns;
 	const stdin = new FakeStdin();
-	const viewport = new NarrowViewport({ stdout, stdin });
+	const viewport = new FocusModeViewport({ stdout, stdin });
 	viewport.install();
 	return { stdout, stdin, viewport };
 }
@@ -86,7 +86,7 @@ describe("resolveGeometry", () => {
 		expect(resolveGeometry(240, false, 100)).toEqual({ realWidth: 240, effectiveWidth: 240, margin: 0, narrowed: false });
 	});
 
-	test("centers a narrow column", () => {
+	test("centers the reading column", () => {
 		expect(resolveGeometry(240, true, 100)).toEqual({ realWidth: 240, effectiveWidth: 100, margin: 70, narrowed: true });
 	});
 
@@ -104,7 +104,7 @@ describe("resolveGeometry", () => {
 	});
 });
 
-describe("NarrowViewport", () => {
+describe("FocusModeViewport", () => {
 	test("reports the real width until it is configured", () => {
 		const { stdout, viewport } = setup(240);
 		expect(stdout.columns).toBe(240);
@@ -203,7 +203,7 @@ describe("NarrowViewport", () => {
 		const { stdout, viewport } = setup(240);
 		viewport.configure({ enabled: true, target: 120 });
 
-		const reloaded = new NarrowViewport({ stdout, stdin: new FakeStdin() });
+		const reloaded = new FocusModeViewport({ stdout, stdin: new FakeStdin() });
 		reloaded.configure({ enabled: true, target: 120 });
 		expect(stdout.columns).toBe(120);
 
@@ -247,10 +247,10 @@ describe("NarrowViewport", () => {
 	test("describes the effective layout", () => {
 		const { viewport } = setup(240);
 		viewport.configure({ enabled: true, target: 120 });
-		expect(viewport.describe()).toBe("narrow: 120 columns in 240, 60 column left margin (centered)");
+		expect(viewport.describe()).toBe("focus: 120 columns in 240, 60 column left margin (centered)");
 
 		viewport.configure({ enabled: true, target: 120, bias: -100 });
-		expect(viewport.describe()).toBe("narrow: 120 columns in 240, 0 column left margin (left-biased 100%)");
+		expect(viewport.describe()).toBe("focus: 120 columns in 240, 0 column left margin (left-biased 100%)");
 
 		const small = setup(100);
 		small.viewport.configure({ enabled: true, target: 120 });
