@@ -22,13 +22,14 @@ export default function resetExtension(pi: ExtensionAPI): void {
 			async applyModel(provider, modelId, thinkingLevel) {
 				const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 				if (!levels.includes(thinkingLevel)) return false;
+				let restoredModel = true;
 				if (provider && modelId && (ctx.model?.provider !== provider || ctx.model?.id !== modelId)) {
 					const models = await ctx.modelRegistry.getAvailable();
 					const model = models.find((candidate) => candidate.provider === provider && candidate.id === modelId);
-					if (!model || !(await pi.setModel(model))) return false;
+					restoredModel = !!model && await pi.setModel(model);
 				}
 				pi.setThinkingLevel(thinkingLevel as ReturnType<typeof pi.getThinkingLevel>);
-				return true;
+				return restoredModel;
 			},
 		};
 		(globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge = bridge;

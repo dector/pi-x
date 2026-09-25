@@ -18,7 +18,7 @@ function bus() {
 	};
 }
 
-test("reset transfers through replacement bus, not the stale source bus", async () => {
+for (const available of [true, false]) test(`reset transfers through replacement bus (model available: ${available})`, async () => {
 	const oldBus = bus();
 	const freshBus = bus();
 	let selectedModel = "";
@@ -52,7 +52,7 @@ test("reset transfers through replacement bus, not the stale source bus", async 
 	});
 	const newCtx = {
 		cwd: "/repo", sessionManager: { getSessionId: () => "new" },
-		modelRegistry: { getAvailable: async () => [{ provider: "test", id: "old-model" }] },
+		modelRegistry: { getAvailable: async () => available ? [{ provider: "test", id: "old-model" }] : [] },
 		ui: { notify: (message: string) => notices.push(message) },
 	};
 	const oldCtx = {
@@ -68,9 +68,9 @@ test("reset transfers through replacement bus, not the stale source bus", async 
 		},
 	};
 	await command?.("", oldCtx as unknown as ExtensionCommandContext);
-	expect(selectedModel).toBe("old-model");
+	expect(selectedModel).toBe(available ? "old-model" : "");
 	expect(selectedThinking).toBe("high");
 	expect((applied as any).state).toEqual({ mode: "reader" });
-	expect(notices).toEqual([]);
+	expect(notices).toEqual(available ? [] : ["/reset: model or thinking level could not be restored."]);
 	for (const handler of newHandlers.get("session_shutdown") ?? []) handler({}, newCtx);
 });
