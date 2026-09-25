@@ -1272,6 +1272,49 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const unsubscribeResetRequest = pi.events.on("px:reset:settings:request", (payload) => {
+		if (!payload || typeof payload !== "object" || !activeContext) return;
+		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
+		if (
+			typeof request.id !== "string" ||
+			request.sourceSessionId !== activeContext.sessionManager.getSessionId() ||
+			request.cwd !== activeContext.cwd
+		) return;
+		pi.events.emit("px:reset:settings:response", {
+			id: request.id,
+			owner: "safe-mode",
+			sourceSessionId: request.sourceSessionId,
+			cwd: request.cwd,
+			state: { mode, outerAccess, sessionApprovedBashCommands: [...autoApprovedBashCommandsForSession] },
+		});
+	});
+
+	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+		if (!payload || typeof payload !== "object" || !activeContext) return;
+		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
+		if (
+			typeof request.transferId !== "string" ||
+			request.owner !== "safe-mode" ||
+			request.targetSessionId !== activeContext.sessionManager.getSessionId() ||
+			request.cwd !== activeContext.cwd
+		) return;
+		const state = request.state as { mode?: unknown; outerAccess?: unknown; sessionApprovedBashCommands?: unknown } | undefined;
+		const parsed = parseSafeModeSnapshot(state);
+		if (!parsed || !Array.isArray(state?.sessionApprovedBashCommands)) return;
+		if (!state.sessionApprovedBashCommands.every((command) => typeof command === "string")) return;
+		const alreadySelected = mode === parsed.mode && outerAccess === parsed.outerAccess;
+		setModeAndOuter(parsed.mode, parsed.outerAccess, activeContext, { source: "reset" });
+		if (alreadySelected) persistState();
+		autoApprovedBashCommandsForSession.clear();
+		for (const command of state.sessionApprovedBashCommands as string[]) autoApprovedBashCommandsForSession.add(command);
+		pi.events.emit("px:reset:settings:ack", {
+			transferId: request.transferId,
+			owner: "safe-mode",
+			targetSessionId: request.targetSessionId,
+			cwd: request.cwd,
+		});
+	});
+
 	pi.events.on(SAFE_MODE_STATE_EVENTS.request, (payload) => {
 		const request = parseSafeModeStateRequest(payload);
 		if (!request) return;
@@ -1350,6 +1393,8 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		activeContext = undefined;
+		unsubscribeResetRequest();
+		unsubscribeResetApply();
 		pi.events.emit(HUB_UNREGISTER_EVENT, { id: HUB_ID });
 	});
 

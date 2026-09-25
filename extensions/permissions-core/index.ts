@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { NETWORK_STATE_EVENTS } from "./contract";
+import { parseNetworkPolicySetting } from "./policy";
 import {
 	HUB_REQUEST_EVENT,
 	PERMISSIONS_CORE_ENTRY_TYPE,
@@ -43,12 +44,14 @@ function readPersistedSetting(ctx: ExtensionContext): PersistedNetworkSetting {
  * mode is only observed (read-only); this extension never changes it.
  */
 export default function permissionsCoreExtension(pi: ExtensionAPI): void {
+	let activeContext: ExtensionContext | undefined;
 	const service = createNetworkPermissionService({
 		emit: (channel, payload) => pi.events.emit(channel, payload),
 		appendEntry: (customType, data) => pi.appendEntry(customType, data),
 	});
 
 	const restoreSession = async (ctx: ExtensionContext): Promise<void> => {
+		activeContext = ctx;
 		service.resetSession();
 		service.restore(readPersistedSetting(ctx));
 		// Register before the safe-mode query so a `perm:net` ask racing with
@@ -68,6 +71,7 @@ export default function permissionsCoreExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", () => {
+		activeContext = undefined;
 		service.unregister();
 	});
 
@@ -75,6 +79,32 @@ export default function permissionsCoreExtension(pi: ExtensionAPI): void {
 	// block; the handler always replies for a `perm:net` cap it is targeted for.
 	pi.events.on(HUB_REQUEST_EVENT, (payload) => {
 		service.handleHubRequest(payload);
+	});
+
+	const unsubscribeResetRequest = pi.events.on("px:reset:settings:request", (payload) => {
+		if (!payload || typeof payload !== "object" || !activeContext) return;
+		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
+		if (typeof request.id !== "string" || request.sourceSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
+		pi.events.emit("px:reset:settings:response", {
+			id: request.id,
+			owner: "permissions-core",
+			sourceSessionId: request.sourceSessionId,
+			cwd: request.cwd,
+			state: { configured: service.getState().configured },
+		});
+	});
+	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+		if (!payload || typeof payload !== "object" || !activeContext) return;
+		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
+		if (typeof request.transferId !== "string" || request.owner !== "permissions-core" || request.targetSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
+		const configured = parseNetworkPolicySetting((request.state as { configured?: unknown } | undefined)?.configured);
+		if (!configured) return;
+		service.setConfigured(configured, "reset");
+		pi.events.emit("px:reset:settings:ack", { transferId: request.transferId, owner: "permissions-core", targetSessionId: request.targetSessionId, cwd: request.cwd });
+	});
+	pi.on("session_shutdown", () => {
+		unsubscribeResetRequest();
+		unsubscribeResetApply();
 	});
 
 	pi.events.on(NETWORK_STATE_EVENTS.request, (payload) => {

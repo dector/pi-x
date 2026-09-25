@@ -8,11 +8,23 @@ function setup(branch: unknown[] = []) {
 	const lifecycle = new Map<string, Handler[]>();
 	const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
 	const emitted: Array<{ channel: string; payload: unknown }> = [];
+	const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
 	const entries: Array<{ type: string; data: unknown }> = [];
 	const notifications: Array<{ message: string; type: string }> = [];
 	const pickerTitles: string[] = [];
 	const pi = {
-		events: { emit: (channel: string, payload: unknown) => emitted.push({ channel, payload }) },
+		events: {
+			emit: (channel: string, payload: unknown) => {
+				emitted.push({ channel, payload });
+				for (const handler of eventHandlers.get(channel) ?? []) handler(payload);
+			},
+			on: (channel: string, handler: (payload: unknown) => void) => {
+				const handlers = eventHandlers.get(channel) ?? [];
+				handlers.push(handler);
+				eventHandlers.set(channel, handlers);
+				return () => eventHandlers.set(channel, handlers.filter((candidate) => candidate !== handler));
+			},
+		},
 		on(event: string, handler: Handler) {
 			const handlers = lifecycle.get(event) ?? [];
 			handlers.push(handler);
@@ -29,7 +41,8 @@ function setup(branch: unknown[] = []) {
 	const ctx = {
 		hasUI: false,
 		model: undefined as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined,
-		sessionManager: { getBranch: () => branch },
+		cwd: "/tmp/project",
+		sessionManager: { getBranch: () => branch, getSessionId: () => "test-session" },
 		ui: {
 			notify(message: string, type: string) {
 				notifications.push({ message, type });

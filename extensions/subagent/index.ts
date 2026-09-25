@@ -152,7 +152,7 @@ import {
 	saveRewirePresets,
 	type RewirePreset,
 } from "./rewire-presets.ts";
-import { availableThinkingLevels, resolveSubagentModel } from "./rewire.ts";
+import { availableThinkingLevels, resolveSubagentModel, THINKING_LEVELS } from "./rewire.ts";
 import {
 	canDelegate,
 	childSubagentDepth,
@@ -874,6 +874,41 @@ export default function (pi: ExtensionAPI) {
 		}
 		publishRewireStatus();
 	};
+	const unsubscribeResetSettings = pi.events.on("px:reset:settings:request", (payload) => {
+		if (!payload || typeof payload !== "object" || !sessionContext) return;
+		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
+		if (request.sourceSessionId !== sessionContext.sessionManager.getSessionId() || request.cwd !== sessionContext.cwd) return;
+		if (typeof request.id !== "string") return;
+		pi.events.emit("px:reset:settings:response", {
+			id: request.id,
+			owner: "subagent",
+			sourceSessionId: request.sourceSessionId,
+			cwd: request.cwd,
+			state: { rewire: rewireConfig ? { ...rewireConfig } : undefined, delegationDepth },
+		});
+	});
+	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+		if (!payload || typeof payload !== "object" || !sessionContext) return;
+		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
+		if (typeof request.transferId !== "string" || request.owner !== "subagent" || request.targetSessionId !== sessionContext.sessionManager.getSessionId() || request.cwd !== sessionContext.cwd) return;
+		const state = request.state as { rewire?: unknown; delegationDepth?: unknown } | undefined;
+		if (!state || typeof state.delegationDepth !== "number" || !Number.isInteger(state.delegationDepth)) return;
+		if (state.delegationDepth < -1 || state.delegationDepth > MAX_SUBAGENT_DEPTH) return;
+		const config = state.rewire;
+		if (config !== undefined) {
+			if (!config || typeof config !== "object") return;
+			const value = config as { enabled?: unknown; model?: unknown; thinkingLevel?: unknown };
+			if (typeof value.enabled !== "boolean" || typeof value.model !== "string" || !value.model.trim() || !THINKING_LEVELS.includes(value.thinkingLevel as any)) return;
+			setRewireConfig(sessionContext, { enabled: value.enabled, model: value.model, thinkingLevel: value.thinkingLevel as SubagentRewireConfig["thinkingLevel"] });
+		}
+		setDelegationDepth(sessionContext, state.delegationDepth);
+		pi.events.emit("px:reset:settings:ack", {
+			transferId: request.transferId,
+			owner: "subagent",
+			targetSessionId: request.targetSessionId,
+			cwd: request.cwd,
+		});
+	});
 	// Session-scoped abort signal and in-flight dispatch tracking. Together they
 	// let shutdown abort and await blocking runs before disposing the owned tab,
 	// closing the window where a late spawn could adopt a torn-down tab.
@@ -1939,6 +1974,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (event) => {
 		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
 		pi.events.emit(STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT, {});
+		unsubscribeResetSettings();
+		unsubscribeResetApply();
 		// Drop the panel subscription so `/reload` cannot leave a stale listener
 		// on the shared event bus, then forget the coordinator-derived state.
 		offPanelActive();
