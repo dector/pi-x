@@ -6,7 +6,8 @@ pure and independently tested; `index.ts` wires the policy engine into the hub
 and the local event bus.
 
 Status: provides `perm:net` through the hub, persists the configured policy per
-session, observes safe-mode, and exposes a validated state contract. The
+session, accepts an inherited `--network-policy` session flag, observes
+safe-mode, and exposes a validated state contract. The
 `http`, `http_md`, and `web_search` tools consume this provider, the
 `/px:net` selector in [`../permissions-ui/`](../permissions-ui/README.md) reads
 and changes the state through the same contract, and `status-bar` renders the
@@ -124,6 +125,32 @@ New sessions start at `auto`. An explicit choice persists with
 the session branch on resume. A present but corrupt persisted choice fails
 closed to `ask-all`.
 
+## Inherited session flag
+
+`--network-policy <setting>` sets the configured policy for this session. The
+`subagent` extension uses it to hand a child's own fresh `--no-session` process
+the parent's configured policy instead of leaving it at `auto`.
+
+Precedence on `session_start` / `session_tree`, applied before the persisted
+branch is consulted:
+
+| `--network-policy` | result |
+| --- | --- |
+| absent | existing persisted-session restore (Auto on a branch with no entry) |
+| valid setting | that configured policy is used, even over a persisted choice |
+| present but invalid | fails closed to `ask-all`; the persisted choice is **not** used |
+
+`invalid` covers unknown values, wrong case, and empty strings. An interactive
+session shows one warning per session start; a headless session stays silent.
+The inherited value is applied, not persisted: the child writes no session entry
+until the policy is changed explicitly in that session.
+
+Only the configured setting is inherited, never the parent's derived `effective`
+value. The child keeps its own Auto derivation and PARANOID precedence, so a
+child of an `allow-all` parent that runs in PARANOID still resolves `ask-all`.
+Nested subagents work the same way: a child answers the state contract with the
+configured policy it inherited, and its own children inherit that.
+
 ## API
 
 `policy.ts` exports validation/normalization (`parseNetworkPermissionRequest`,
@@ -135,9 +162,11 @@ state resolution (`resolveNetworkPermissionState`,
 (`parseNetworkPermissionState`, `serializeNetworkPermissionState`).
 
 `provider.ts` exports `createNetworkPermissionService`, the side-effect-free
-core used by `index.ts` and the tests. `contract.ts` exports the state event
-names and payload parsers (`parseNetworkStateRequest`,
-`parseNetworkStateResponse`, `parseNetworkStateSet`,
+core used by `index.ts` and the tests, plus `NETWORK_POLICY_FLAG` and
+`inheritedSettingFromFlag` (flag value to restore input; `undefined` means the
+flag was absent, a present value is passed through unvalidated so `restore`
+fails closed). `contract.ts` exports the state event names and payload parsers
+(`parseNetworkStateRequest`, `parseNetworkStateResponse`, `parseNetworkStateSet`,
 `parseNetworkStateChanged`). `safe-mode.ts` exports the read-only safe-mode
 observer.
 
@@ -196,6 +225,11 @@ loads the real hub and permissions-core with a fake event bus to cover the
 selected request flow, real-hub multi-provider arbitration (block/confirm/allow
 independent of order), and to assert there is no recursive `hub:ask`.
 `index.test.ts` covers the `index.ts` wiring: `session_start`/`session_tree`
-reset and restore, `session_shutdown` unregister, and state
-request/response. `safe-mode.test.ts` covers the read-only observer, including
+reset and restore, `session_shutdown` unregister, state request/response, and
+the inherited `--network-policy` flag (valid flag over an empty or persisted
+branch, invalid flag failing closed, absent flag keeping the persisted
+behavior, PARANOID still forcing `ask-all`, and no entry written for an
+inherited policy). `provider.test.ts` additionally covers
+`inheritedSettingFromFlag` and the malformed persisted choice.
+`safe-mode.test.ts` covers the read-only observer, including
 absent/malformed responses with a short injected timeout.

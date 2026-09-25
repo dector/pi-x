@@ -15,7 +15,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
 - **Abort support**: Ctrl+C aborts blocking children; detached children are aborted by the `action: "stop"` tool control, from `/px:agents`, or on session shutdown
 - **Model-driven controls**: the `subagent` tool accepts `action: "stop"` or `action: "steer"` addressed by dispatch id or run id, so the parent model can abort or redirect running children without shell-killing processes
-- **Inherited permissions**: Each dispatch snapshots the parent's safe mode and outer-access setting when it is prepared, before an async dispatch is accepted
+- **Inherited permissions**: Each dispatch snapshots the parent's safe mode, outer-access setting, and configured network policy when it is prepared, before an async dispatch is accepted
 - **Restricted-agent gate**: Agent names matching a global pattern require one timed parent confirmation per dispatch
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
@@ -57,6 +57,7 @@ subagent/
 ├── status-row.ts        # Pure formatter for the active-subagents panel content
 ├── panels.ts            # `px:panels:*` integration: active -> collapsed, Watch suppression
 ├── safe-mode.ts         # Safe-mode snapshot query and child argv
+├── network-policy.ts    # Configured network-policy snapshot query and child argv
 ├── timing.ts            # Per-run timing breakdown
 ├── events.ts            # RPC stream-event application to `SingleResult`
 ├── types.ts             # Shared dispatch/result types
@@ -113,6 +114,7 @@ Then run `/reload`.
 Dependencies:
 
 - `safe-mode` for child permission inheritance (optional)
+- `permissions-core` for child network-policy inheritance (optional)
 - [Bun](https://bun.sh) on `PATH` when using the opt-in Herdr backend (the pane bridge runs on Bun)
 
 ## Security Model
@@ -130,6 +132,8 @@ When running interactively, the tool prompts for confirmation before running pro
 Children use pi RPC mode. Project-agent approval happens before an async dispatch is accepted, so a denied request never starts detached work. Child safe-mode approvals appear in the parent UI with the agent name and stable run ID, and can appear while you are chatting with the parent. Dialogs are serialized globally, one at a time. In a non-interactive parent, requests fail closed instead of hanging. While a relayed approval/input dialog is open the parent declares a hub user wait, so the Herdr pane/tab reports `blocked` (needs attention) instead of `working`.
 
 Safe mode is captured when a dispatch is prepared, before an async dispatch is accepted. Parent changes only affect dispatches prepared later. Session-only approvals remain local to the child that received them; project-persistent approvals continue to use the repository allowlist.
+
+The parent's configured network policy is captured at the same moment and passed to every child as `--network-policy <setting>`, so a child does not silently fall back to Auto while the parent runs `allow-all`. Only the configured choice is inherited, never the parent's already-derived effective policy, so the child still applies its own Auto derivation and PARANOID override. The snapshot is a bounded, read-only query of the `px:permissions-core:net:state:*` contract (never the hub): if permissions-core is absent, slow, or answers with anything but a valid configured policy, the flag is omitted and the child keeps its own Auto default. A failed query never inherits `allow-all`. Nested subagents behave the same way, because a child answers the same state contract with the policy it inherited itself.
 
 ### Restricted agents
 

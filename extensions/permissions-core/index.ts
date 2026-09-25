@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { NETWORK_STATE_EVENTS } from "./contract";
-import { parseNetworkPolicySetting } from "./policy";
+import { NETWORK_POLICY_SETTINGS, parseNetworkPolicySetting } from "./policy";
 import {
 	HUB_REQUEST_EVENT,
+	NETWORK_POLICY_FLAG,
 	PERMISSIONS_CORE_ENTRY_TYPE,
 	createNetworkPermissionService,
+	inheritedSettingFromFlag,
 	type PersistedNetworkSetting,
 } from "./provider";
 import {
@@ -37,6 +39,19 @@ function readPersistedSetting(ctx: ExtensionContext): PersistedNetworkSetting {
 }
 
 /**
+ * One-shot warning for an unparsable `--network-policy` value. The child still
+ * fails closed to `ask-all`; the notification only explains why. Headless
+ * sessions have no UI to notify, so the failure stays silent there.
+ */
+function warnInvalidInheritedPolicy(ctx: ExtensionContext, raw: unknown): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.notify(
+		`Invalid --${NETWORK_POLICY_FLAG} value '${String(raw)}'. Failing closed to ask-all. Expected one of: ${NETWORK_POLICY_SETTINGS.join(", ")}.`,
+		"warning",
+	);
+}
+
+/**
  * permissions-core: headless network permission provider.
  *
  * Owns the effective network policy and answers `perm:net` hub requests. State
@@ -50,10 +65,24 @@ export default function permissionsCoreExtension(pi: ExtensionAPI): void {
 		appendEntry: (customType, data) => pi.appendEntry(customType, data),
 	});
 
+	pi.registerFlag(NETWORK_POLICY_FLAG, {
+		description: `Configured network policy for this session (${NETWORK_POLICY_SETTINGS.join(", ")})`,
+		type: "string",
+	});
+
 	const restoreSession = async (ctx: ExtensionContext): Promise<void> => {
 		activeContext = ctx;
 		service.resetSession();
-		service.restore(readPersistedSetting(ctx));
+		// An explicitly passed policy (a subagent child inheriting its parent)
+		// wins over the session branch, because the child is a brand-new
+		// `--no-session` run with nothing persisted to restore. The configured
+		// choice is inherited, never the parent's derived `effective` value, so
+		// the child still applies its own Auto derivation and PARANOID override.
+		const inherited = inheritedSettingFromFlag(pi.getFlag(NETWORK_POLICY_FLAG));
+		if (inherited && !parseNetworkPolicySetting(inherited.configured)) {
+			warnInvalidInheritedPolicy(ctx, inherited.configured);
+		}
+		service.restore(inherited ?? readPersistedSetting(ctx));
 		// Register before the safe-mode query so a `perm:net` ask racing with
 		// startup can still be answered. The provider never asks the hub itself.
 		service.register();

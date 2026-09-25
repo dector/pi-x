@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig, AgentScope } from "./agents.ts";
+import type { NetworkPolicySetting } from "./network-policy.ts";
 import type { SafeMode, SafeModeSnapshot } from "./safe-mode.ts";
 import type { SubagentTiming } from "./timing.ts";
 
@@ -107,12 +108,12 @@ export interface PreparedDispatchItem {
  * A validated dispatch with all run IDs allocated, ready for either blocking
  * execution or detaching into the background (Stage 2+).
  *
- * `cwd`, `dispatchDefaults`, and `safeModeSnapshot` are the configuration
- * values snapshotted at preparation time. Reusing them for every item keeps one
- * dispatch internally consistent and stops later parent context changes (or a
- * second safe-mode query) from leaking into an accepted dispatch. Inherited
- * modes are the intentional exception: model (and, for Inherit All, thinking)
- * are re-read when each child starts.
+ * `cwd`, `dispatchDefaults`, `safeModeSnapshot`, and `networkPolicy` are the
+ * configuration values snapshotted at preparation time. Reusing them for every
+ * item keeps one dispatch internally consistent and stops later parent context
+ * changes (or a second safe-mode query) from leaking into an accepted dispatch.
+ * Inherited modes are the intentional exception: model (and, for Inherit All,
+ * thinking) are re-read when each child starts.
  */
 export interface PreparedSubagentDispatch {
 	dispatchId: string;
@@ -129,6 +130,13 @@ export interface PreparedSubagentDispatch {
 	rewire?: SubagentRewireConfig;
 	cwd: string;
 	safeModeSnapshot?: SafeModeSnapshot;
+	/**
+	 * Parent's configured network policy snapshotted at dispatch preparation
+	 * time, so every child in the dispatch starts from the same configured
+	 * choice. Omitted when the parent could not answer the bounded state query:
+	 * the child then keeps its own Auto default rather than inheriting a guess.
+	 */
+	networkPolicy?: NetworkPolicySetting;
 	items: PreparedDispatchItem[];
 	/**
 	 * Selected RPC transport. Omitted means the default direct-process backend,

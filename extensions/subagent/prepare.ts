@@ -11,11 +11,12 @@
  *   - project-agent permission approval;
  *   - restricted-agent permission approval;
  *   - dispatch/run ID allocation (all items, including later chain steps);
- *   - model/thinking/cwd/safe-mode snapshot.
+ *   - model/thinking/cwd/safe-mode/network-policy snapshot.
  *
  * Failures return a canonical tool result with empty results, so nothing is
- * persisted as a started run and no child is spawned. IDs and the safe-mode
- * snapshot are only resolved after validation and permission succeed.
+ * persisted as a started run and no child is spawned. IDs and the parent
+ * snapshots (safe mode, configured network policy) are only resolved after
+ * validation and permission succeed.
  *
  * All external effects are injected (`PreparationDependencies`) so the path can
  * be unit tested without the Pi runtime. This module intentionally imports only
@@ -25,6 +26,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, AgentDiscoveryResult, AgentScope } from "./agents.ts";
+import type { NetworkPolicySetting } from "./network-policy.ts";
 import { collectRestrictedAgentNames, suggestUnrestrictedAgents } from "./restricted-agent-policy.ts";
 import type { SafeModeSnapshot } from "./safe-mode.ts";
 import type {
@@ -130,6 +132,13 @@ export interface PreparationDependencies {
 	 */
 	requestRestrictedAgentApproval?: RestrictedAgentApprovalCallback;
 	snapshotSafeMode: () => Promise<SafeModeSnapshot | undefined>;
+	/**
+	 * Snapshot the parent's configured network policy so the child can inherit
+	 * it. Resolves `undefined` when permissions-core is absent or cannot answer
+	 * within the bounded query; the flag is then omitted and the child keeps its
+	 * own Auto default. Never allows a policy that was not observed.
+	 */
+	snapshotNetworkPolicy?: () => Promise<NetworkPolicySetting | undefined>;
 	/**
 	 * Validate Herdr and prepare the parent tab before a dispatch is accepted.
 	 * Only called when the request carries `herdr`.
@@ -367,7 +376,12 @@ export async function prepareSubagentDispatch(
 	}));
 
 	const dispatchId = deps.nextDispatchId();
-	const safeModeSnapshot = await deps.snapshotSafeMode();
+	// Both parent snapshots are independent bounded queries, so they run
+	// concurrently: a missing provider costs one timeout, not two.
+	const [safeModeSnapshot, networkPolicy] = await Promise.all([
+		deps.snapshotSafeMode(),
+		deps.snapshotNetworkPolicy?.(),
+	]);
 
 	return {
 		ok: true,
@@ -385,6 +399,7 @@ export async function prepareSubagentDispatch(
 			...(deps.context.rewire ? { rewire: { ...deps.context.rewire } } : {}),
 			cwd: deps.context.cwd,
 			safeModeSnapshot,
+			...(networkPolicy ? { networkPolicy } : {}),
 			items,
 			...(backend ? { backend } : {}),
 			...(herdrRetention ? { herdrRetention } : {}),

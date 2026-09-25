@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, AgentScope } from "./agents.ts";
+import type { NetworkPolicySetting } from "./network-policy.ts";
 import {
 	MAX_PARALLEL_TASKS,
 	prepareSubagentDispatch,
@@ -38,6 +39,13 @@ interface HarnessOptions {
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	safeMode?: SafeModeSnapshot;
+	/**
+	 * Parent's configured network policy. Omitted (or `undefined`) means the
+	 * bounded query found no answer, so the child flag is dropped.
+	 */
+	networkPolicy?: NetworkPolicySetting;
+	/** Omit the injected snapshot dependency entirely, as an older caller would. */
+	withoutNetworkPolicy?: boolean;
 	runIds?: string[];
 	dispatchIds?: string[];
 	/** Injected Herdr preflight result; defaults to a successful `failed` policy. */
@@ -54,6 +62,7 @@ function createHarness(options: HarnessOptions = {}) {
 		permission: [] as Array<{ what: string; data: Record<string, unknown> }>,
 		restrictedApproval: [] as RestrictedAgentApprovalRequest[],
 		safeMode: 0,
+		networkPolicy: 0,
 		nextDispatchId: 0,
 		nextRunId: 0,
 		preflight: [] as HerdrRequest[],
@@ -87,6 +96,15 @@ function createHarness(options: HarnessOptions = {}) {
 			calls.order.push("safe-mode");
 			return options.safeMode;
 		},
+		...(options.withoutNetworkPolicy
+			? {}
+			: {
+					snapshotNetworkPolicy: async () => {
+						calls.networkPolicy += 1;
+						calls.order.push("network-policy");
+						return options.networkPolicy;
+					},
+				}),
 		preflightHerdr: async (request) => {
 			calls.preflight.push(request);
 			calls.order.push("preflight");
@@ -127,6 +145,7 @@ describe("single preparation", () => {
 			model: "anthropic/claude",
 			thinkingLevel: "high",
 			safeMode: { mode: "smart", outerAccess: false },
+			networkPolicy: "allow-all",
 			runIds: ["sa-1"],
 			dispatchIds: ["dispatch-1"],
 		});
@@ -145,11 +164,63 @@ describe("single preparation", () => {
 			dispatchDefaults: { model: "anthropic/claude", thinkingLevel: "high" },
 			cwd: "/work/repo",
 			safeModeSnapshot: { mode: "smart", outerAccess: false },
+			networkPolicy: "allow-all",
 			items: [{ runId: "sa-1", agent: "scout", task: "do it", cwd: "/work/sub" }],
 		});
 		expect(calls.discover).toEqual([{ cwd: "/work/repo", scope: "user" }]);
 		expect(calls.permission).toHaveLength(0);
 		expect(calls.safeMode).toBe(1);
+		// Both parent snapshots run exactly once, alongside each other.
+		expect(calls.networkPolicy).toBe(1);
+		expect(calls.order).toEqual(["run-id", "dispatch-id", "safe-mode", "network-policy"]);
+	});
+
+	test("omits the network policy when the bounded query found nothing", async () => {
+		const { deps, calls } = createHarness({ safeMode: { mode: "yolo", outerAccess: true } });
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		// No policy is invented: the child keeps its own Auto default.
+		expect(result.dispatch.networkPolicy).toBeUndefined();
+		expect("networkPolicy" in result.dispatch).toBe(false);
+		expect(calls.networkPolicy).toBe(1);
+	});
+
+	test("snapshots `auto` without downgrading it to a missing value", async () => {
+		const { deps } = createHarness({ networkPolicy: "auto" });
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.networkPolicy).toBe("auto");
+	});
+
+	test("works without the optional network-policy dependency", async () => {
+		const { deps, calls } = createHarness({ withoutNetworkPolicy: true, safeMode: { mode: "smart", outerAccess: false } });
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.safeModeSnapshot).toEqual({ mode: "smart", outerAccess: false });
+		expect(result.dispatch.networkPolicy).toBeUndefined();
+		expect(calls.networkPolicy).toBe(0);
+	});
+
+	test("gives every child of a dispatch the same snapshotted policy", async () => {
+		const { deps, calls } = createHarness({ networkPolicy: "ask-untrusted", agents: [agent("scout")] });
+		const result = await prepareSubagentDispatch(
+			{ tasks: [{ agent: "scout", task: "a" }, { agent: "scout", task: "b" }] },
+			deps,
+		);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.mode).toBe("parallel");
+		expect(result.dispatch.items).toHaveLength(2);
+		expect(result.dispatch.networkPolicy).toBe("ask-untrusted");
+		// Snapshotted once for the whole dispatch, not per child.
+		expect(calls.networkPolicy).toBe(1);
 	});
 
 	test("snapshots an enabled session rewire", async () => {
@@ -745,6 +816,7 @@ describe("restricted-agent approval", () => {
 			"run-id",
 			"dispatch-id",
 			"safe-mode",
+			"network-policy",
 		]);
 	});
 });
@@ -763,7 +835,7 @@ describe("effect ordering", () => {
 		);
 
 		expect(result.ok).toBe(true);
-		expect(calls.order).toEqual(["run-id", "run-id", "dispatch-id", "safe-mode"]);
+		expect(calls.order).toEqual(["run-id", "run-id", "dispatch-id", "safe-mode", "network-policy"]);
 	});
 
 	test("runs permission before allocating any IDs", async () => {
@@ -775,7 +847,7 @@ describe("effect ordering", () => {
 			dispatchIds: ["d-1"],
 		});
 		await prepareSubagentDispatch({ agent: "worker", task: "t", agentScope: "project" }, deps);
-		expect(calls.order).toEqual(["permission", "run-id", "dispatch-id", "safe-mode"]);
+		expect(calls.order).toEqual(["permission", "run-id", "dispatch-id", "safe-mode", "network-policy"]);
 	});
 });
 
@@ -876,6 +948,6 @@ describe("herdr preparation", () => {
 			{ agent: "worker", task: "t", agentScope: "project", herdr: {} },
 			deps,
 		);
-		expect(calls.order).toEqual(["permission", "preflight", "run-id", "dispatch-id", "safe-mode"]);
+		expect(calls.order).toEqual(["permission", "preflight", "run-id", "dispatch-id", "safe-mode", "network-policy"]);
 	});
 });

@@ -24,6 +24,13 @@ export const PERMISSIONS_CORE_ID = "permissions-core";
 export const PERMISSIONS_CORE_ENTRY_TYPE = "permissions-core-net";
 export const PERM_NET = "perm:net";
 
+/**
+ * Session flag carrying the configured network policy into a child session
+ * (used by the subagent extension, which starts children as fresh
+ * `pi --mode rpc --no-session` processes).
+ */
+export const NETWORK_POLICY_FLAG = "network-policy";
+
 export const HUB_REGISTER_EVENT = "hub:register";
 export const HUB_UNREGISTER_EVENT = "hub:unregister";
 export const HUB_REQUEST_EVENT = "hub:request";
@@ -55,6 +62,20 @@ export interface NetworkPermissionService {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Map a raw `--network-policy` flag value to the restore input.
+ *
+ * `undefined` means the flag was absent, so the caller keeps its persisted
+ * session-branch behavior. A present flag always wins over the session branch
+ * and is passed through unvalidated: `restore` already fails a malformed value
+ * closed to `ask-all`, so a bad flag can never quietly widen the child's policy,
+ * and a present flag never silently reverts to Auto.
+ */
+export function inheritedSettingFromFlag(raw: unknown): PersistedNetworkSetting | undefined {
+	if (raw === undefined) return undefined;
+	return { present: true, configured: raw };
 }
 
 function sameState(a: NetworkPermissionState, b: NetworkPermissionState): boolean {

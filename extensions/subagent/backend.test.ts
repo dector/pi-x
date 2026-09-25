@@ -71,6 +71,34 @@ describe("ProcessSubagentBackend", () => {
 		);
 		expect(child.exited).toBe(true);
 	});
+
+	test("launches the child with the inherited network-policy flag in its argv", async () => {
+		// The flag is added to the shared spawn options, so the real child process
+		// must receive it verbatim. This is the end of the inheritance path for the
+		// direct-process backend.
+		const backend = new ProcessSubagentBackend();
+		const args = [
+			FAKE_CHILD,
+			"--mode",
+			"rpc",
+			"--no-session",
+			"--safe-mode",
+			"smart",
+			"--safe-mode-outer-access",
+			"false",
+			"--network-policy",
+			"allow-all",
+		];
+		const child = await backend.spawn(
+			{ command: process.execPath, args, cwd: import.meta.dir, events: events() },
+			{ runId: "run-args", dispatchId: "dispatch-args", agent: "worker" },
+		);
+		children.push(child);
+		const response = await child.request({ id: "argv", type: "argv" }, 1000);
+		expect(response.success).toBe(true);
+		// The fixture reports its argv after the runtime and script path.
+		expect(response.success && response.data).toEqual(args.slice(1));
+	});
 });
 
 function fakeRpcChild(): RpcChild {
@@ -195,6 +223,29 @@ describe("HerdrSubagentBackend", () => {
 		await child.release?.("success");
 		expect(released).toEqual(["success"]);
 		expect(child.herdr?.retained).toBe(true);
+	});
+
+	test("passes the inherited network-policy flag to the pane-side spawn", async () => {
+		// The Herdr backend transfers the same spawn options, so the inherited
+		// policy must reach the pane-side process too.
+		let launchedArgs: string[] | undefined;
+		const backend = new HerdrSubagentBackend({
+			tab: fakeHerdrTab(fakeLease([]), []),
+			launcher: { assertAvailable: () => {}, launch: async () => {} },
+			createChild: async (options) => {
+				options.beforeSpawn?.();
+				launchedArgs = options.spawn.args;
+				return fakeRpcChild();
+			},
+		});
+
+		const args = ["--mode", "rpc", "--no-session", "--safe-mode", "yolo", "--network-policy", "deny-all"];
+		await backend.spawn(
+			{ command: "pi", args, cwd: "/work", events: events() },
+			{ runId: "sa-args", dispatchId: "dispatch-args", agent: "worker" },
+		);
+
+		expect(launchedArgs).toEqual(args);
 	});
 
 	test("releases the pane as failed when the bridge launch throws", async () => {

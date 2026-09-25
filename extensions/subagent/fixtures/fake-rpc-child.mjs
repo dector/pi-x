@@ -21,6 +21,9 @@ rl.on("line", (line) => {
 		output({ type: "agent_end", willRetry: false, messages: [] });
 	} else if (command.type === "ping") {
 		output({ id: command.id, type: "response", command: "ping", success: true, data: command.value });
+	} else if (command.type === "argv") {
+		// Test seam: report the argv the child was actually launched with.
+		output({ id: command.id, type: "response", command: "argv", success: true, data: process.argv.slice(2) });
 	} else if (command.type === "abort") {
 		output({ id: command.id, type: "response", command: "abort", success: true });
 		output({ type: "agent_end", willRetry: false, messages: [] });

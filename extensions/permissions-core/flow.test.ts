@@ -35,18 +35,22 @@ interface FakePi {
 	events: Bus;
 	entries: Array<{ customType: string; data: unknown }>;
 	lifecycle: Map<string, BusHandler[]>;
+	flags: Map<string, boolean | string | undefined>;
 	on(event: string, handler: BusHandler): void;
 	registerCommand(name: string, options: unknown): void;
 	registerTool(): void;
+	registerFlag(name: string, options: unknown): void;
+	getFlag(name: string): boolean | string | undefined;
 	appendEntry(customType: string, data: unknown): void;
 }
 
-function createFakePi(bus: Bus): FakePi {
+function createFakePi(bus: Bus, flags: Record<string, string | boolean> = {}): FakePi {
 	const lifecycle = new Map<string, BusHandler[]>();
 	const pi: FakePi = {
 		events: bus,
 		entries: [],
 		lifecycle,
+		flags: new Map(Object.entries(flags)),
 		on(event, handler) {
 			const list = lifecycle.get(event) ?? [];
 			list.push(handler);
@@ -54,6 +58,10 @@ function createFakePi(bus: Bus): FakePi {
 		},
 		registerCommand() {},
 		registerTool() {},
+		registerFlag() {},
+		getFlag(name) {
+			return pi.flags.get(name);
+		},
 		appendEntry(customType, data) {
 			pi.entries.push({ customType, data });
 		},

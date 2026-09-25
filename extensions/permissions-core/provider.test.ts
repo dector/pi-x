@@ -5,10 +5,12 @@ import {
 	HUB_REPLY_EVENT,
 	HUB_ASK_EVENT,
 	HUB_UNREGISTER_EVENT,
+	NETWORK_POLICY_FLAG,
 	PERM_NET,
 	PERMISSIONS_CORE_ENTRY_TYPE,
 	PERMISSIONS_CORE_ID,
 	createNetworkPermissionService,
+	inheritedSettingFromFlag,
 } from "./provider.ts";
 
 type Emitted = { channel: string; payload: unknown };
@@ -336,5 +338,57 @@ describe("permissions-core network state", () => {
 			autoEffective: "allow-trusted",
 			overriddenByParanoid: false,
 		});
+	});
+});
+
+describe("inheritedSettingFromFlag", () => {
+	test("an absent flag leaves the persisted-session behavior to the caller", () => {
+		expect(inheritedSettingFromFlag(undefined)).toBeUndefined();
+	});
+
+	test("a present flag is passed through unvalidated", () => {
+		for (const value of [
+			"auto",
+			"deny-all",
+			"ask-all",
+			"allow-trusted",
+			"ask-untrusted",
+			"allow-all",
+			// Present but invalid: `restore` must still fail closed.
+			"bogus",
+			"",
+			7,
+			true,
+			null,
+			{ configured: "allow-all" },
+		]) {
+			expect(inheritedSettingFromFlag(value)).toEqual({ present: true, configured: value });
+		}
+	});
+
+	test("a present flag is restored like a persisted choice", () => {
+		const harness = createHarness();
+		harness.service.restore(inheritedSettingFromFlag("allow-all") ?? { present: false });
+		harness.service.observeSafeMode("smart");
+		expect(harness.service.getState()).toEqual({
+			configured: "allow-all",
+			effective: "allow-all",
+			autoEffective: "ask-untrusted",
+			overriddenByParanoid: false,
+		});
+
+		const invalid = createHarness();
+		invalid.service.restore(inheritedSettingFromFlag("nope") ?? { present: false });
+		invalid.service.observeSafeMode("yolo");
+		expect(invalid.service.getState()).toEqual({
+			configured: "ask-all",
+			effective: "ask-all",
+			autoEffective: "allow-trusted",
+			overriddenByParanoid: false,
+		});
+	});
+
+	test("the child flag name is the documented CLI name", () => {
+		expect(NETWORK_POLICY_FLAG).toBe("network-policy");
 	});
 });

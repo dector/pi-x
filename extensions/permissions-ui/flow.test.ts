@@ -38,9 +38,14 @@ interface FakePi {
 	events: Bus;
 	lifecycle: Map<string, BusHandler[]>;
 	commands: Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>;
+	flags: Map<string, boolean | string | undefined>;
 	on(event: string, handler: BusHandler): void;
 	registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }): void;
 	registerTool(): void;
+	// permissions-core registers its `--network-policy` session flag and reads
+	// it back on session start; this fake only needs the surface to exist.
+	registerFlag(name: string, options: unknown): void;
+	getFlag(name: string): boolean | string | undefined;
 	appendEntry(customType: string, data: unknown): void;
 }
 
@@ -51,6 +56,7 @@ function createFakePi(bus: Bus): FakePi {
 		events: bus,
 		lifecycle,
 		commands,
+		flags: new Map(),
 		on(event, handler) {
 			const list = lifecycle.get(event) ?? [];
 			list.push(handler);
@@ -60,6 +66,10 @@ function createFakePi(bus: Bus): FakePi {
 			commands.set(name, options);
 		},
 		registerTool() {},
+		registerFlag() {},
+		getFlag(name) {
+			return pi.flags.get(name);
+		},
 		appendEntry() {},
 	};
 	return pi;

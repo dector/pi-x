@@ -175,6 +175,7 @@ import {
 	SUBAGENT_REMAINING_DEPTH_ENV,
 } from "./delegation-depth.ts";
 import { appendSafeModeArgs, querySafeModeSnapshot, type SafeModeSnapshot } from "./safe-mode.ts";
+import { appendNetworkPolicyArgs, queryNetworkPolicySnapshot, type NetworkPolicySetting } from "./network-policy.ts";
 import {
 	ActiveSubagentWidget,
 	renderActiveSubagentWidgetContent,
@@ -342,6 +343,7 @@ async function runSingleAgent(
 	const dispatchDefaults = dispatch.dispatchDefaults;
 	const agents = dispatch.agents;
 	const getSafeModeSnapshot = async () => dispatch.safeModeSnapshot;
+	const getNetworkPolicy = async () => dispatch.networkPolicy;
 	const { activeChildren, approvalQueue, parentContext, registry } = runtime;
 	const timing = new SubagentTimingTracker();
 	const agent = agents.find((a) => a.name === agentName);
@@ -444,6 +446,9 @@ async function runSingleAgent(
 
 		safeModeSnapshot = await getSafeModeSnapshot();
 		appendSafeModeArgs(args, safeModeSnapshot);
+		// The configured network policy is inherited through the shared child
+		// argv, so the direct-process and Herdr backends both pass it on.
+		appendNetworkPolicyArgs(args, await getNetworkPolicy());
 		currentResult.inheritedMode = safeModeSnapshot?.mode;
 		currentResult.effectiveMode = safeModeSnapshot?.mode;
 		currentResult.outerAccess = safeModeSnapshot?.outerAccess;
@@ -876,6 +881,10 @@ export default function (pi: ExtensionAPI) {
 	// matches the default agentScope. Computed once at registration; the agent
 	// list is re-discovered per invocation for actual execution.
 	const getSafeModeSnapshot = () => querySafeModeSnapshot(pi.events);
+	// The parent's configured network policy, read through the same bounded
+	// read-only state contract permissions-core publishes. Absent permissions-core
+	// resolves `undefined`, so the child flag is simply omitted.
+	const snapshotNetworkPolicy = (): Promise<NetworkPolicySetting | undefined> => queryNetworkPolicySnapshot(pi.events);
 	const activeChildren = new Set<RpcChild>();
 	const approvalQueue = new ApprovalQueue();
 
@@ -2510,6 +2519,7 @@ export default function (pi: ExtensionAPI) {
 						pi.events,
 					),
 				snapshotSafeMode: getSafeModeSnapshot,
+				snapshotNetworkPolicy,
 				preflightHerdr: async (herdr) => {
 					const result = await runHerdrPreflight(ctx.sessionManager.getSessionId());
 					if (!result.ok) return result;
