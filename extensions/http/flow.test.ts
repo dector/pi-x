@@ -148,6 +148,8 @@ interface CapResult {
 let askCounter = 0;
 
 // Ask the hub for a `perm:tool` decision exactly like safe-mode's tool_call hook.
+// `outerAccess` is passed through verbatim so tests can also prove that a
+// malformed value fails closed to `false` in the provider.
 async function askPermTool(
 	bus: Bus,
 	toolName: string,
@@ -155,6 +157,7 @@ async function askPermTool(
 	mode = "smart",
 	toolCallId?: string,
 	timeoutMs = 3000,
+	options: { outerAccess?: unknown } = {},
 ): Promise<CapResult> {
 	const id = `ask-tool-${++askCounter}`;
 	return await new Promise<CapResult>((resolve, reject) => {
@@ -179,7 +182,7 @@ async function askPermTool(
 			cap: [
 				{
 					what: "perm:tool",
-					data: { toolName, input, mode, projectRoot: PROJECT_ROOT, outerAccess: false, toolCallId },
+					data: { toolName, input, mode, projectRoot: PROJECT_ROOT, outerAccess: options.outerAccess ?? false, toolCallId },
 				},
 			],
 		});
@@ -405,6 +408,99 @@ describe("http tools consume perm:net (Stage 3)", () => {
 		// http_md to-file spill always requires approval.
 		expect(
 			await askPermTool(bus, "http_md", { url: "https://example.com", spillMode: "to_file" }, "yolo"),
+		).toMatchObject({ action: "confirm" });
+	});
+
+	test("yolo+ (outerAccess) allows inside and outside output while perm:net stays allow", async () => {
+		// A fixed `perm:net` provider isolates the network layer: it always allows.
+		const { bus, emitted } = await createHarness({
+			core: false,
+			safeMode: "yolo",
+			beforeSession: (b) => {
+				registerNetProvider(b, "net-allow", "allow");
+				b.emit("hub:register", { id: "net-allow", caps: { provide: ["perm:net"] } });
+			},
+		});
+		const yoloPlus = { outerAccess: true } as const;
+
+		// Network layer on its own: allow.
+		const before = countNetAsks(emitted);
+		expect(await askPermTool(bus, "http", { url: "https://example.com" }, "yolo", undefined, 3000, yoloPlus)).toMatchObject({
+			action: "allow",
+		});
+		expect(countNetAsks(emitted)).toBe(before + 1);
+
+		// Inside project root: filesystem allow + network allow => allow.
+		expect(
+			await askPermTool(bus, "http", { url: "https://example.com", outputFile: "download.txt" }, "yolo", undefined, 3000, yoloPlus),
+		).toMatchObject({ action: "allow" });
+
+		// Outside project root: yolo+ keeps the network allow, so the merged decision is allow.
+		expect(
+			await askPermTool(
+				bus,
+				"http",
+				{ url: "https://example.com", outputFile: "/tmp/pi-yolo-plus.txt" },
+				"yolo",
+				undefined,
+				3000,
+				yoloPlus,
+			),
+		).toMatchObject({ action: "allow" });
+		expect(
+			await askPermTool(
+				bus,
+				"http",
+				{ curlArgs: ["-o", "/tmp/pi-yolo-plus.txt", "https://example.com"] },
+				"yolo",
+				undefined,
+				3000,
+				yoloPlus,
+			),
+		).toMatchObject({ action: "allow" });
+
+		// Plain yolo (outerAccess=false) still asks for the same outside output.
+		expect(
+			await askPermTool(
+				bus,
+				"http",
+				{ url: "https://example.com", outputFile: "/tmp/pi-yolo-plus.txt" },
+				"yolo",
+				undefined,
+				3000,
+				{ outerAccess: false },
+			),
+		).toMatchObject({ action: "confirm" });
+
+		// A malformed flag fails closed to false.
+		expect(
+			await askPermTool(
+				bus,
+				"http",
+				{ url: "https://example.com", outputFile: "/tmp/pi-yolo-plus.txt" },
+				"yolo",
+				undefined,
+				3000,
+				{ outerAccess: "true" },
+			),
+		).toMatchObject({ action: "confirm" });
+
+		// smart + yolo+ flag is not yolo+, so file output still asks.
+		expect(
+			await askPermTool(
+				bus,
+				"http",
+				{ url: "https://example.com", outputFile: "/tmp/pi-yolo-plus.txt" },
+				"smart",
+				undefined,
+				3000,
+				yoloPlus,
+			),
+		).toMatchObject({ action: "confirm" });
+
+		// http_md to_file is unchanged by outerAccess.
+		expect(
+			await askPermTool(bus, "http_md", { url: "https://example.com", spillMode: "to_file" }, "yolo", undefined, 3000, yoloPlus),
 		).toMatchObject({ action: "confirm" });
 	});
 

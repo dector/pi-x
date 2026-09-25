@@ -150,6 +150,19 @@ rules for `http`, `http_md`, and `web_search` (output files, memfs reads). The
 actual network decision is requested from `permissions-core` through the hub
 `perm:net` capability, so method trust and policy live in one place.
 
+Filesystem rules for `http` output files (`outputFile`, `curlArgs` `-o`,
+`curlArgs` `--output`), by safe-mode mode:
+
+| Mode | Inside project root | Outside project root |
+|---|---|---|
+| `reader` / `smart` | ask | ask |
+| `yolo` | allow | ask |
+| `yolo+` (`yolo` with `outerAccess=true`) | allow | allow |
+
+A missing or malformed `outerAccess` in the `perm:tool` data fails closed to
+`false`, so the outside-project ask stays. `http_md` `spillMode: "to_file"`
+keeps requiring approval in every mode, including `yolo+`.
+
 Classification is not enforcement. Because the nested `perm:tool -> perm:net`
 flow only runs when safe-mode *and* the hub are present, each real network
 operation also requires a one-time execution authorization ticket:

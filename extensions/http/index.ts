@@ -1693,6 +1693,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 		mode: string,
 		projectRoot: string,
 		toolCallId: string | undefined,
+		outerAccess: boolean,
 	): Promise<{ decision: HttpPermissionDecision; summary: string; ticket?: PreflightTicket }> => {
 		const fallbackSummary = summarizeHttpPermissionCall(toolName, input);
 
@@ -1718,7 +1719,7 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			action: "block" as const,
 			reason: "Network permission provider is unavailable, timed out, or returned an invalid decision.",
 		};
-		const filesystem = classifyHttpFilesystemCall({ toolName, input, mode, projectRoot });
+		const filesystem = classifyHttpFilesystemCall({ toolName, input, mode, projectRoot, outerAccess });
 		const decision = mergeHttpDecisions(filesystem, network);
 		const ticket =
 			toolCallId && decision.action !== "block" ? { toolCallId, toolName, fingerprint: preflight.fingerprint } : undefined;
@@ -1751,10 +1752,12 @@ export default function httpExtension(pi: ExtensionAPI): void {
 			const mode = typeof data.mode === "string" ? data.mode : "smart";
 			const projectRoot = typeof data.projectRoot === "string" ? data.projectRoot : process.cwd();
 			const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
+			// Fail closed: a missing or malformed flag keeps the project-root safeguard.
+			const outerAccess = data.outerAccess === true;
 
 			let outcome: { decision: HttpPermissionDecision; summary: string; ticket?: PreflightTicket };
 			try {
-				outcome = await classifyHttpCall(toolName, input, mode, projectRoot, toolCallId);
+				outcome = await classifyHttpCall(toolName, input, mode, projectRoot, toolCallId, outerAccess);
 			} catch {
 				outcome = {
 					decision: { action: "block", reason: "Failed to classify HTTP request." },

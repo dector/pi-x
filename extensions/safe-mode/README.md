@@ -103,7 +103,8 @@ these tools via `perm:tool`.
 - Invalid URLs or methods block instead of prompting; malformed requests never become approvals.
 - `http_md` with `spillMode: "to_file"` requires approval.
 - `http` file output (`outputFile`, `curlArgs` `-o`, or `curlArgs` `--output`) requires approval in `reader`/`smart`.
-- In `yolo`, `http` file output is allowed only inside the project root; outside-project output still requires approval, including in `YOLO!`.
+- In `yolo`, `http` file output is allowed inside the project root and asks for outside-project output.
+- In `YOLO!` (`yolo` with `outerAccess=true`), `http` file output is allowed both inside and outside the project root. This is the only `http` output-file case that skips the outside-project approval; `YOLO!` still does not relax the `http_md` `spillMode: "to_file"` approval.
 
 ### Execution authorization handoff
 
@@ -139,6 +140,8 @@ Legend: ✅ auto-allow, ❓ asks for approval.
 | read-only `bash` **inside repo** | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | read-only `bash` targeting **outside repo** | ❓ | ❓* | ✅ | ❓* | ✅ | ❓ | ✅ |
 | `http`/`http_md`/`web_search` memoryfs read | ❓ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `http` output file **inside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ | ✅ |
+| `http` output file **outside repo** | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ✅ |
 | `http_md` `spillMode: "to_file"` | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ |
 
 Notes:

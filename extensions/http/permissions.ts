@@ -15,6 +15,12 @@ export type HttpPermissionInput = {
 	input: Record<string, unknown>;
 	mode: string;
 	projectRoot: string;
+	/**
+	 * Safe-mode's outside-project access flag (`yolo+` and friends). Missing or
+	 * malformed values must fail closed to `false`, which keeps the project-root
+	 * safeguard in place.
+	 */
+	outerAccess?: boolean;
 };
 
 export function isHttpPermissionTool(toolName: string): boolean {
@@ -41,7 +47,7 @@ export function isMemoryFsReadToolCall(toolName: string, input: Record<string, u
  * deliberately not duplicated here.
  */
 export function classifyHttpFilesystemCall(args: HttpPermissionInput): HttpPermissionDecision | undefined {
-	const { toolName, input, mode, projectRoot } = args;
+	const { toolName, input, mode, projectRoot, outerAccess } = args;
 	if (!HTTP_PERMISSION_TOOLS.has(toolName)) return undefined;
 
 	if (isMemoryFsReadToolCall(toolName, input)) return { action: "allow" };
@@ -53,7 +59,11 @@ export function classifyHttpFilesystemCall(args: HttpPermissionInput): HttpPermi
 	if (toolName === "http") {
 		const outputFile = getHttpOutputFile(input);
 		if (outputFile) {
-			if (mode === "yolo" && isPathInsideProject(outputFile, projectRoot)) return { action: "allow" };
+			// `yolo+` is `yolo` with outside-project access, so it allows output
+			// anywhere. Plain `yolo` still keeps the project-root boundary.
+			if (mode === "yolo" && (outerAccess === true || isPathInsideProject(outputFile, projectRoot))) {
+				return { action: "allow" };
+			}
 			return {
 				action: "confirm",
 				reason:

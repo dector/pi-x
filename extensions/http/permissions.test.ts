@@ -7,8 +7,14 @@ import {
 
 const PROJECT_ROOT = "/tmp/pi-http-project";
 
-function decide(mode: string, toolName: string, input: Record<string, unknown>, projectRoot = PROJECT_ROOT) {
-	return classifyHttpFilesystemCall({ toolName, input, mode, projectRoot });
+function decide(
+	mode: string,
+	toolName: string,
+	input: Record<string, unknown>,
+	projectRoot = PROJECT_ROOT,
+	outerAccess?: boolean,
+) {
+	return classifyHttpFilesystemCall({ toolName, input, mode, projectRoot, outerAccess });
 }
 
 test("isHttpPermissionTool: recognizes only the network tools", () => {
@@ -81,4 +87,49 @@ test("classifyHttpFilesystemCall: http output-file safeguards", () => {
 
 test("classifyHttpFilesystemCall: ignores non-http tools", () => {
 	expect(classifyHttpFilesystemCall({ toolName: "bash", input: {}, mode: "smart", projectRoot: PROJECT_ROOT })).toBeUndefined();
+});
+
+test("classifyHttpFilesystemCall: yolo+ (outerAccess) allows output outside the project", () => {
+	// (a) yolo + outerAccess=true + outside output => allow.
+	expect(decide("yolo", "http", { url: "https://example.com", outputFile: "/tmp/download.txt" }, PROJECT_ROOT, true)).toEqual({
+		action: "allow",
+	});
+	expect(decide("yolo", "http", { curlArgs: ["-o", "/tmp/download.txt", "https://example.com"] }, PROJECT_ROOT, true)).toEqual({
+		action: "allow",
+	});
+	expect(decide("yolo", "http", { curlArgs: ["--output=/tmp/download.txt", "https://example.com"] }, PROJECT_ROOT, true)).toEqual({
+		action: "allow",
+	});
+
+	// (b) yolo + outerAccess=false + outside output => confirm.
+	for (const outerAccess of [false, undefined]) {
+		expect(decide("yolo", "http", { outputFile: "/tmp/download.txt" }, PROJECT_ROOT, outerAccess)).toMatchObject({
+			action: "confirm",
+		});
+	}
+
+	// (c) yolo + outerAccess=true + inside output => allow.
+	expect(decide("yolo", "http", { outputFile: "download.txt" }, PROJECT_ROOT, true)).toEqual({ action: "allow" });
+
+	// (d) smart + outerAccess=true + output => still confirm, inside or outside.
+	expect(decide("smart", "http", { outputFile: "download.txt" }, PROJECT_ROOT, true)).toMatchObject({ action: "confirm" });
+	expect(decide("smart", "http", { outputFile: "/tmp/download.txt" }, PROJECT_ROOT, true)).toMatchObject({ action: "confirm" });
+	expect(decide("reader", "http", { outputFile: "/tmp/download.txt" }, PROJECT_ROOT, true)).toMatchObject({ action: "confirm" });
+});
+
+test("classifyHttpFilesystemCall: malformed outerAccess fails closed to false", () => {
+	// (e) Only the literal boolean `true` opens outside-project output.
+	for (const outerAccess of [undefined, false, "true", 1, {}, null] as unknown[]) {
+		const args = { toolName: "http", input: { outputFile: "/tmp/download.txt" }, mode: "yolo", projectRoot: PROJECT_ROOT };
+		expect(classifyHttpFilesystemCall({ ...args, outerAccess: outerAccess as boolean })).toMatchObject({
+			action: "confirm",
+		});
+	}
+});
+
+test("classifyHttpFilesystemCall: outerAccess does not change http_md to-file or memfs rules", () => {
+	expect(decide("yolo", "http_md", { spillMode: "to_file" }, PROJECT_ROOT, true)).toMatchObject({ action: "confirm" });
+	expect(decide("yolo", "http", { memfs: { id: "mem-1" } }, PROJECT_ROOT, false)).toEqual({ action: "allow" });
+	// No output file => no filesystem opinion, whatever the flag says.
+	expect(decide("yolo", "http", { url: "https://example.com" }, PROJECT_ROOT, true)).toBeUndefined();
 });
