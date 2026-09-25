@@ -342,10 +342,10 @@ const SAFE_MODE_PILL_COLORS: Record<string, { bg: string; fg: string }> = {
 	PARANOID: { bg: "#284d80", fg: "#c1d9ff" },
 	READER: { bg: "#215d39", fg: "#bce4c5" },
 	YOLO: { bg: "#d70000", fg: "#ffe0e0" },
-	DGR: { bg: "88", fg: "#d38f8f" },
+	"󰕥": { bg: "88", fg: "#d38f8f" },
 };
 
-/** Render a rounded badge; colors are #rrggbb or an ANSI-256 index (for DGR's red). */
+/** Render a rounded badge; colors are #rrggbb or an ANSI-256 index (for the shield's red). */
 export function renderStatusPill(text: string, bg: string, fg: string): string {
 	const rgb = (hex: string): string => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(";");
 	const color = (hexOrIndex: string, channel: 38 | 48): string =>
@@ -381,7 +381,7 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const baseMode = mode.replace(/\+$/, "");
 	const pillColors = Object.hasOwn(SAFE_MODE_PILL_COLORS, baseMode) ? SAFE_MODE_PILL_COLORS[baseMode] : undefined;
 	const safeModeLabel = pillColors
-		? renderStatusPill(`${BORDER_SAFE_MODE_ICON}${mode}`, pillColors.bg, pillColors.fg)
+		? renderStatusPill(mode === "󰕥" ? mode : `${BORDER_SAFE_MODE_ICON}${mode}`, pillColors.bg, pillColors.fg)
 		: hasVisibleText(args.statusLabel)
 			? decorateBorderSafeModeLabel(args.statusLabel, args.borderColor)
 			: undefined;

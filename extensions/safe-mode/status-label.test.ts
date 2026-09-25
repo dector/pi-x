@@ -6,8 +6,8 @@ const ctx = {
 	ui: { theme: { fg: (_color: string, label: string) => label } },
 } as unknown as ExtensionContext;
 
-test("status bar shows DGR for yolo+", () => {
-	expect(styleMode(ctx, "yolo", true)).toBe("\x1b[48;5;88;38;2;211;143;143mDGR\x1b[0m");
+test("status bar shows only a shield for yolo+", () => {
+	expect(styleMode(ctx, "yolo", true)).toBe("\x1b[48;5;88;38;2;211;143;143m󰕥\x1b[0m");
 	expect(styleMode(ctx, "yolo", false)).toBe("YOLO");
 	expect(styleMode(ctx, "smart", true)).toBe("SMART+");
 	expect(styleMode(ctx, "reader", true)).toBe("READER+");
