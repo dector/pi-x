@@ -6,7 +6,12 @@ import {
 	type RewirePresetListNavigationKey,
 	type RewirePresetListResult,
 } from "./rewire-preset-list.ts";
-import type { RewirePreset } from "./rewire-presets.ts";
+import {
+	INHERIT_ALL_REWIRE_PRESET,
+	INHERIT_REWIRE_PRESET,
+	withInheritRewirePreset,
+	type RewirePreset,
+} from "./rewire-presets.ts";
 
 const ESC = "\x1b";
 const UP = "\x1b[A";
@@ -70,6 +75,20 @@ describe("RewirePresetListView", () => {
 		const cancellation = makeView();
 		cancellation.view.handleInput(ESC);
 		expect(cancellation.results).toEqual([{ type: "cancel" }]);
+	});
+
+	test("keeps the built-in Inherit entries first and locked", () => {
+		const { view, results } = makeView(withInheritRewirePreset(presets));
+		expect(view.selectedIndex).toBe(0);
+		view.handleInput("d");
+		expect(results).toEqual([]);
+		view.handleInput(ENTER);
+		expect(results).toEqual([{ type: "select", index: 0 }]);
+		const output = view.render(80).join("\n");
+		expect(output).toContain("Inherit model");
+		expect(output).toContain("Inherit All");
+		expect(INHERIT_REWIRE_PRESET.model).toBe("inherit");
+		expect(INHERIT_ALL_REWIRE_PRESET.model).toBe("inherit-all");
 	});
 
 	test("empty lists ignore apply and delete", () => {

@@ -193,6 +193,11 @@ function isBridgeFrame(value: unknown): value is HerdrBridgeFrame {
 
 export interface HerdrBridgeChildOptions {
 	spawn: SpawnRpcChildOptions;
+	/**
+	 * Invoked after the bridge handshake and immediately before the welcome
+	 * frame that launches the pane-side Pi child. Used for live parent state.
+	 */
+	beforeSpawn?: () => void;
 	/** Launch the pane bridge with the socket/token bootstrap. */
 	launch: (bootstrap: HerdrBridgeBootstrap) => Promise<void>;
 	connectTimeoutMs?: number;
@@ -385,6 +390,13 @@ export async function createHerdrBridgeChild(options: HerdrBridgeChildOptions): 
 		throw error;
 	}
 
+	try {
+		options.beforeSpawn?.();
+	} catch (error) {
+		accepted.destroy();
+		cleanup();
+		throw error;
+	}
 	accepted.write(
 		encodeFrame({
 			type: "welcome",

@@ -1110,7 +1110,8 @@ function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload 
 		typeof maybe.model === "string" &&
 		maybe.model.trim().length > 0 &&
 		typeof maybe.thinkingLevel === "string" &&
-		maybe.thinkingLevel.trim().length > 0
+		maybe.thinkingLevel.trim().length > 0 &&
+		(maybe.inherit === undefined || typeof maybe.inherit === "boolean")
 	);
 }
 
@@ -1906,6 +1907,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 										rewireTarget.thinkingLevel,
 										providerAliases,
 										modelAliases,
+										rewireTarget.inherit,
 									),
 								)
 							: undefined;
@@ -2215,7 +2217,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.rewireSet, (payload) => {
 		if (!isRewireSetPayload(payload)) return;
-		rewireTarget = { model: payload.model.trim(), thinkingLevel: payload.thinkingLevel.trim() };
+		rewireTarget = {
+			model: payload.model.trim(),
+			thinkingLevel: payload.thinkingLevel.trim(),
+			...(payload.inherit ? { inherit: true } : {}),
+		};
 		requestRender();
 	});
 

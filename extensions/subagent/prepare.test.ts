@@ -171,6 +171,47 @@ describe("single preparation", () => {
 		expect(result.dispatch.rewire).not.toBe(deps.context.rewire);
 	});
 
+	test("snapshots an inherited rewire without freezing its model", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		deps.context.rewire = {
+			enabled: true,
+			model: "parent/model",
+			thinkingLevel: "high",
+			inherit: true,
+		};
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.rewire).toEqual({
+			enabled: true,
+			model: "parent/model",
+			thinkingLevel: "high",
+			inherit: true,
+		});
+		expect(result.dispatch.rewire).not.toBe(deps.context.rewire);
+	});
+
+	test("preserves Inherit All mode in the prepared snapshot", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		deps.context.rewire = {
+			enabled: true,
+			model: "parent/model",
+			thinkingLevel: "high",
+			inheritAll: true,
+		};
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.dispatch.rewire).toEqual({
+			enabled: true,
+			model: "parent/model",
+			thinkingLevel: "high",
+			inheritAll: true,
+		});
+	});
+
 	test("defaults to user scope and omits undefined snapshots", async () => {
 		const { deps, calls } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
 		const result = await prepareSubagentDispatch({ agent: "scout", task: "t" }, deps);

@@ -81,8 +81,17 @@ export interface DispatchDefaults {
 /** Session-only model/thinking override applied to every agent profile. */
 export interface SubagentRewireConfig {
 	enabled: boolean;
+	/**
+	 * Fixed target model. When `inherit` is true this is only a display/fallback
+	 * value; the model is resolved from the parent immediately before each child
+	 * starts.
+	 */
 	model: string;
 	thinkingLevel: ThinkingLevel;
+	/** Use the parent's currently active model for this rewire. */
+	inherit?: boolean;
+	/** Also use the parent's currently active thinking level. Takes priority over `inherit`. */
+	inheritAll?: boolean;
 }
 
 /** One fully-allocated task in a prepared dispatch. */
@@ -101,7 +110,9 @@ export interface PreparedDispatchItem {
  * `cwd`, `dispatchDefaults`, and `safeModeSnapshot` are the configuration
  * values snapshotted at preparation time. Reusing them for every item keeps one
  * dispatch internally consistent and stops later parent context changes (or a
- * second safe-mode query) from leaking into an accepted dispatch.
+ * second safe-mode query) from leaking into an accepted dispatch. Inherited
+ * modes are the intentional exception: model (and, for Inherit All, thinking)
+ * are re-read when each child starts.
  */
 export interface PreparedSubagentDispatch {
 	dispatchId: string;
@@ -111,7 +122,10 @@ export interface PreparedSubagentDispatch {
 	projectAgentsDir: string | null;
 	agents: AgentConfig[];
 	dispatchDefaults: DispatchDefaults;
-	/** Session rewire snapshotted at dispatch preparation time. */
+	/**
+	 * Session rewire snapshotted at dispatch preparation time. Inherited
+	 * model/thinking selection is resolved at child start.
+	 */
 	rewire?: SubagentRewireConfig;
 	cwd: string;
 	safeModeSnapshot?: SafeModeSnapshot;

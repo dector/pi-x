@@ -125,6 +125,35 @@ function fakeHerdrTab(
 }
 
 describe("HerdrSubagentBackend", () => {
+	test("runs the launch hook after pane acquisition and before bridge launch", async () => {
+		let modelAtLaunch = "before";
+		let launchedArgs: string[] | undefined;
+		const lease = fakeLease([], "w1:p2");
+		const tab = fakeHerdrTab(lease, []);
+		const originalAcquire = tab.acquire;
+		tab.acquire = async (...args) => {
+			modelAtLaunch = "after";
+			return originalAcquire(...args);
+		};
+		const backend = new HerdrSubagentBackend({
+			tab,
+			launcher: { assertAvailable: () => {}, launch: async () => {} },
+			createChild: async (options) => {
+				options.beforeSpawn?.();
+				launchedArgs = options.spawn.args;
+				return fakeRpcChild();
+			},
+		});
+
+		await backend.spawn(
+			{ command: "pi", args: ["--mode", "rpc"], cwd: "/work", events: events() },
+			{ runId: "sa-1", dispatchId: "dispatch-1", agent: "worker" },
+			(options) => options.args.push("--model", modelAtLaunch),
+		);
+
+		expect(launchedArgs).toEqual(["--mode", "rpc", "--model", "after"]);
+	});
+
 	test("leases a pane, launches the bridge, and releases with the run outcome", async () => {
 		const released: string[] = [];
 		const acquired: Array<{ run: PreparedDispatchItem; options?: HerdrAcquireOptions }> = [];
@@ -140,6 +169,7 @@ describe("HerdrSubagentBackend", () => {
 			},
 			createChild: async (options) => {
 				childOptions = options;
+				options.beforeSpawn?.();
 				await options.launch({ socketPath: "/tmp/s.sock", tokenFile: "/tmp/tok", token: "secret" });
 				return fakeRpcChild();
 			},
@@ -197,6 +227,7 @@ describe("HerdrSubagentBackend", () => {
 			tab: fakeHerdrTab(fakeLease(released), acquired),
 			launcher: { assertAvailable: () => {}, launch: async () => {} },
 			createChild: async (options) => {
+				options.beforeSpawn?.();
 				await options.launch({ socketPath: "/tmp/s.sock", tokenFile: "/tmp/tok", token: "secret" });
 				return fakeRpcChild();
 			},

@@ -145,14 +145,27 @@ import {
 	addRewirePreset,
 	deleteRewirePreset,
 	formatRewirePreset,
+	isInheritAllRewirePreset,
+	isInheritRewirePreset,
 	latestUsedRewirePreset,
 	loadRewirePresets,
 	markRewirePresetUsed,
 	rewirePresetsPath,
 	saveRewirePresets,
+	withInheritRewirePreset,
 	type RewirePreset,
 } from "./rewire-presets.ts";
-import { availableThinkingLevels, resolveSubagentModel, THINKING_LEVELS } from "./rewire.ts";
+import {
+	availableThinkingLevels,
+	isInheritedRewire,
+	isInheritAllRewire,
+	REWIRE_INHERIT_ALL_LABEL,
+	REWIRE_INHERIT_ALL_MODEL,
+	REWIRE_INHERIT_MODEL,
+	REWIRE_INHERIT_MODEL_LABEL,
+	resolveSubagentModel,
+	THINKING_LEVELS,
+} from "./rewire.ts";
 import {
 	canDelegate,
 	childSubagentDepth,
@@ -169,6 +182,7 @@ import {
 import { SubagentTimingTracker } from "./timing.ts";
 import { withUserWait, type UserWaitEventBus } from "./user-wait.ts";
 import type {
+	DispatchDefaults,
 	PreparedSubagentDispatch,
 	SingleResult,
 	SubagentBackendKind,
@@ -261,6 +275,31 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+/**
+ * Clamp an inherited effort to the detected model before it becomes child argv.
+ * The parent and child can be on different models in a queued dispatch, so its
+ * current level is not necessarily supported by the inherited target.
+ */
+function clampInheritedThinkingLevel(
+	ctx: ExtensionContext,
+	model: string | undefined,
+	level: DispatchDefaults["thinkingLevel"],
+): DispatchDefaults["thinkingLevel"] {
+	if (!level || !model) return level;
+	try {
+		const slash = model.indexOf("/");
+		const metadata =
+			slash > 0 ? ctx.modelRegistry.find(model.slice(0, slash), model.slice(slash + 1)) : undefined;
+		if (!metadata) return level;
+		const levels = availableThinkingLevels(metadata);
+		if (levels.includes(level)) return level;
+		return levels.includes("medium") ? "medium" : levels[0] ?? "off";
+	} catch {
+		// A stale/unavailable registry must not prevent the child from starting.
+		return level;
+	}
+}
+
 interface SingleAgentRuntimeDependencies {
 	activeChildren: Set<RpcChild>;
 	approvalQueue: ApprovalQueue;
@@ -282,6 +321,11 @@ interface SingleAgentRuntimeDependencies {
 	emitProgressRelay?: (channel: string, payload: Record<string, unknown>) => void;
 	/** Remaining recursive delegation budget inherited by each spawned child. */
 	delegationDepth: number;
+	/**
+	 * Read the parent model now, rather than relying on the dispatch-time
+	 * snapshot. Used only by an inherited rewire when a child is about to start.
+	 */
+	getCurrentDispatchDefaults?: () => DispatchDefaults;
 }
 
 async function runSingleAgent(
@@ -341,11 +385,6 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "rpc", "--no-session"];
 	let safeModeSnapshot: SafeModeSnapshot | undefined;
-	const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, dispatch.rewire);
-	const model = resolvedModel.model;
-	if (model) args.push("--model", model);
-	const thinkingLevel = resolvedModel.thinkingLevel;
-	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	const childTools = withProgressTool(agent.tools, runtime.hasProgressTool);
 	if (childTools && childTools.length > 0) args.push("--tools", childTools.join(","));
 
@@ -361,8 +400,6 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
-		model,
-		thinkingLevel,
 		step,
 		runId,
 		state: "starting",
@@ -586,14 +623,47 @@ async function runSingleAgent(
 				},
 			},
 		};
-		child = await backend.spawn(spawnOptions, {
+		let modelArgsResolved = false;
+		const resolveModelAtLaunch = (): void => {
+			if (modelArgsResolved) return;
+			modelArgsResolved = true;
+			// Resolve at the backend's true launch boundary. Herdr may wait for a
+			// pane after this function starts, so reading the parent before
+			// `backend.spawn()` would still be too early.
+			let currentDispatchDefaults = dispatchDefaults;
+			if (dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire)) {
+				try {
+					currentDispatchDefaults = runtime.getCurrentDispatchDefaults?.() ?? dispatchDefaults;
+				} catch {
+					// A replaced/stale context is handled by the dispatch snapshot.
+				}
+			}
+			const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, dispatch.rewire, currentDispatchDefaults);
+			const thinkingLevel =
+				dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire)
+					? clampInheritedThinkingLevel(runtime.parentContext, resolvedModel.model, resolvedModel.thinkingLevel)
+					: resolvedModel.thinkingLevel;
+			if (resolvedModel.model) spawnOptions.args.push("--model", resolvedModel.model);
+			if (thinkingLevel) spawnOptions.args.push("--thinking", thinkingLevel);
+			currentResult.model = resolvedModel.model;
+			currentResult.thinkingLevel = thinkingLevel;
+		};
+		const backendContext = {
 			runId,
 			dispatchId: dispatch.dispatchId,
 			agent: agent.name,
 			task,
 			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 			...(chainKey ? { chainKey } : {}),
-		});
+		};
+		const inheritedAtLaunch = dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire);
+		// Fixed rewires are dispatch snapshots. Resolve them before the backend
+		// call and retain the historical two-argument backend contract; only an
+		// inherited target needs a transport-aware launch hook.
+		if (!inheritedAtLaunch) resolveModelAtLaunch();
+		child = inheritedAtLaunch
+			? await backend.spawn(spawnOptions, backendContext, resolveModelAtLaunch)
+			: await backend.spawn(spawnOptions, backendContext);
 		if (dispatch.backend) currentResult.backend = dispatch.backend;
 		if (child.herdr) currentResult.herdr = child.herdr;
 		activeChildren.add(child);
@@ -811,23 +881,54 @@ export default function (pi: ExtensionAPI) {
 
 	let sessionContext: ExtensionContext | undefined;
 	let shuttingDown = false;
-	// Session-only. Agent files are never modified, and accepted dispatches keep
-	// the snapshot they were prepared with even if this changes later.
+	// Session-only. Agent files are never modified, and fixed accepted dispatches
+	// keep the snapshot they were prepared with. Inherited rewires intentionally
+	// re-read only the model when each child starts.
 	let rewireConfig: SubagentRewireConfig | undefined;
 	const presetFilePath = rewirePresetsPath(getAgentDir());
-	const defaultRewireConfig = (ctx: ExtensionContext): SubagentRewireConfig | undefined =>
-		ctx.model
+	/**
+	 * Read the live parent model/effort. Extension contexts expose getters, but
+	 * an async dispatch can outlive the context that accepted it; in that case
+	 * each read fails closed and callers can use their dispatch snapshot.
+	 */
+	const readCurrentDispatchDefaults = (ctx: ExtensionContext): DispatchDefaults => {
+		let model: string | undefined;
+		try {
+			model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+		} catch {
+			model = undefined;
+		}
+		let thinkingLevel: DispatchDefaults["thinkingLevel"];
+		try {
+			thinkingLevel = (ctx as ExtensionContext & { thinkingLevel?: DispatchDefaults["thinkingLevel"] }).thinkingLevel;
+		} catch {
+			thinkingLevel = undefined;
+		}
+		if (thinkingLevel === undefined) {
+			try {
+				thinkingLevel = pi.getThinkingLevel();
+			} catch {
+				thinkingLevel = undefined;
+			}
+		}
+		return { model, thinkingLevel };
+	};
+	const defaultRewireConfig = (ctx: ExtensionContext): SubagentRewireConfig | undefined => {
+		const current = readCurrentDispatchDefaults(ctx);
+		return current.model
 			? {
 					enabled: false,
-					model: `${ctx.model.provider}/${ctx.model.id}`,
-					thinkingLevel: ctx.thinkingLevel ?? "off",
+					model: current.model,
+					thinkingLevel: current.thinkingLevel ?? "off",
 				}
 			: undefined;
+	};
 	const publishRewireStatus = (): void => {
 		if (rewireConfig?.enabled) {
 			pi.events.emit(STATUS_BAR_REWIRE_SET_EVENT, {
 				model: rewireConfig.model,
 				thinkingLevel: rewireConfig.thinkingLevel,
+				...(isInheritedRewire(rewireConfig) ? { inherit: true } : {}),
 			});
 			return;
 		}
@@ -860,6 +961,26 @@ export default function (pi: ExtensionAPI) {
 		} catch {
 			return base;
 		}
+	};
+	const restoreRewireConfig = async (ctx: ExtensionContext): Promise<SubagentRewireConfig | undefined> => {
+		const stored = rewireSessionStates.get(ctx.sessionManager.getSessionId());
+		if (!stored) return defaultRewireConfigWithPreset(ctx);
+		const current = readCurrentDispatchDefaults(ctx);
+		if (isInheritAllRewire(stored)) {
+			return { ...stored, inherit: false, inheritAll: true, model: current.model ?? stored.model };
+		}
+		if (isInheritedRewire(stored)) {
+			return { ...stored, inherit: true, inheritAll: false, model: current.model ?? stored.model };
+		}
+		// Normalize a legacy sentinel that was explicitly disabled. It cannot be
+		// used as a real child model, so require a live model before restoring it.
+		const normalizedModel = stored.model.trim().toLowerCase();
+		if (normalizedModel === REWIRE_INHERIT_MODEL || normalizedModel === REWIRE_INHERIT_ALL_MODEL) {
+			return current.model
+				? { ...stored, inherit: false, inheritAll: false, model: current.model }
+				: { ...stored, enabled: false, inherit: false, inheritAll: false, model: stored.model.trim() };
+		}
+		return { ...stored, model: stored.model.trim(), inheritAll: false };
 	};
 	const setRewireConfig = (ctx: ExtensionContext, config: SubagentRewireConfig): void => {
 		rewireConfig = config;
@@ -897,9 +1018,45 @@ export default function (pi: ExtensionAPI) {
 		const config = state.rewire;
 		if (config !== undefined) {
 			if (!config || typeof config !== "object") return;
-			const value = config as { enabled?: unknown; model?: unknown; thinkingLevel?: unknown };
-			if (typeof value.enabled !== "boolean" || typeof value.model !== "string" || !value.model.trim() || !THINKING_LEVELS.includes(value.thinkingLevel as any)) return;
-			setRewireConfig(sessionContext, { enabled: value.enabled, model: value.model, thinkingLevel: value.thinkingLevel as SubagentRewireConfig["thinkingLevel"] });
+			const value = config as {
+				enabled?: unknown;
+				model?: unknown;
+				thinkingLevel?: unknown;
+				inherit?: unknown;
+				inheritAll?: unknown;
+			};
+			if (
+				typeof value.enabled !== "boolean" ||
+				typeof value.model !== "string" ||
+				!value.model.trim() ||
+				!THINKING_LEVELS.includes(value.thinkingLevel as any) ||
+				(value.inherit !== undefined && typeof value.inherit !== "boolean") ||
+				(value.inheritAll !== undefined && typeof value.inheritAll !== "boolean")
+			)
+				return;
+			const configuredModel = value.model.trim();
+			const normalizedModel = configuredModel.toLowerCase();
+			const isModelSentinel = normalizedModel === REWIRE_INHERIT_MODEL;
+			const isAllSentinel = normalizedModel === REWIRE_INHERIT_ALL_MODEL;
+			// An explicit boolean wins over the compact sentinel. Inherit All
+			// takes priority when both flags arrive from an older session.
+			const inheritAll = value.inheritAll === true || (value.inheritAll === undefined && isAllSentinel);
+			const inherit = !inheritAll && (value.inherit === true || (value.inherit === undefined && isModelSentinel));
+			const inherited = inherit || inheritAll;
+			const current = inherited || isModelSentinel || isAllSentinel ? readCurrentDispatchDefaults(sessionContext) : undefined;
+			const model = current?.model ?? configuredModel;
+			// A sentinel is retained when no live model exists. It is safe for an
+			// inherited dispatch (the dispatch snapshot supplies a fallback), and
+			// preserves an explicitly-disabled legacy state across /renew.
+			const invalidFixedSentinel =
+				(isModelSentinel || isAllSentinel) && !inherited && !current?.model;
+			setRewireConfig(sessionContext, {
+				enabled: invalidFixedSentinel ? false : value.enabled,
+				model,
+				thinkingLevel: value.thinkingLevel as SubagentRewireConfig["thinkingLevel"],
+				inherit,
+				inheritAll,
+			});
 		}
 		setDelegationDepth(sessionContext, state.delegationDepth);
 		pi.events.emit("px:renew:settings:ack", {
@@ -1419,6 +1576,45 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	if (!childControl) {
+		const formatRewireConfig = (config: SubagentRewireConfig): string => {
+			if (isInheritAllRewire(config)) return REWIRE_INHERIT_ALL_LABEL;
+			if (isInheritedRewire(config)) return REWIRE_INHERIT_MODEL_LABEL;
+			return formatRewirePreset(config);
+		};
+		const setInheritedRewireMode = (
+			ctx: ExtensionContext,
+			config: SubagentRewireConfig,
+			mode: "model" | "all" | undefined,
+		): void => {
+			const current = readCurrentDispatchDefaults(ctx);
+			setRewireConfig(ctx, {
+				...config,
+				// Selecting an inherited target activates it immediately; the
+				// Rewire toggle can still turn the target off afterward.
+				enabled: mode === undefined ? config.enabled : true,
+				inherit: mode === "model",
+				inheritAll: mode === "all",
+				model: current.model ?? config.model,
+			});
+		};
+		const toggleInheritedRewireMode = (
+			ctx: ExtensionContext,
+			config: SubagentRewireConfig,
+			mode: "model" | "all",
+		): void => {
+			const active = mode === "all" ? isInheritAllRewire(config) : isInheritedRewire(config) && !isInheritAllRewire(config);
+			if (!active) {
+				setInheritedRewireMode(ctx, config, mode);
+				return;
+			}
+			const current = readCurrentDispatchDefaults(ctx);
+			const fallback = config.model.trim().toLowerCase();
+			if (!current.model && (fallback === REWIRE_INHERIT_MODEL || fallback === REWIRE_INHERIT_ALL_MODEL)) {
+				ctx.ui.notify("No current model is available to turn inheritance off.", "warning");
+				return;
+			}
+			setInheritedRewireMode(ctx, config, undefined);
+		};
 		const selectableRewireModels = async (ctx: ExtensionContext) => {
 			const scoped = ctx.scopedModels.length > 0 ? ctx.scopedModels : undefined;
 			const models = scoped?.map((entry) => entry.model) ?? (await ctx.modelRegistry.getAvailable());
@@ -1453,13 +1649,13 @@ export default function (pi: ExtensionAPI) {
 
 		const readStoredRewirePresets = (ctx: ExtensionContext): RewirePreset[] => {
 			try {
-				return loadRewirePresets(presetFilePath);
+				return withInheritRewirePreset(loadRewirePresets(presetFilePath));
 			} catch (error) {
 				ctx.ui.notify(
 					`Could not read rewire presets: ${error instanceof Error ? error.message : String(error)} Create a preset to replace the invalid file.`,
 					"error",
 				);
-				return [];
+				return withInheritRewirePreset([]);
 			}
 		};
 
@@ -1522,6 +1718,13 @@ export default function (pi: ExtensionAPI) {
 				}
 				const preset = presets[result.index];
 				if (!preset) continue;
+				if (isInheritRewirePreset(preset)) {
+					if (result.type === "delete") continue;
+					const config = rewireConfig ?? (await defaultRewireConfigWithPreset(ctx));
+					if (!config) return;
+					setInheritedRewireMode(ctx, config, isInheritAllRewirePreset(preset) ? "all" : "model");
+					return;
+				}
 				if (result.type === "delete") {
 					const confirmed = await ctx.ui.confirm("Delete rewire preset", `Delete ${formatRewirePreset(preset)}?`);
 					if (confirmed) {
@@ -1547,7 +1750,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const config = rewireConfig ?? (await defaultRewireConfigWithPreset(ctx));
 				if (!config) return;
-				setRewireConfig(ctx, { ...config, model: preset.model, thinkingLevel: preset.thinkingLevel });
+				setRewireConfig(ctx, { ...config, inherit: false, inheritAll: false, model: preset.model, thinkingLevel: preset.thinkingLevel });
 				await updateStoredRewirePresets(ctx, (current) => markRewirePresetUsed(current, preset));
 				return;
 			}
@@ -1565,7 +1768,12 @@ export default function (pi: ExtensionAPI) {
 				const presetChoice = `Presets (${readStoredRewirePresets(ctx).length})`;
 				const choice = await ctx.ui.select(
 					"Subagent rewire configuration",
-					[presetChoice, `Model  ${config.model}`, `Effort  ${config.thinkingLevel}`, "Back"],
+					[
+						presetChoice,
+						`Model  ${formatRewireConfig(config)}`,
+						...(isInheritAllRewire(config) ? [] : [`Effort  ${config.thinkingLevel}`]),
+						"Back",
+					],
 				);
 				if (!choice || choice === "Back") return;
 				if (choice === presetChoice) {
@@ -1574,12 +1782,13 @@ export default function (pi: ExtensionAPI) {
 				}
 				if (choice.startsWith("Model  ")) {
 					const { scoped, byId } = await selectableRewireModels(ctx);
-					if (byId.size === 0) {
-						ctx.ui.notify("No models are available for subagent rewiring.", "warning");
+					const modelChoices = [REWIRE_INHERIT_MODEL_LABEL, REWIRE_INHERIT_ALL_LABEL, ...[...byId.keys()].sort()];
+					const selected = await ctx.ui.select("Subagent override model", modelChoices);
+					if (!selected) continue;
+					if (selected === REWIRE_INHERIT_MODEL_LABEL || selected === REWIRE_INHERIT_ALL_LABEL) {
+						setInheritedRewireMode(ctx, config, selected === REWIRE_INHERIT_ALL_LABEL ? "all" : "model");
 						continue;
 					}
-					const selected = await ctx.ui.select("Subagent override model", [...byId.keys()].sort());
-					if (!selected) continue;
 					const model = byId.get(selected);
 					if (!model) continue;
 					const levels = availableThinkingLevels(model);
@@ -1591,6 +1800,8 @@ export default function (pi: ExtensionAPI) {
 							: levels[0] ?? "off";
 					setRewireConfig(ctx, {
 						...config,
+						inherit: false,
+						inheritAll: false,
 						model: selected,
 						thinkingLevel: pinned && levels.includes(pinned) ? pinned : fallback,
 					});
@@ -1598,11 +1809,12 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const availableModels = await ctx.modelRegistry.getAvailable();
-				const model = availableModels.find(
-					(candidate) => `${candidate.provider}/${candidate.id}` === config.model,
-				);
+				const currentModel = isInheritedRewire(config) ? readCurrentDispatchDefaults(ctx).model : config.model;
+				const model =
+					availableModels.find((candidate) => `${candidate.provider}/${candidate.id}` === currentModel) ??
+					availableModels.find((candidate) => `${candidate.provider}/${candidate.id}` === config.model);
 				if (!model) {
-					ctx.ui.notify(`Model ${config.model} is no longer available.`, "warning");
+					ctx.ui.notify(`Model ${currentModel ?? config.model} is no longer available.`, "warning");
 					continue;
 				}
 				const levels = availableThinkingLevels(model);
@@ -1618,22 +1830,38 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
 				return;
 			}
+			const normalizedModel = rewireConfig.model.trim().toLowerCase();
+			const hasDisabledInheritSentinel =
+				!isInheritedRewire(rewireConfig) &&
+				(normalizedModel === REWIRE_INHERIT_MODEL || normalizedModel === REWIRE_INHERIT_ALL_MODEL);
+			if (!rewireConfig.enabled && hasDisabledInheritSentinel) {
+				ctx.ui.notify("Choose a model before enabling subagent rewiring.", "warning");
+				return;
+			}
 			setRewireConfig(ctx, { ...rewireConfig, enabled: !rewireConfig.enabled });
 		};
 
 		const openRewireMenu = async (ctx: ExtensionContext): Promise<void> => {
 			if (!ctx.hasUI) return;
 			rewireConfig ??= await defaultRewireConfigWithPreset(ctx);
+			if (!rewireConfig) {
+				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
+				return;
+			}
 			while (true) {
-				const rewireBadge = rewireConfig?.enabled
+				const rewireBadge = rewireConfig.enabled
 					? ctx.ui.theme.fg("error", "[ON]")
 					: ctx.ui.theme.fg("muted", "[OFF]");
 				const rewireChoice = `Rewire   ${rewireBadge}`;
-				const rewireTarget = rewireConfig?.enabled
-					? ctx.ui.theme.fg("muted", `Rewiring to ${formatRewirePreset(rewireConfig)}`)
+				const modelInheritChoice = `Inherit model   ${isInheritedRewire(rewireConfig) && !isInheritAllRewire(rewireConfig) ? "[ON]" : "[OFF]"}`;
+				const allInheritChoice = `Inherit All   ${isInheritAllRewire(rewireConfig) ? "[ON]" : "[OFF]"}`;
+				const rewireTarget = rewireConfig.enabled
+					? ctx.ui.theme.fg("muted", `Rewiring to ${formatRewireConfig(rewireConfig)}`)
 					: undefined;
 				const choice = await ctx.ui.select("Subagent rewiring", [
 					rewireChoice,
+					modelInheritChoice,
+					allInheritChoice,
 					"\ue615  Configuration",
 					...(rewireTarget ? [rewireTarget] : []),
 				]);
@@ -1641,6 +1869,14 @@ export default function (pi: ExtensionAPI) {
 				if (choice === rewireTarget) continue;
 				if (choice === rewireChoice) {
 					await toggleRewire(ctx);
+					continue;
+				}
+				if (choice === modelInheritChoice) {
+					toggleInheritedRewireMode(ctx, rewireConfig, "model");
+					continue;
+				}
+				if (choice === allInheritChoice) {
+					toggleInheritedRewireMode(ctx, rewireConfig, "all");
 					continue;
 				}
 				await configureRewire(ctx);
@@ -1666,7 +1902,14 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI) return;
 			while (true) {
 				const delegationChoice = `Delegation  ${formatSubagentDepth(delegationDepth)} (${delegationDepth})`;
-				const rewireChoice = `Rewire  ${rewireConfig?.enabled ? "ON" : "OFF"}`;
+				const inheritLabel = rewireConfig
+					? isInheritAllRewire(rewireConfig)
+						? " · Inherit All"
+						: isInheritedRewire(rewireConfig)
+							? " · Inherit model"
+							: ""
+					: "";
+				const rewireChoice = `Rewire  ${rewireConfig?.enabled ? "ON" : "OFF"}${inheritLabel}`;
 				const choice = await ctx.ui.select("Subagent configuration", [delegationChoice, rewireChoice, "Back"]);
 				if (!choice || choice === "Back") return;
 				if (choice === delegationChoice) {
@@ -1691,7 +1934,7 @@ export default function (pi: ExtensionAPI) {
 		});
 
 		pi.registerCommand("px:agents:rewire", {
-			description: "Override the model and effort for every subagent in this session",
+			description: "Override the model and effort for every subagent, or inherit the active model",
 			handler: async (_args, ctx) => openRewireMenu(ctx),
 		});
 
@@ -1927,8 +2170,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		newRunId = createRunIdGenerator("agent", nameState.agentIds);
 		newDispatchId = createRunIdGenerator("dispatch", nameState.dispatchIds);
-		const storedRewire = rewireSessionStates.get(sessionId);
-		rewireConfig = storedRewire ? { ...storedRewire } : await defaultRewireConfigWithPreset(ctx);
+		rewireConfig = await restoreRewireConfig(ctx);
 		delegationDepth = isSubagentChild
 			? configuredDefaultDepth
 			: (delegationDepthSessionStates.get(sessionId) ?? configuredDefaultDepth);
@@ -2274,8 +2516,7 @@ export default function (pi: ExtensionAPI) {
 				nextRunId: newRunId,
 				context: {
 					cwd: ctx.cwd,
-					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-					thinkingLevel: ctx.thinkingLevel,
+					...readCurrentDispatchDefaults(ctx),
 					...(rewireConfig?.enabled ? { rewire: { ...rewireConfig } } : {}),
 				},
 			});
@@ -2302,6 +2543,7 @@ export default function (pi: ExtensionAPI) {
 				onRunSettled: publishRunFinishedEntry,
 				hasProgressTool,
 				delegationDepth,
+				getCurrentDispatchDefaults: () => readCurrentDispatchDefaults(ctx),
 				emitProgressRelay: (channel, payload) => pi.events.emit(channel, payload),
 			};
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({

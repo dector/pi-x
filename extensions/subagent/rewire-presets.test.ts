@@ -6,11 +6,16 @@ import {
 	addRewirePreset,
 	deleteRewirePreset,
 	formatRewirePreset,
+	INHERIT_ALL_REWIRE_PRESET,
+	INHERIT_REWIRE_PRESET,
+	isInheritAllRewirePreset,
+	isInheritRewirePreset,
 	latestUsedRewirePreset,
 	loadRewirePresets,
 	markRewirePresetUsed,
 	rewirePresetsPath,
 	saveRewirePresets,
+	withInheritRewirePreset,
 	type RewirePreset,
 } from "./rewire-presets.ts";
 
@@ -32,6 +37,39 @@ const second: RewirePreset = { model: "openai/gpt", thinkingLevel: "medium" };
 describe("rewire preset storage", () => {
 	test("uses one global file under the agent directory", () => {
 		expect(rewirePresetsPath("/tmp/agent")).toBe("/tmp/agent/subagent-rewire-presets.json");
+	});
+
+	test("keeps the two Inherit presets locked at the front without persisting them", () => {
+		const list = withInheritRewirePreset([second, INHERIT_REWIRE_PRESET, INHERIT_ALL_REWIRE_PRESET, first]);
+		expect(list[0]).toBe(INHERIT_REWIRE_PRESET);
+		expect(list[1]).toBe(INHERIT_ALL_REWIRE_PRESET);
+		expect(list.slice(2)).toEqual([second, first]);
+		expect(isInheritRewirePreset(list[0])).toBe(true);
+		expect(isInheritAllRewirePreset(list[1])).toBe(true);
+		expect(addRewirePreset(list, INHERIT_REWIRE_PRESET)).toEqual(list);
+		expect(addRewirePreset(list, INHERIT_ALL_REWIRE_PRESET)).toEqual(list);
+		expect(deleteRewirePreset(list, 0)).toEqual(list);
+		expect(deleteRewirePreset(list, 1)).toEqual(list);
+
+		const file = tempFile();
+		saveRewirePresets(file, list);
+		expect(loadRewirePresets(file)).toEqual([second, first]);
+		expect(formatRewirePreset(INHERIT_REWIRE_PRESET)).toBe("Inherit model");
+		expect(formatRewirePreset(INHERIT_ALL_REWIRE_PRESET)).toBe("Inherit All");
+	});
+
+	test("ignores hand-edited Inherit entries loaded from storage", () => {
+		const file = tempFile();
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(
+			file,
+			JSON.stringify([
+				{ model: "inherit", thinkingLevel: "off" },
+				{ model: "inherit-all", thinkingLevel: "off" },
+				first,
+			]),
+		);
+		expect(loadRewirePresets(file)).toEqual([first]);
 	});
 
 	test("missing files load as an empty list", () => {

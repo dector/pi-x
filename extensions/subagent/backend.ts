@@ -41,16 +41,32 @@ export interface RunBackendContext {
 	chainKey?: string;
 }
 
+export type BeforeSubagentSpawn = (options: SpawnRpcChildOptions) => void;
+
 export interface SubagentBackend {
 	readonly kind: SubagentBackendKind;
-	spawn(options: SpawnRpcChildOptions, context: RunBackendContext): Promise<RpcChild>;
+	/**
+	 * Launch a child. `beforeSpawn` is invoked at the backend's true launch
+	 * boundary, after any transport-specific preparation and immediately before
+	 * the child process/bridge receives its spawn request.
+	 */
+	spawn(
+		options: SpawnRpcChildOptions,
+		context: RunBackendContext,
+		beforeSpawn?: BeforeSubagentSpawn,
+	): Promise<RpcChild>;
 }
 
 /** Default backend: a direct `pi --mode rpc` child over stdin/stdout pipes. */
 export class ProcessSubagentBackend implements SubagentBackend {
 	readonly kind = "process" as const;
 
-	async spawn(options: SpawnRpcChildOptions, _context: RunBackendContext): Promise<RpcChild> {
+	async spawn(
+		options: SpawnRpcChildOptions,
+		_context: RunBackendContext,
+		beforeSpawn?: BeforeSubagentSpawn,
+	): Promise<RpcChild> {
+		beforeSpawn?.(options);
 		return spawnRpcChild(options);
 	}
 }
@@ -78,7 +94,11 @@ export class HerdrSubagentBackend implements SubagentBackend {
 		this.createChild = options.createChild ?? createHerdrBridgeChild;
 	}
 
-	async spawn(options: SpawnRpcChildOptions, context: RunBackendContext): Promise<RpcChild> {
+	async spawn(
+		options: SpawnRpcChildOptions,
+		context: RunBackendContext,
+		beforeSpawn?: BeforeSubagentSpawn,
+	): Promise<RpcChild> {
 		const run: PreparedDispatchItem = {
 			runId: context.runId,
 			agent: context.agent,
@@ -92,6 +112,9 @@ export class HerdrSubagentBackend implements SubagentBackend {
 		try {
 			child = await this.createChild({
 				spawn: options,
+				// The bridge invokes this after its handshake, immediately before
+				// sending the spawn request to the pane-side Pi process.
+				beforeSpawn: beforeSpawn ? () => beforeSpawn(options) : undefined,
 				launch: (bootstrap) => this.options.launcher.launch(lease.paneId, bootstrap),
 				display: {
 					agent: context.agent,

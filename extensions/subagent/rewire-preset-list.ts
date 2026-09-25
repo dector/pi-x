@@ -1,5 +1,5 @@
 import { matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
-import { formatRewirePreset, type RewirePreset } from "./rewire-presets.ts";
+import { formatRewirePreset, isInheritRewirePreset, type RewirePreset } from "./rewire-presets.ts";
 
 export const REWIRE_PRESET_LIST_TITLE = "Rewire presets";
 export const REWIRE_PRESET_LIST_HELP = "↑↓ move • enter apply • n new • d delete • esc back";
@@ -66,7 +66,11 @@ export class RewirePresetListView implements Component {
 			this.options.done({ type: "create" });
 		} else if (matchesKey(data, "d")) {
 			const index = this.selectedIndex;
-			if (index !== undefined) this.options.done({ type: "delete", index });
+			const preset = index === undefined ? undefined : this.options.presets[index];
+			// Inherit is a built-in, always-first preset and cannot be removed.
+			if (index !== undefined && preset && !isInheritRewirePreset(preset)) {
+				this.options.done({ type: "delete", index });
+			}
 		}
 	}
 
@@ -84,7 +88,9 @@ export class RewirePresetListView implements Component {
 				const preset = this.options.presets[index];
 				if (!preset) continue;
 				const selected = index === this.selected;
-				const text = `${selected ? " → " : "   "}${formatRewirePreset(preset)}`;
+				const baseLabel = formatRewirePreset(preset);
+				const label = isInheritRewirePreset(preset) ? `${baseLabel} (built-in)` : baseLabel;
+				const text = `${selected ? " → " : "   "}${label}`;
 				lines.push(truncateToWidth(selected ? theme.fg("accent", text) : text, w));
 			}
 			if (start > 0 || end < this.options.presets.length) {

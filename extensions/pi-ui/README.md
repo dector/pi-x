@@ -37,7 +37,7 @@ Current dialog items:
   - `+ - toggle outer mode`
 - **Agents**
   - `a - subagents…` (opens the `/px:agents` batch list)
-  - `R - agents rewiring…` (opens the rewiring menu)
+  - `R - agents rewiring…` (opens the rewiring menu, including `Inherit model` and `Inherit All`)
   - `Ctrl+r - rewire agents` (toggle)
 - **Prompts & Notes**
   - `s - prompt stash…` (opens a stash submenu)

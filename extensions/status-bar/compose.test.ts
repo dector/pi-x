@@ -85,6 +85,10 @@ describe("pure text helpers", () => {
 		);
 	});
 
+	test("labels an inherited rewire target without an effort suffix", () => {
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 󰒟 Inherit");
+	});
+
 	test("compactFrameLabel removes value spacing without damaging ANSI colors", () => {
 		const colored = "\u001b[32m+1\u001b[0m \u001b[31m-2\u001b[0m M4 · +150 -200";
 		expect(compactFrameLabel(colored)).toBe("\u001b[32m+1\u001b[0m\u001b[31m-2\u001b[0mM4·+150-200");
