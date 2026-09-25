@@ -12,8 +12,14 @@ acknowledgements are bounded to five seconds; missing ones produce a warning.
 Other approvals, project bash approvals, progress, and UI state are not copied.
 Managed `proc` processes survive by default. `/reset -proc` asks the process
 manager to stop them after the new session is created, with a bounded wait and a
-warning if any remain running. `/reset +agents` is explicitly rejected until
-active-agent handoff is implemented.
+warning if any remain running.
+
+`+agents` is not supported. Pi creates a new extension runtime and event bus for
+the replacement session, and each running subagent's completion and control
+callbacks are bound to the previous instance. A handoff would either lose those
+completions or leak them into the wrong session, so `/reset +agents` is refused
+without changing the session. Detach and finish active agents first, then
+`/reset`.
 
 Load this extension with the relevant state owners (`safe-mode`,
 `permissions-core`, `review-level`, and `subagent`) for their settings to transfer.

@@ -74,3 +74,26 @@ for (const available of [true, false]) test(`reset transfers through replacement
 	expect(notices).toEqual(available ? [] : ["/reset: model or thinking level could not be restored."]);
 	for (const handler of newHandlers.get("session_shutdown") ?? []) handler({}, newCtx);
 });
+
+test("/reset +agents is refused without starting a new session", async () => {
+	let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+	let newSessions = 0;
+	const notices: string[] = [];
+	const pi = {
+		events: bus(),
+		getThinkingLevel: () => "off",
+		registerCommand: (_name: string, options: { handler: typeof command }) => { command = options.handler; },
+		on: () => {},
+	};
+	resetExtension(pi as unknown as ExtensionAPI);
+	const ctx = {
+		cwd: "/repo",
+		sessionManager: { getSessionId: () => "old" },
+		ui: { notify: (message: string) => notices.push(message) },
+		newSession: async () => { newSessions += 1; return { cancelled: false }; },
+	};
+	await command?.("+agents", ctx as unknown as ExtensionCommandContext);
+	expect(newSessions).toBe(0);
+	expect(notices).toHaveLength(1);
+	expect(notices[0]).toContain("+agents is unavailable");
+});

@@ -47,7 +47,10 @@ export default function resetExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			if (parsed.options.keepAgents) {
-				ctx.ui.notify("/reset +agents is not yet available; no session was changed.", "warning");
+				ctx.ui.notify(
+					"/reset +agents is unavailable: Pi replaces the extension runtime and event bus on /new, so running agents cannot be handed off without dropping or leaking completions. No session was changed.",
+					"warning",
+				);
 				return;
 			}
 			await resetSession(pi, ctx, parsed.options.stopProc);
