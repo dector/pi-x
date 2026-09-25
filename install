@@ -149,6 +149,7 @@ extensions=(
   "safe-mode"
   "permissions-core"
   "permissions-ui"
+  "reset"
   "repo-stats"
   "skill-stats"
   "flutter"

@@ -1,13 +1,20 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { parseResetArguments } from "./arguments.ts";
-import {
-	PROC_STOP_ALL_MAX_WAIT_MS,
-	PROC_STOP_ALL_REPLY_EVENT,
-	PROC_STOP_ALL_REQUEST_EVENT,
-	type ProcStopAllResult,
-} from "../proc/stop-all.ts";
-import { THINKING_LEVELS } from "../subagent/rewire.ts";
+import { RESET_CONTRACT } from "./contract.ts";
+
+const {
+	thinkingLevels: THINKING_LEVELS,
+	procStopAllRequestEvent: PROC_STOP_ALL_REQUEST_EVENT,
+	procStopAllReplyEvent: PROC_STOP_ALL_REPLY_EVENT,
+	procStopAllMaxWaitMs: PROC_STOP_ALL_MAX_WAIT_MS,
+} = RESET_CONTRACT;
+
+interface ProcStopAllResult {
+	id: string;
+	stopped: string[];
+	timedOut: string[];
+}
 
 interface ResetBridge {
 	sessionId: string;

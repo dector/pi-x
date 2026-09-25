@@ -33,6 +33,7 @@ without changing the session. Detach and finish active agents first, then
 Load the relevant state owners for their settings to transfer: `safe-mode`,
 `permissions-core`, `review-level`, and `subagent`. `-proc` requires the `proc`
 extension. Missing owners only affect their own setting and produce a warning;
-the session still resets.
+the session still resets. `/reset` loads on its own and mirrors the few sibling
+constants it needs (`contract.test.ts` guards them against drift).
 
 Run focused tests with `bun test extensions/reset`.
