@@ -149,7 +149,7 @@ extensions=(
   "safe-mode"
   "permissions-core"
   "permissions-ui"
-  "reset"
+  "renew"
   "repo-stats"
   "skill-stats"
   "flutter"
@@ -199,6 +199,13 @@ for ext in "${extensions[@]}"; do
   rsync -a --delete "$src" "$dest"
   installed_extensions+=("$ext")
 done
+
+# `reset` was renamed to `renew`. Remove a stale installed copy so the old
+# `/reset` command and `px:reset:*` handlers cannot linger beside the new one.
+if [[ -d "$DEST_ROOT/reset" ]]; then
+  rm -rf "$DEST_ROOT/reset"
+  echo "- removed legacy reset/ (renamed to renew/)"
+fi
 
 echo "Installing extension dependencies with $PKG_MGR..."
 for ext in "${installed_extensions[@]}"; do

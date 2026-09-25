@@ -80,22 +80,22 @@ export default function reviewLevelExtension(pi: ExtensionAPI): void {
 		return true;
 	};
 
-	const unsubscribeResetRequest = pi.events.on("px:reset:settings:request", (payload) => {
+	const unsubscribeRenewRequest = pi.events.on("px:renew:settings:request", (payload) => {
 		if (!payload || typeof payload !== "object") return;
 		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
 		if (typeof request.id !== "string" || request.sourceSessionId !== currentSessionId || request.cwd !== currentCwd) return;
-		pi.events.emit("px:reset:settings:response", { id: request.id, owner: "review-level", sourceSessionId: request.sourceSessionId, cwd: request.cwd, state: { level } });
+		pi.events.emit("px:renew:settings:response", { id: request.id, owner: "review-level", sourceSessionId: request.sourceSessionId, cwd: request.cwd, state: { level } });
 	});
 	let currentSessionId: string | undefined;
 	let currentCwd: string | undefined;
-	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+	const unsubscribeRenewApply = pi.events.on("px:renew:settings:apply", (payload) => {
 		if (!payload || typeof payload !== "object") return;
 		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
 		if (typeof request.transferId !== "string" || request.owner !== "review-level" || request.targetSessionId !== currentSessionId || request.cwd !== currentCwd) return;
 		const next = parseReviewLevel((request.state as { level?: unknown } | undefined)?.level);
 		if (!next) return;
 		setLevel(next);
-		pi.events.emit("px:reset:settings:ack", { transferId: request.transferId, owner: "review-level", targetSessionId: request.targetSessionId, cwd: request.cwd });
+		pi.events.emit("px:renew:settings:ack", { transferId: request.transferId, owner: "review-level", targetSessionId: request.targetSessionId, cwd: request.cwd });
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -120,8 +120,8 @@ export default function reviewLevelExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", () => {
-		unsubscribeResetRequest();
-		unsubscribeResetApply();
+		unsubscribeRenewRequest();
+		unsubscribeRenewApply();
 		currentSessionId = undefined;
 		currentCwd = undefined;
 		pi.events.emit(STATUS_BAR_REVIEW_CLEAR_EVENT, undefined);

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import resetExtension from "./index.ts";
+import renewExtension from "./index.ts";
 
 type Handler = (payload: any) => void;
 function bus() {
@@ -18,7 +18,7 @@ function bus() {
 	};
 }
 
-for (const available of [true, false]) test(`reset transfers through replacement bus (model available: ${available})`, async () => {
+for (const available of [true, false]) test(`renew transfers through replacement bus (model available: ${available})`, async () => {
 	const oldBus = bus();
 	const freshBus = bus();
 	let selectedModel = "";
@@ -32,7 +32,7 @@ for (const available of [true, false]) test(`reset transfers through replacement
 		registerCommand: (_name: string, options: { handler: typeof command }) => { command = options.handler; },
 		on: (name: string, handler: (event: unknown, ctx: any) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
 	};
-	resetExtension(oldPi as unknown as ExtensionAPI);
+	renewExtension(oldPi as unknown as ExtensionAPI);
 	const newHandlers = new Map<string, Array<(event: unknown, ctx: any) => void>>();
 	const freshPi = {
 		events: freshBus,
@@ -41,14 +41,14 @@ for (const available of [true, false]) test(`reset transfers through replacement
 		registerCommand: () => {},
 		on: (name: string, handler: (event: unknown, ctx: any) => void) => newHandlers.set(name, [...(newHandlers.get(name) ?? []), handler]),
 	};
-	oldBus.on("px:reset:settings:request", ({ id, sourceSessionId, cwd }) => {
-		oldBus.emit("px:reset:settings:response", { id, sourceSessionId, cwd, owner: "safe-mode", state: { mode: "reader" } });
+	oldBus.on("px:renew:settings:request", ({ id, sourceSessionId, cwd }) => {
+		oldBus.emit("px:renew:settings:response", { id, sourceSessionId, cwd, owner: "safe-mode", state: { mode: "reader" } });
 	});
 	let applied: unknown;
-	freshBus.on("px:reset:settings:apply", (payload) => {
+	freshBus.on("px:renew:settings:apply", (payload) => {
 		applied = payload;
 		const { transferId, targetSessionId, cwd } = payload as any;
-		freshBus.emit("px:reset:settings:ack", { transferId, targetSessionId, cwd, owner: "safe-mode" });
+		freshBus.emit("px:renew:settings:ack", { transferId, targetSessionId, cwd, owner: "safe-mode" });
 	});
 	const newCtx = {
 		cwd: "/repo", sessionManager: { getSessionId: () => "new" },
@@ -61,7 +61,7 @@ for (const available of [true, false]) test(`reset transfers through replacement
 		ui: { notify: (message: string) => notices.push(message) },
 		newSession: async ({ withSession }: { withSession: (ctx: any) => Promise<void> }) => {
 			for (const handler of handlers.get("session_shutdown") ?? []) handler({}, oldCtx);
-			resetExtension(freshPi as unknown as ExtensionAPI);
+			renewExtension(freshPi as unknown as ExtensionAPI);
 			for (const handler of newHandlers.get("session_start") ?? []) handler({}, newCtx);
 			await withSession(newCtx);
 			return { cancelled: false };
@@ -71,7 +71,7 @@ for (const available of [true, false]) test(`reset transfers through replacement
 	expect(selectedModel).toBe(available ? "old-model" : "");
 	expect(selectedThinking).toBe("high");
 	expect((applied as any).state).toEqual({ mode: "reader" });
-	expect(notices).toEqual(available ? [] : ["/reset: model or thinking level could not be restored."]);
+	expect(notices).toEqual(available ? [] : ["/renew: model or thinking level could not be restored."]);
 	for (const handler of newHandlers.get("session_shutdown") ?? []) handler({}, newCtx);
 });
 
@@ -84,7 +84,7 @@ test("missing replacement bridge warns and skips transfer", async () => {
 		registerCommand: (_name: string, options: { handler: typeof command }) => { command = options.handler; },
 		on: () => {},
 	};
-	resetExtension(pi as unknown as ExtensionAPI);
+	renewExtension(pi as unknown as ExtensionAPI);
 	const newCtx = { cwd: "/repo", sessionManager: { getSessionId: () => "new" }, ui: { notify: (m: string) => notices.push(m) } };
 	const ctx = {
 		cwd: "/repo", model: undefined, sessionManager: { getSessionId: () => "old" },
@@ -95,7 +95,7 @@ test("missing replacement bridge warns and skips transfer", async () => {
 	expect(notices.some((message) => message.includes("replacement extension is unavailable"))).toBe(true);
 });
 
-test("/reset +agents is refused without starting a new session", async () => {
+test("/renew +agents is refused without starting a new session", async () => {
 	let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let newSessions = 0;
 	const notices: string[] = [];
@@ -105,7 +105,7 @@ test("/reset +agents is refused without starting a new session", async () => {
 		registerCommand: (_name: string, options: { handler: typeof command }) => { command = options.handler; },
 		on: () => {},
 	};
-	resetExtension(pi as unknown as ExtensionAPI);
+	renewExtension(pi as unknown as ExtensionAPI);
 	const ctx = {
 		cwd: "/repo",
 		sessionManager: { getSessionId: () => "old" },

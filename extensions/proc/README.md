@@ -110,7 +110,7 @@ The `proc` tool works without `panels`; the Processes widget requires it.
 
 ## Lifecycle event contract (`-proc`)
 
-A reset/lifecycle orchestrator opts into stopping managed processes by emitting
+A renew/lifecycle orchestrator opts into stopping managed processes by emitting
 `px:proc:stop-all:request` with exactly `{ id: string }`. The non-empty
 correlation id must be at most 128 characters. Invalid payloads are ignored and
 receive no reply. The proc extension snapshots records in `running` state when
@@ -126,7 +126,7 @@ names as not confirmed stopped. The reply reports process outcomes; it does not
 remove records from the registry. The registry intentionally survives session
 replacement and `/reload`, so the request operates on all currently registered
 owned processes, not merely processes started in the current session. The event
-listener is removed on extension shutdown/reload. `/reset -proc` emits the
+listener is removed on extension shutdown/reload. `/renew -proc` emits the
 request on the replacement session's bus (after the fresh proc instance
 registers), so the stop happens in the new session rather than before teardown.
 

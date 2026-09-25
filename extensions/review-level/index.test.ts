@@ -80,11 +80,11 @@ describe("review-level extension", () => {
 		expect(sections).toEqual({ existing: "keep" });
 	});
 
-	test("applies a reset handoff and acknowledges it", async () => {
+	test("applies a renew handoff and acknowledges it", async () => {
 		const state = setup();
 		await fire(state.lifecycle, "session_start", {}, state.ctx);
 		state.emitted.length = 0;
-		state.bus.emit("px:reset:settings:apply", {
+		state.bus.emit("px:renew:settings:apply", {
 			transferId: "r1",
 			owner: "review-level",
 			targetSessionId: "test-session",
@@ -97,7 +97,7 @@ describe("review-level extension", () => {
 			payload: { level: "high" },
 		});
 		expect(state.emitted).toContainEqual({
-			channel: "px:reset:settings:ack",
+			channel: "px:renew:settings:ack",
 			payload: { transferId: "r1", owner: "review-level", targetSessionId: "test-session", cwd: "/tmp/project" },
 		});
 	});

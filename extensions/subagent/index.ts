@@ -874,12 +874,12 @@ export default function (pi: ExtensionAPI) {
 		}
 		publishRewireStatus();
 	};
-	const unsubscribeResetSettings = pi.events.on("px:reset:settings:request", (payload) => {
+	const unsubscribeRenewSettings = pi.events.on("px:renew:settings:request", (payload) => {
 		if (!payload || typeof payload !== "object" || !sessionContext) return;
 		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
 		if (request.sourceSessionId !== sessionContext.sessionManager.getSessionId() || request.cwd !== sessionContext.cwd) return;
 		if (typeof request.id !== "string") return;
-		pi.events.emit("px:reset:settings:response", {
+		pi.events.emit("px:renew:settings:response", {
 			id: request.id,
 			owner: "subagent",
 			sourceSessionId: request.sourceSessionId,
@@ -887,7 +887,7 @@ export default function (pi: ExtensionAPI) {
 			state: { rewire: rewireConfig ? { ...rewireConfig } : undefined, delegationDepth },
 		});
 	});
-	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+	const unsubscribeRenewApply = pi.events.on("px:renew:settings:apply", (payload) => {
 		if (!payload || typeof payload !== "object" || !sessionContext) return;
 		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
 		if (typeof request.transferId !== "string" || request.owner !== "subagent" || request.targetSessionId !== sessionContext.sessionManager.getSessionId() || request.cwd !== sessionContext.cwd) return;
@@ -902,7 +902,7 @@ export default function (pi: ExtensionAPI) {
 			setRewireConfig(sessionContext, { enabled: value.enabled, model: value.model, thinkingLevel: value.thinkingLevel as SubagentRewireConfig["thinkingLevel"] });
 		}
 		setDelegationDepth(sessionContext, state.delegationDepth);
-		pi.events.emit("px:reset:settings:ack", {
+		pi.events.emit("px:renew:settings:ack", {
 			transferId: request.transferId,
 			owner: "subagent",
 			targetSessionId: request.targetSessionId,
@@ -1974,8 +1974,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (event) => {
 		pi.events.emit(STATUS_BAR_REWIRE_CLEAR_EVENT, {});
 		pi.events.emit(STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT, {});
-		unsubscribeResetSettings();
-		unsubscribeResetApply();
+		unsubscribeRenewSettings();
+		unsubscribeRenewApply();
 		// Drop the panel subscription so `/reload` cannot leave a stale listener
 		// on the shared event bus, then forget the coordinator-derived state.
 		offPanelActive();

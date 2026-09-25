@@ -81,11 +81,11 @@ export default function permissionsCoreExtension(pi: ExtensionAPI): void {
 		service.handleHubRequest(payload);
 	});
 
-	const unsubscribeResetRequest = pi.events.on("px:reset:settings:request", (payload) => {
+	const unsubscribeRenewRequest = pi.events.on("px:renew:settings:request", (payload) => {
 		if (!payload || typeof payload !== "object" || !activeContext) return;
 		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
 		if (typeof request.id !== "string" || request.sourceSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
-		pi.events.emit("px:reset:settings:response", {
+		pi.events.emit("px:renew:settings:response", {
 			id: request.id,
 			owner: "permissions-core",
 			sourceSessionId: request.sourceSessionId,
@@ -93,18 +93,18 @@ export default function permissionsCoreExtension(pi: ExtensionAPI): void {
 			state: { configured: service.getState().configured },
 		});
 	});
-	const unsubscribeResetApply = pi.events.on("px:reset:settings:apply", (payload) => {
+	const unsubscribeRenewApply = pi.events.on("px:renew:settings:apply", (payload) => {
 		if (!payload || typeof payload !== "object" || !activeContext) return;
 		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
 		if (typeof request.transferId !== "string" || request.owner !== "permissions-core" || request.targetSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
 		const configured = parseNetworkPolicySetting((request.state as { configured?: unknown } | undefined)?.configured);
 		if (!configured) return;
-		service.setConfigured(configured, "reset");
-		pi.events.emit("px:reset:settings:ack", { transferId: request.transferId, owner: "permissions-core", targetSessionId: request.targetSessionId, cwd: request.cwd });
+		service.setConfigured(configured, "renew");
+		pi.events.emit("px:renew:settings:ack", { transferId: request.transferId, owner: "permissions-core", targetSessionId: request.targetSessionId, cwd: request.cwd });
 	});
 	pi.on("session_shutdown", () => {
-		unsubscribeResetRequest();
-		unsubscribeResetApply();
+		unsubscribeRenewRequest();
+		unsubscribeRenewApply();
 	});
 
 	pi.events.on(NETWORK_STATE_EVENTS.request, (payload) => {

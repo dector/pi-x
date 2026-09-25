@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SAFE_MODE_STATE_EVENTS } from "./contract.ts";
 import safeModeExtension from "./index.ts";
 
-// Regression: the `/reset` apply handler once referenced `parseSafeModeSnapshot`
+// Regression: the `/renew` apply handler once referenced `parseSafeModeSnapshot`
 // without importing it, so the handoff threw at runtime and safe mode silently
 // failed to transfer. This drives the real extension end to end.
 
@@ -78,19 +78,19 @@ async function startSession(lifecycle: ReturnType<typeof createFakePi>["lifecycl
 	for (const handler of lifecycle.get("session_start") ?? []) await handler({}, ctx);
 }
 
-test("reset handoff transfers safe mode into the replacement session", async () => {
+test("renew handoff transfers safe mode into the replacement session", async () => {
 	const oldBus = createBus();
 	const old = createFakePi(oldBus);
 	safeModeExtension(old.pi as unknown as ExtensionAPI);
 	await startSession(old.lifecycle, ctxFor("old"));
-	// Seed a non-default selection, then snapshot it as `/reset` would.
+	// Seed a non-default selection, then snapshot it as `/renew` would.
 	oldBus.emit(SAFE_MODE_STATE_EVENTS.set, { state: { mode: "reader", outerAccess: true }, source: "test" });
 	let snapshot: unknown;
-	oldBus.on("px:reset:settings:response", (payload) => {
+	oldBus.on("px:renew:settings:response", (payload) => {
 		const value = payload as { owner?: string; state?: unknown };
 		if (value.owner === "safe-mode") snapshot = value.state;
 	});
-	oldBus.emit("px:reset:settings:request", { id: "r1", sourceSessionId: "old", cwd: "/repo" });
+	oldBus.emit("px:renew:settings:request", { id: "r1", sourceSessionId: "old", cwd: "/repo" });
 	expect(snapshot).toEqual({ mode: "reader", outerAccess: true, sessionApprovedBashCommands: [] });
 
 	const newBus = createBus();
@@ -98,11 +98,11 @@ test("reset handoff transfers safe mode into the replacement session", async () 
 	safeModeExtension(fresh.pi as unknown as ExtensionAPI);
 	await startSession(fresh.lifecycle, ctxFor("new"));
 	let acked = false;
-	newBus.on("px:reset:settings:ack", (payload) => {
+	newBus.on("px:renew:settings:ack", (payload) => {
 		const value = payload as { owner?: string };
 		if (value.owner === "safe-mode") acked = true;
 	});
-	newBus.emit("px:reset:settings:apply", {
+	newBus.emit("px:renew:settings:apply", {
 		transferId: "r1",
 		owner: "safe-mode",
 		targetSessionId: "new",
@@ -114,5 +114,5 @@ test("reset handoff transfers safe mode into the replacement session", async () 
 	const changed = newBus.emitted
 		.filter((entry) => entry.event === SAFE_MODE_STATE_EVENTS.changed)
 		.map((entry) => entry.payload as { mode?: string; outerAccess?: boolean; source?: string });
-	expect(changed.at(-1)).toEqual({ mode: "reader", outerAccess: true, source: "reset" });
+	expect(changed.at(-1)).toEqual({ mode: "reader", outerAccess: true, source: "renew" });
 });

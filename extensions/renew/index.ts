@@ -1,14 +1,14 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { parseResetArguments } from "./arguments.ts";
-import { RESET_CONTRACT } from "./contract.ts";
+import { parseRenewArguments } from "./arguments.ts";
+import { RENEW_CONTRACT } from "./contract.ts";
 
 const {
 	thinkingLevels: THINKING_LEVELS,
 	procStopAllRequestEvent: PROC_STOP_ALL_REQUEST_EVENT,
 	procStopAllReplyEvent: PROC_STOP_ALL_REPLY_EVENT,
 	procStopAllMaxWaitMs: PROC_STOP_ALL_MAX_WAIT_MS,
-} = RESET_CONTRACT;
+} = RENEW_CONTRACT;
 
 interface ProcStopAllResult {
 	id: string;
@@ -16,20 +16,20 @@ interface ProcStopAllResult {
 	timedOut: string[];
 }
 
-interface ResetBridge {
+interface RenewBridge {
 	sessionId: string;
 	cwd: string;
 	pi: ExtensionAPI;
 	applyModel(provider: string | undefined, modelId: string | undefined, thinkingLevel: string): Promise<boolean>;
 }
 
-function activeBridge(): ResetBridge | undefined {
-	return (globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge;
+function activeBridge(): RenewBridge | undefined {
+	return (globalThis as { __piXRenewBridge?: RenewBridge }).__piXRenewBridge;
 }
 
-export default function resetExtension(pi: ExtensionAPI): void {
+export default function renewExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
-		const bridge: ResetBridge = {
+		const bridge: RenewBridge = {
 			sessionId: ctx.sessionManager.getSessionId(),
 			cwd: ctx.cwd,
 			pi,
@@ -50,34 +50,34 @@ export default function resetExtension(pi: ExtensionAPI): void {
 				return ok;
 			},
 		};
-		(globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge = bridge;
+		(globalThis as { __piXRenewBridge?: RenewBridge }).__piXRenewBridge = bridge;
 	});
 	pi.on("session_shutdown", () => {
-		if (activeBridge()?.pi === pi) delete (globalThis as { __piXResetBridge?: ResetBridge }).__piXResetBridge;
+		if (activeBridge()?.pi === pi) delete (globalThis as { __piXRenewBridge?: RenewBridge }).__piXRenewBridge;
 	});
 
-	pi.registerCommand("reset", {
+	pi.registerCommand("renew", {
 		description: "Start a fresh session while retaining session settings",
 		handler: async (args, ctx) => {
-			const parsed = parseResetArguments(args);
+			const parsed = parseRenewArguments(args);
 			if (!parsed.ok) {
 				ctx.ui.notify(parsed.message.trim(), "warning");
 				return;
 			}
 			if (parsed.options.keepAgents) {
 				ctx.ui.notify(
-					"/reset +agents is unavailable: Pi replaces the extension runtime and event bus on /new, so running agents cannot be handed off without dropping or leaking completions. No session was changed.",
+					"/renew +agents is unavailable: Pi replaces the extension runtime and event bus on /new, so running agents cannot be handed off without dropping or leaking completions. No session was changed.",
 					"warning",
 				);
 				return;
 			}
-			await resetSession(pi, ctx, parsed.options.stopProc);
+			await renewSession(pi, ctx, parsed.options.stopProc);
 		},
 	});
 }
 
 export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: string): Promise<ProcStopAllResult | undefined> {
-	const id = `reset-proc-${targetSessionId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const id = `renew-proc-${targetSessionId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = (result?: ProcStopAllResult): void => {
@@ -99,10 +99,10 @@ export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: st
 	});
 }
 
-async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stopProc: boolean): Promise<void> {
+async function renewSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stopProc: boolean): Promise<void> {
 	const model = ctx.model;
 	const thinkingLevel = pi.getThinkingLevel();
-	const requestId = `reset-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const requestId = `renew-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	// In-process event bus with a shared trust domain: a random correlation id
 	// plus per-owner/session/cwd validation, but no cryptographic provenance.
 	// Owners answer synchronously (documented protocol), so collecting and then
@@ -118,8 +118,8 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 			value.cwd === ctx.cwd
 		) snapshots.set(value.owner, value.state);
 	};
-	const unsubscribeSnapshot = pi.events.on("px:reset:settings:response", onSnapshot);
-	pi.events.emit("px:reset:settings:request", {
+	const unsubscribeSnapshot = pi.events.on("px:renew:settings:response", onSnapshot);
+	pi.events.emit("px:renew:settings:request", {
 		id: requestId,
 		sourceSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
@@ -128,21 +128,21 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 	const result = await ctx.newSession({
 		withSession: async (newCtx) => {
 			// Pi creates a new event bus for every session. The old `pi.events` cannot
-			// reach replacement extensions; their fresh reset instance publishes this
+			// reach replacement extensions; their fresh renew instance publishes this
 			// process-local bridge during session_start.
 			const targetSessionId = newCtx.sessionManager.getSessionId();
 			const bridge = activeBridge();
 			if (!bridge || bridge.sessionId !== targetSessionId || bridge.cwd !== newCtx.cwd) {
 				newCtx.ui.notify(
-					"/reset: replacement extension is unavailable; settings were not transferred and -proc was not applied.",
+					"/renew: replacement extension is unavailable; settings were not transferred and -proc was not applied.",
 					"warning",
 				);
 				return;
 			}
 			if (stopProc) {
 				const stopped = await stopManagedProcesses(bridge.pi, targetSessionId);
-				if (!stopped) newCtx.ui.notify("/reset -proc: process manager did not respond; processes may still be running.", "warning");
-				else if (stopped.timedOut.length) newCtx.ui.notify(`/reset -proc: processes did not stop: ${stopped.timedOut.join(", ")}`, "warning");
+				if (!stopped) newCtx.ui.notify("/renew -proc: process manager did not respond; processes may still be running.", "warning");
+				else if (stopped.timedOut.length) newCtx.ui.notify(`/renew -proc: processes did not stop: ${stopped.timedOut.join(", ")}`, "warning");
 			}
 			const expected = [...snapshots.keys()];
 			const completed = new Set<string>();
@@ -150,7 +150,7 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 			let timeout: ReturnType<typeof setTimeout> | undefined;
 			const acknowledged = new Promise<void>((resolve) => {
 				if (expected.length === 0) resolve();
-				unsubscribeAck = bridge.pi.events.on("px:reset:settings:ack", (payload) => {
+				unsubscribeAck = bridge.pi.events.on("px:renew:settings:ack", (payload) => {
 					if (!payload || typeof payload !== "object") return;
 					const ack = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown };
 					if (ack.transferId !== requestId || ack.targetSessionId !== targetSessionId || ack.cwd !== newCtx.cwd) return;
@@ -160,10 +160,10 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 			});
 			try {
 				if (!(await bridge.applyModel(model?.provider, model?.id, thinkingLevel))) {
-					newCtx.ui.notify("/reset: model or thinking level could not be restored.", "warning");
+					newCtx.ui.notify("/renew: model or thinking level could not be restored.", "warning");
 				}
 				for (const [owner, state] of snapshots) {
-					bridge.pi.events.emit("px:reset:settings:apply", { transferId: requestId, owner, targetSessionId, cwd: newCtx.cwd, state });
+					bridge.pi.events.emit("px:renew:settings:apply", { transferId: requestId, owner, targetSessionId, cwd: newCtx.cwd, state });
 				}
 				if (expected.length) {
 					const timedOut = new Promise<void>((resolve) => {
@@ -171,7 +171,7 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 					});
 					await Promise.race([acknowledged, timedOut]);
 					const missing = expected.filter((owner) => !completed.has(owner));
-					if (missing.length) newCtx.ui.notify(`/reset: settings not fully transferred (${missing.join(", ")}).`, "warning");
+					if (missing.length) newCtx.ui.notify(`/renew: settings not fully transferred (${missing.join(", ")}).`, "warning");
 				}
 			} finally {
 				if (timeout) clearTimeout(timeout);
@@ -179,5 +179,5 @@ async function resetSession(pi: ExtensionAPI, ctx: ExtensionCommandContext, stop
 			}
 		},
 	});
-	if (result.cancelled && ctx.hasUI) ctx.ui.notify("/reset cancelled.", "info");
+	if (result.cancelled && ctx.hasUI) ctx.ui.notify("/renew cancelled.", "info");
 }
