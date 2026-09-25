@@ -30,31 +30,33 @@ and its output is byte for byte what it would have been without this extension.
 
 ## The config dialog
 
-`/px:focus config` opens a settings screen in the same frame language as
-`Ctrl+,` quick actions. Because the dialog is drawn through the same output
+`/px:focus config` opens a settings screen that copies the pi-ui quick actions
+dialog exactly: the same white heavy frame, the same truecolor black selected
+row, the same three column gutter, the same `─●` / `○─` toggle control and the
+same escape vocabulary. Because the dialog is drawn through the output
 transform, it appears inside the reading column it is editing.
 
 ```text
-╭━╾ Focus ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃                                             ┃
-┃  › Enabled                              ● on ┃
-┃    Width                                 100 ┃
-┃    Bias                                    0 ┃
-┃                                             ┃
-┃                200                          ┃
-┃    ┌──────────────────────────────┐         ┃
-┃    │        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓       │         ┃
-┃    └──────────────────────────────┘         ┃
-┃    50            100           50           ┃
-┃                                             ┃
-┃    ↺ Reset to defaults                     R ┃
-┃                                             ┃
-┃    Apply                              ↵ save ┃
-┃    Apply for session     ↵ this session only ┃
-┃                                             ┃
-┃  j k move · h l change · H L fine           ┃
-┃  ↵ presets · r row · R all · 0 center · esc ┃
-╰─────────────────────────────────────────────╯
+                                      ╭━╾ Focus ╼━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+                                      ┃                                             ┃
+                                      ┃    › Enabled                           ─●   ┃
+                                      ┃      Width                           100    ┃
+                                      ┃      Bias                              0    ┃
+                                      ┃                                             ┃
+                                      ┃                    120                      ┃
+                                      ┃   ┌─────────────────────────────────────┐   ┃
+                                      ┃   │   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓   │   ┃
+                                      ┃   └─────────────────────────────────────┘   ┃
+                                      ┃   10               100               10     ┃
+                                      ┃                                             ┃
+                                      ┃      ↺ Reset to defaults               R    ┃
+                                      ┃                                             ┃
+                                      ┃      Apply                        ↵ save    ┃
+                                      ┃      Apply for session         ↵ session    ┃
+                                      ┃                                             ┃
+                                      ┃ j k move · h l change · H L fine · ↵ presets┃
+                                      ┃ r row · R all · 0 center · esc close        ┃
+                                      ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
 ```
 
 The number above the bar is the terminal width, the bar is the screen to scale,
@@ -91,8 +93,9 @@ Nothing is written or repainted while you edit. Two buttons at the bottom:
   alone, so the change dies with the session.
 
 `esc` closes straight away when the draft still matches what you opened with.
-If you changed something it asks first: `s` save, `S` session only, `d` discard,
-`c` keep editing.
+If you changed something it asks first, with two ways out: `d` throws the draft
+away, `esc` goes back to editing. To keep the changes, press `esc` and then
+Apply.
 
 ## Bias
 

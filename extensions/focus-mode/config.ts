@@ -1,4 +1,4 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { type Component, type Focusable, Key, matchesKey, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import type { FocusModeStateV1 } from "./state";
 import { DEFAULT_BIAS, DEFAULT_WIDTH, MAX_BIAS, MAX_WIDTH, MIN_BIAS, MIN_WIDTH, resolveGeometry } from "./viewport";
@@ -13,10 +13,17 @@ export const WIDTH_FINE_STEP = 1;
 export const BIAS_STEP = 25;
 export const BIAS_FINE_STEP = 5;
 
-/** Widest the frame gets, borders included. */
-const FRAME_MAX = 47;
-/** Cells used to draw the terminal in the visualization. */
-const BAR_CELLS_MAX = 30;
+/**
+ * Frame language copied from the pi-ui quick actions dialog
+ * (`extensions/pi-ui/index.ts`): white heavy lines, a truecolor black
+ * background on the selected row, three columns of padding either side, and a
+ * full width background row above and below the frame. Keep the two in sync.
+ */
+const MAX_FRAME_WIDTH = 47;
+const borderOf = (text: string): string => `\x1b[97m${text}\x1b[39m`;
+const SELECTED_BG = "\x1b[48;2;0;0;0m";
+const SELECTED_FG = "\x1b[97m";
+const RESET_BG = "\x1b[49m";
 
 const ROWS = ["enabled", "width", "bias", "reset", "apply", "apply-session"] as const;
 type Row = (typeof ROWS)[number];
@@ -126,7 +133,8 @@ export class FocusModeConfigDialog implements Component, Focusable {
 	private selected = 0;
 	private mode: Mode = "edit";
 	private scroller: Scroller | null = null;
-	private contentWidth = FRAME_MAX - 2;
+	private contentWidth = MAX_FRAME_WIDTH - 2;
+	private contentPadding = 3;
 	private _focused = false;
 
 	constructor(
@@ -271,14 +279,10 @@ export class FocusModeConfigDialog implements Component, Focusable {
 		}
 
 		if (this.mode === "confirm") {
-			if (data === "s" || data === "a") this.apply(true);
-			else if (data === "S") this.apply(false);
-			else if (data === "d") {
+			// Only two ways out: throw the draft away, or go back and keep it.
+			if (data === "d") {
 				this.draft = { ...this.snapshot };
 				this.done();
-			} else if (data === "c" || data === "q") {
-				this.mode = "edit";
-				this.tui.requestRender();
 			}
 			return;
 		}
@@ -356,30 +360,133 @@ export class FocusModeConfigDialog implements Component, Focusable {
 
 	// --- rendering ---
 
+	/**
+	 * One row of the dialog, laid out like a quick actions row: a `›` marker,
+	 * the label, then a right hand column holding the value and, for toggles,
+	 * the `─●` / `○─` status marker.
+	 */
+	private actionLine(label: string, right: string, marker: { text: string; color: ThemeColor } | null, isSelected: boolean): string {
+		const rightText = [right, marker?.text].filter((part) => part && part.length > 0).join(" ");
+		const padding = this.contentPadding;
+		const prefix = isSelected
+			? `${padding > 1 ? " " : ""}›${" ".repeat(Math.max(0, padding - 2))}`
+			: " ".repeat(padding);
+		const rowWidth = Math.max(1, this.contentWidth - padding * 2);
+		const actionWidth = Math.max(1, rowWidth - 1);
+		const minGap = Math.min(5, Math.max(1, actionWidth - visibleWidth(rightText) - 1));
+		const availableLeft = Math.max(1, actionWidth - visibleWidth(rightText) - minGap);
+		const leftText = truncateToWidth(`${prefix}${label}`, availableLeft, "");
+		const gap = " ".repeat(Math.max(minGap, actionWidth - visibleWidth(leftText) - visibleWidth(rightText)));
+
+		const left = isSelected ? SELECTED_FG + leftText + "\x1b[39m" : leftText;
+		const styledRight = right ? (isSelected ? SELECTED_FG + right + "\x1b[39m" : this.theme.fg("dim", right)) : "";
+		let markerText = "";
+		if (marker) {
+			markerText = isSelected
+				? SELECTED_FG + marker.text + "\x1b[39m"
+				: this.theme.fg(marker.color, this.theme.bold(marker.text));
+		}
+
+		const row = `${left}${gap}${styledRight}${markerText ? ` ${markerText}` : ""}`;
+		const clipped = truncateToWidth(row, rowWidth, "");
+		const padded = clipped + " ".repeat(Math.max(0, rowWidth - visibleWidth(clipped)));
+		const paddedRow = `${" ".repeat(padding)}${padded}${" ".repeat(padding)}`;
+		return isSelected ? `${SELECTED_BG}${paddedRow}${RESET_BG}` : paddedRow;
+	}
+
+	/** Enabled row, with the same `─●` / `○─` toggle control quick actions uses. */
+	private toggleMarker(enabled: boolean): { text: string; color: ThemeColor } {
+		return enabled ? { text: "─●", color: "success" } : { text: "○─", color: "muted" };
+	}
+
+	render(width: number): string[] {
+		const available = Math.max(1, width);
+		const frameWidth = Math.min(Math.max(1, available - 2), MAX_FRAME_WIDTH);
+		this.contentWidth = Math.max(1, frameWidth - 2);
+		this.contentPadding = Math.min(3, Math.floor((this.contentWidth - 1) / 2));
+		const outerWidth = Math.max(0, available - frameWidth);
+		const outerLeft = " ".repeat(Math.floor(outerWidth / 2));
+		const outerRight = " ".repeat(Math.ceil(outerWidth / 2));
+		const outerLine = " ".repeat(available);
+		const wrap = (line: string): string => outerLeft + line + outerRight;
+
+		const body =
+			this.mode === "confirm"
+				? this.renderConfirm()
+				: this.renderBody();
+		const title =
+			this.mode === "confirm"
+				? "Focus / unsaved"
+				: this.mode === "preset"
+					? `Focus / ${this.scroller?.field === "width" ? "Width" : "Bias"}`
+					: "Focus";
+
+		return [outerLine, ...[this.top(title), ...body, this.bottom()].map(wrap), outerLine];
+	}
+
+	private renderConfirm(): string[] {
+		const line = this.actionLine("discard changes", "", null, false);
+		return [
+			this.frame(""),
+			this.frame(` ${this.theme.fg("warning", "Unsaved changes.")}`),
+			this.frame(""),
+			line,
+			this.frame(`   ${this.theme.fg("dim", "esc  continue editing")}`),
+			this.frame(""),
+		];
+	}
+
+	private renderBody(): string[] {
+		const cells = Math.max(8, this.contentWidth - this.contentPadding * 2 - 2);
+		const indent = " ".repeat(this.contentPadding);
+		const preview = previewFor(this.getRealWidth(), {
+			...this.draft,
+			width: this.displayValue("width"),
+			bias: this.displayValue("bias"),
+		});
+
+		const lines: string[] = [this.frame("")];
+		lines.push(
+			this.frame(this.actionLine("Enabled", "", this.toggleMarker(this.draft.enabled), this.selectedRow === "enabled")),
+		);
+		lines.push(this.frame(this.actionLine("Width", String(this.displayValue("width")), null, this.selectedRow === "width")));
+		if (this.mode === "preset" && this.scroller?.field === "width") lines.push(this.renderScrollerRow());
+		lines.push(this.frame(this.actionLine("Bias", String(this.displayValue("bias")), null, this.selectedRow === "bias")));
+		if (this.mode === "preset" && this.scroller?.field === "bias") lines.push(this.renderScrollerRow());
+		lines.push(this.frame(""));
+		for (const line of renderBarBlock(preview, cells, indent)) lines.push(this.frame(this.theme.fg("dim", line)));
+		if (preview.inert) {
+			lines.push(this.frame(this.theme.fg("dim", ` ${indent}no margin, the terminal is only ${preview.realWidth} wide`)));
+		}
+		lines.push(this.frame(""));
+		lines.push(this.frame(this.actionLine("↺ Reset to defaults", "R", null, this.selectedRow === "reset")));
+		lines.push(this.frame(""));
+		lines.push(this.frame(this.actionLine("Apply", "↵ save", null, this.selectedRow === "apply")));
+		lines.push(this.frame(this.actionLine("Apply for session", "↵ session", null, this.selectedRow === "apply-session")));
+		lines.push(this.frame(""));
+		const hints =
+			this.mode === "preset"
+				? "h l scroll · ↵ pick · esc cancel"
+				: "j k move · h l change · H L fine · ↵ presets";
+		lines.push(this.frame(this.theme.fg("dim", ` ${hints}`)));
+		lines.push(this.frame(this.theme.fg("dim", " r row · R all · 0 center · esc close")));
+		return lines;
+	}
+
 	/** Pad a content line to the frame width and add the side borders. */
 	private frame(text = ""): string {
-		const border = (s: string): string => this.theme.fg("border", s);
-		const used = visibleWidth(text);
-		const clipped = used > this.contentWidth ? truncateToWidth(text, this.contentWidth) : text;
-		return border(`┃${clipped}${" ".repeat(Math.max(0, this.contentWidth - visibleWidth(clipped)))}┃`);
+		const clipped = visibleWidth(text) > this.contentWidth ? truncateToWidth(text, this.contentWidth, "") : text;
+		return `${borderOf("┃")}${clipped}${" ".repeat(Math.max(0, this.contentWidth - visibleWidth(clipped)))}${borderOf("┃")}`;
 	}
 
 	private top(title: string): string {
-		const border = (s: string): string => this.theme.fg("border", s);
-		const label = ` ${title} `;
-		const fill = Math.max(0, this.contentWidth - visibleWidth(label) - 3);
-		return border(`╭━╾`) + this.theme.bold(label) + border(`╼${"━".repeat(fill)}╮`);
+		const titleText = truncateToWidth(` ${title} `, Math.max(1, this.contentWidth - 4), "");
+		const topFill = "━".repeat(Math.max(0, this.contentWidth - visibleWidth(titleText) - 3));
+		return `${borderOf("╭━╾")}${borderOf(this.theme.bold(titleText))}${borderOf(`╼${topFill}╮`)}`;
 	}
 
-	/** A label/value row, framed, with the selected row highlighted. */
-	private row(label: string, value: string, selected: boolean, hint?: string): string {
-		const marker = selected ? "›" : " ";
-		const left = ` ${marker} ${label}`;
-		const right = [value, hint].filter((part) => part && part.length > 0).join(" ");
-		const gap = Math.max(1, this.contentWidth - 1 - visibleWidth(left) - visibleWidth(right));
-		const plain = ` ${left}${" ".repeat(gap)}${right}`;
-		const padded = plain + " ".repeat(Math.max(0, this.contentWidth - visibleWidth(plain)));
-		return this.frame(selected ? this.theme.bg("selectedBg", this.theme.fg("text", padded)) : padded);
+	private bottom(): string {
+		return borderOf(`╰${"━".repeat(this.contentWidth)}╯`);
 	}
 
 	private renderScrollerRow(): string {
@@ -387,88 +494,15 @@ export class FocusModeConfigDialog implements Component, Focusable {
 		const { values, index } = this.scroller;
 		const labels = values.map((value, i) => (i === index ? `[${value}]` : `${value}`));
 		const lengths = labels.map((label) => visibleWidth(label));
-		const budget = this.contentWidth - 6;
+		const budget = this.contentWidth - this.contentPadding * 2 - 2;
 		const [start, end] = fitWindow(lengths, index, budget, 3);
 		const parts: string[] = [];
 		if (start > 0) parts.push(this.theme.fg("dim", "‹"));
 		for (let i = start; i < end; i++) {
-			parts.push(i === index ? this.theme.fg("accent", labels[i] ?? "") : this.theme.fg("dim", labels[i] ?? ""));
+			const label = labels[i] ?? "";
+			parts.push(i === index ? this.theme.fg("accent", label) : this.theme.fg("dim", label));
 		}
 		if (end < values.length) parts.push(this.theme.fg("dim", "›"));
-		return this.frame(`    ${parts.join(this.theme.fg("dim", " · "))}`);
-	}
-
-	private renderConfirm(): string[] {
-		const options: [string, string, string][] = [
-			["s", "save and close", "apply + write config"],
-			["S", "session only", "apply, no write"],
-			["d", "discard", "revert to how it was"],
-			["c", "keep editing", ""],
-		];
-		const lines = [
-			this.frame(),
-			this.frame(`  ${this.theme.fg("warning", "Unsaved changes. Save or reset first?")}`),
-			this.frame(),
-		];
-		for (const [key, label, detail] of options) {
-			const left = `    ${this.theme.bold(key)}  ${label}`;
-			const gap = Math.max(1, this.contentWidth - visibleWidth(left) - visibleWidth(detail));
-			lines.push(this.frame(`${left}${" ".repeat(gap)}${this.theme.fg("dim", detail)}`));
-		}
-		lines.push(this.frame(), this.frame(`  ${this.theme.fg("dim", "esc back to editing")}`));
-		return lines;
-	}
-
-	render(width: number): string[] {
-		const available = Math.max(24, width);
-		const total = Math.min(available, FRAME_MAX);
-		this.contentWidth = Math.max(1, total - 2);
-		const outer = Math.max(0, available - total);
-		const outerLeft = " ".repeat(Math.floor(outer / 2));
-		const outerRight = " ".repeat(Math.ceil(outer / 2));
-		const wrap = (line: string): string => outerLeft + line + outerRight;
-
-		if (this.mode === "confirm") {
-			return [wrap(this.top("Focus / unsaved")), ...this.renderConfirm().map(wrap), wrap(this.bottom())];
-		}
-
-		const cells = Math.max(8, Math.min(BAR_CELLS_MAX, this.contentWidth - 8));
-		const indent = " ".repeat(2);
-		const preview = previewFor(this.getRealWidth(), {
-			...this.draft,
-			width: this.displayValue("width"),
-			bias: this.displayValue("bias"),
-		});
-
-		const title = this.mode === "preset" ? `Focus / ${this.scroller?.field === "width" ? "Width" : "Bias"}` : "Focus";
-		const lines: string[] = [wrap(this.top(title))];
-
-		lines.push(wrap(this.frame()));
-		lines.push(wrap(this.row("Enabled", this.draft.enabled ? "● on" : "○ off", this.selectedRow === "enabled")));
-		lines.push(wrap(this.row("Width", String(this.displayValue("width")), this.selectedRow === "width")));
-		if (this.mode === "preset" && this.scroller?.field === "width") lines.push(wrap(this.renderScrollerRow()));
-		lines.push(wrap(this.row("Bias", String(this.displayValue("bias")), this.selectedRow === "bias")));
-		if (this.mode === "preset" && this.scroller?.field === "bias") lines.push(wrap(this.renderScrollerRow()));
-		lines.push(wrap(this.frame()));
-		for (const line of renderBarBlock(preview, cells, indent)) lines.push(wrap(this.frame(line)));
-		if (preview.inert) {
-			lines.push(wrap(this.frame(`  ${this.theme.fg("dim", `no margin, the terminal is only ${preview.realWidth} wide`)}`)));
-		}
-		lines.push(wrap(this.frame()));
-		lines.push(wrap(this.row("↺ Reset to defaults", "", this.selectedRow === "reset", "R")));
-		lines.push(wrap(this.frame()));
-		lines.push(wrap(this.row("Apply", "", this.selectedRow === "apply", "↵ save")));
-		lines.push(wrap(this.row("Apply for session", "", this.selectedRow === "apply-session", "↵ this session only")));
-		lines.push(wrap(this.frame()));
-		const hint1 = this.mode === "preset" ? "h l scroll · ↵ pick · esc cancel" : "j k move · h l change · H L fine";
-		const hint2 = this.mode === "preset" ? "↵ picks, esc keeps the old value" : "↵ presets · r row · R all · 0 center · esc";
-		lines.push(wrap(this.frame(`  ${this.theme.fg("dim", hint1)}`)));
-		lines.push(wrap(this.frame(`  ${this.theme.fg("dim", hint2)}`)));
-		lines.push(wrap(this.bottom()));
-		return lines;
-	}
-
-	private bottom(): string {
-		return this.theme.fg("border", `╰${"─".repeat(this.contentWidth)}╯`);
+		return this.frame(` ${" ".repeat(this.contentPadding)}${parts.join(this.theme.fg("dim", " · "))}`);
 	}
 }

@@ -326,18 +326,23 @@ describe("closing", () => {
 		expect(dialog.mode_).toBe("confirm");
 	});
 
-	test("save from the prompt applies and persists", () => {
-		const { press, applied, closed } = harness(240);
-		press("j", "l", KEY.esc, "s");
-		expect(applied()).toEqual({ state: base({ width: 105 }), persist: true });
-		expect(closed()).toBe(1);
+	test("the prompt offers only discard and continue editing", () => {
+		const { dialog, press, applied, closed } = harness(240);
+		press("j", "l", KEY.esc);
+		expect(dialog.mode_).toBe("confirm");
+		const text = dialog.render(100).join("\n");
+		expect(text).toContain("discard changes");
+		expect(text).toContain("continue editing");
+		expect(text).not.toContain("save and close");
+		expect(text).not.toContain("session only");
 	});
 
-	test("session from the prompt applies without persisting", () => {
-		const { press, applied, closed } = harness(240);
-		press("j", "l", KEY.esc, "S");
-		expect(applied()).toEqual({ state: base({ width: 105 }), persist: false });
-		expect(closed()).toBe(1);
+	test("nothing else is bound on the prompt", () => {
+		const { dialog, press, applied, closed } = harness(240);
+		press("j", "l", KEY.esc, "s", "S", "c", "q");
+		expect(applied()).toBeNull();
+		expect(closed()).toBe(0);
+		expect(dialog.mode_).toBe("confirm");
 	});
 
 	test("discard drops the changes and closes", () => {
@@ -348,9 +353,9 @@ describe("closing", () => {
 		expect(dialog.state).toEqual(base());
 	});
 
-	test("keep editing returns to the dialog with the draft intact", () => {
+	test("esc on the prompt returns to the dialog with the draft intact", () => {
 		const { dialog, press, closed } = harness(240);
-		press("j", "l", KEY.esc, "c");
+		press("j", "l", KEY.esc, KEY.esc);
 		expect(closed()).toBe(0);
 		expect(dialog.mode_).toBe("edit");
 		expect(dialog.state.width).toBe(105);
@@ -376,12 +381,19 @@ describe("rendering", () => {
 		expect(new Set(widths(scroller)).size).toBe(1);
 	});
 
+	test("the toggle control matches the quick actions one", () => {
+		const on = harness(240, { enabled: true });
+		const off = harness(240, { enabled: false });
+		expect(on.render(100).join("\n")).toContain("─●");
+		expect(off.render(100).join("\n")).toContain("○─");
+	});
+
 	test("the selected row is marked and the values are shown", () => {
 		const { render } = harness(240, { bias: -50 });
 		const text = render(100).join("\n");
 		expect(text).toContain("Focus");
 		expect(text).toContain("Enabled");
-		expect(text).toContain("● on");
+		expect(text).toContain("─●");
 		expect(text).toContain("Bias");
 		expect(text).toContain("-50");
 		expect(text).toContain("240");
@@ -398,5 +410,71 @@ describe("rendering", () => {
 		const { render, press } = harness(240, { width: 90 });
 		press("j", KEY.enter);
 		expect(render(100).join("\n")).toContain("80 · [90] · 100 · 120");
+	});
+});
+
+describe("quick actions parity", () => {
+	// Same escape vocabulary pi-ui uses for its dialog frame (see pi-ui/index.ts).
+	const on = harness(240, { enabled: true });
+	const off = harness(240, { enabled: false });
+	const rawLines = (h: typeof on, width = 120): string[] => h.dialog.render(width);
+	const raw = (h: typeof on, width = 120): string => rawLines(h, width).join("\n");
+
+	test("the frame is 47 wide inside the overlay and centered", () => {
+		const lines = on.dialog.render(120);
+		const plain = (line: string): string => line.replace(/\x1b\[[0-9;]*m/g, "");
+		for (const line of lines) expect(plain(line).length).toBe(120);
+		const top = plain(lines[1]!);
+		const start = top.indexOf("╭");
+		const frame = top.slice(start, top.indexOf("╮", start) + 1);
+		expect(frame.length).toBe(47);
+		expect(frame.startsWith("╭━╾ Focus ╼")).toBe(true);
+		expect(start).toBe(36); // (120 - 47) / 2
+		const bottom = plain(lines.at(-2)!).trimEnd();
+		expect(bottom.slice(bottom.indexOf("╰"))).toBe(`╰${"━".repeat(45)}╯`);
+	});
+
+	test("the title sits inside the white border, like pi-ui's", () => {
+		expect(rawLines(on)[1]).toMatch(/\x1b\[97m╭━╾\x1b\[39m\x1b\[97m.* Focus .*\x1b\[39m\x1b\[97m╼/);
+	});
+
+	test("unselected values are dim, the selected row is black on white", () => {
+		const text = raw(on);
+		// dim right hand value on an unselected row
+		expect(text).toContain(`\x1b[38;5;39m100\x1b[39m`);
+		// white label inside the truecolor black selected row
+		expect(text).toMatch(/\x1b\[48;2;0;0;0m\s+\x1b\[97m › Enabled\x1b\[39m/);
+		expect(text).toMatch(/\x1b\[97m─●\x1b\[39m\s+\x1b\[49m/);
+	});
+
+	test("a full width background row sits above and below the frame", () => {
+		const lines = on.dialog.render(120);
+		expect(lines[0]).toBe(" ".repeat(120));
+		expect(lines.at(-1)).toBe(" ".repeat(120));
+	});
+
+	test("the border, the selected row and the title use the same escapes as pi-ui", () => {
+		const text = raw(on);
+		expect(text).toContain("\x1b[97m╭━╾\x1b[39m");
+		expect(text).toContain("\x1b[48;2;0;0;0m"); // truecolor black, as pi-ui does
+		expect(text).toContain("\x1b[49m");
+	});
+
+	test("the toggle marker is success when on and muted when off", () => {
+		expect(raw(on)).toContain("─●");
+		expect(raw(off)).toContain("○─");
+	});
+
+	test("rows line up in the same three column gutter as quick actions", () => {
+		const plain = rawLines(on).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+		const gutter = (needle: string): number => plain.find((l) => l.includes(needle))!.indexOf(needle);
+		expect(gutter("Enabled")).toBe(gutter("Width"));
+		expect(gutter("Width")).toBe(gutter("Bias"));
+		expect(gutter("Apply")).toBe(gutter("Apply for session"));
+		// three columns of padding inside the ┃, then pi-ui's " ›" marker
+		const enabled = plain.find((l) => l.includes("Enabled"))!;
+		expect(enabled.slice(enabled.indexOf("┃") + 1)).toMatch(/^ {4}› Enabled/);
+		const unselected = plain.find((l) => l.includes("Width"))!;
+		expect(unselected.slice(unselected.indexOf("┃") + 1)).toMatch(/^ {6}Width/);
 	});
 });
