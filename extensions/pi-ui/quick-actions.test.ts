@@ -13,6 +13,7 @@ function openDialog(initiallyLocked = false) {
 	let closes = 0;
 	let reader = false;
 	let outer = false;
+	let focus = false;
 	let doomCalls = 0;
 	let rewire = false;
 	let locked = initiallyLocked;
@@ -34,6 +35,8 @@ function openDialog(initiallyLocked = false) {
 		isLocked: () => locked,
 		onToggleOuter: () => { outer = !outer; },
 		onSetYoloPlus: () => { doomCalls++; },
+		onToggleFocus: () => { focus = !focus; },
+		isFocusEnabled: () => focus,
 		onShowPromptPreviews: () => {},
 		onPromptStashStash: () => {},
 		onPromptStashPop: () => {},
@@ -53,7 +56,7 @@ function openDialog(initiallyLocked = false) {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -73,9 +76,28 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(1);
 	});
 
+	test("Ctrl+f toggles focus mode and closes the dialog", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("\x06"); // Ctrl+f
+		await ui.finished;
+		expect(ui.focus).toBe(true);
+		expect(ui.closes).toBe(1);
+	});
+
+	test("Enter on focus mode keeps the dialog open", async () => {
+		const ui = openDialog();
+		for (let i = 0; i < 3; i++) ui.dialog.handleInput("\x1b[B"); // Focus mode
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.focus).toBe(true);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
 	test("Enter on rewire keeps the dialog open and redraws on state change", async () => {
 		const ui = openDialog();
-		for (let i = 0; i < 5; i++) ui.dialog.handleInput("\x1b[B"); // Rewire agents
+		for (let i = 0; i < 6; i++) ui.dialog.handleInput("\x1b[B"); // Rewire agents
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.rewire).toBe(true);

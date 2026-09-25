@@ -35,6 +35,7 @@ Current dialog items:
   - `r - toggle reader mode`
   - `Ctrl+d - DANGER mode` (toggles `yolo+`)
   - `+ - toggle outer mode`
+  - `Ctrl+f - toggle focus mode` (the focus-mode reading column)
 - **Agents**
   - `a - subagents…` (opens the `/px:agents` batch list)
   - `R - agents rewiring…` (opens the rewiring menu, including `Inherit model` and `Inherit All`)
@@ -76,6 +77,7 @@ Behavior details:
 - Pressing `R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` emits event `px:safe-mode:toggle-reader` and closes the dialog.
 - Pressing `+` emits event `px:safe-mode:toggle-outer` and closes the dialog.
+- Pressing `Ctrl+f` emits event `px:focus-mode:toggle` and closes the dialog.
 - Pressing `Ctrl+d` emits event `px:safe-mode:set-yolo-plus` and closes the dialog.
 - Selecting any of these toggles with `Enter` keeps the dialog open.
 - Pressing `p` (or `P`) opens a full-width, tabbed prompt-history dialog in the same visual style:
@@ -91,11 +93,13 @@ Behavior details:
 - Toggle switches show on as `─●` (severity-colored) and off as `○─` (muted):
   - Reader mode: normal/success (green).
   - Outer access: warning (orange/amber from the active theme).
+  - Focus mode: normal/success (green).
   - DANGER mode (`yolo+`) and agent rewiring: danger (red).
 - Safe-mode rows read live state from the current `safe-mode` session data.
+- The focus-mode row mirrors the state focus-mode publishes on `px:focus-mode:state`.
 - Agent rewiring mirrors the subagent extension's published rewire status.
 - The event payload includes the current extension context (`{ ctx }`) so listeners can apply changes in the active session.
-- If `prompt-stash` or `safe-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
+- If `prompt-stash`, `safe-mode` or `focus-mode` are not installed/enabled, their keys simply close the dialog (no listener handles the event).
 - The main overlay spans the available terminal width; its compact frame remains centered and is capped at 47 columns, with a responsive narrow-terminal fallback.
 - Prompt-history dialog uses the full available overlay width (`width: 100%`, `minWidth: 40`) and the quick-actions frame language.
 
@@ -109,6 +113,8 @@ Integration contract (important):
   - `px:safe-mode:toggle-reader`
   - `px:safe-mode:toggle-outer`
   - `px:safe-mode:set-yolo-plus`
+  - `px:focus-mode:toggle`
+  - `px:focus-mode:state` (published by `focus-mode`, not emitted by `pi-ui`)
   - `px:notes:open`
   - `px:notes:list`
   - `px:subagent:rewire:toggle`
@@ -122,6 +128,9 @@ Integration contract (important):
   - if mode is `reader` and no remembered previous mode: no-op
   - for `px:safe-mode:toggle-outer`: toggle `outerAccess`
   - for `px:safe-mode:set-yolo-plus`: toggle `yolo+` (enter `yolo+` and remember previous state; if already in `yolo+`, restore previous state when available)
+- Expected focus-mode listener behavior (implemented in `focus-mode`):
+  - for `px:focus-mode:toggle`: flip the reading column on/off and persist it, exactly like the bare `/px:focus` command
+  - publish `px:focus-mode:state` with `{ enabled, width, bias }` on session start and after every change so `pi-ui` can draw the badge
 
 This dialog is intentionally minimal now, but should be treated as the primary place for adding additional keyboard-triggered UI actions over time.
 

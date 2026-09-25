@@ -20,6 +20,11 @@ every line across the screen.
 `set` takes an optional bias after a slash: `set 100/-50`. Leave it off and the
 current bias is kept, so `set 120` only changes the width.
 
+The pi-ui quick actions dialog (`Ctrl+,`) has a **Focus mode** row on `Ctrl+f` that
+toggles the reading column, the same as `/px:focus`. focus-mode also publishes
+its state on `px:focus-mode:state` and listens for `px:focus-mode:toggle`, which
+is how that row shows and changes the current state.
+
 Add `-s` (or `--session`) anywhere to apply a change for this session without
 saving it:
 

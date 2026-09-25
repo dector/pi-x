@@ -4,6 +4,11 @@ import { USAGE, focusModeCompletions, parseFocusModeCommand } from "./command";
 import { loadGlobalState, saveGlobalState, type FocusModeStateV1 } from "./state";
 import { FocusModeViewport } from "./viewport";
 
+/** Toggle focus mode from another extension (e.g. the pi-ui quick actions dialog). */
+export const FOCUS_MODE_TOGGLE_EVENT = "px:focus-mode:toggle";
+/** Broadcast the current focus-mode state so the quick actions dialog can show it. */
+export const FOCUS_MODE_STATE_EVENT = "px:focus-mode:state";
+
 function isInteractiveTerminal(): boolean {
 	const stdout = process.stdout as { isTTY?: boolean };
 	const stdin = process.stdin as { isTTY?: boolean };
@@ -25,9 +30,14 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 	let current: FocusModeStateV1 = persisted;
 	let reportedLoadError = false;
 
+	const publishState = (): void => {
+		pi.events.emit(FOCUS_MODE_STATE_EVENT, { enabled: current.enabled, width: current.width, bias: current.bias });
+	};
+
 	/** Push a configuration into the terminal, and persist it unless it is session only. */
 	const applyState = (next: FocusModeStateV1, persist = true): { message: string; type: "info" | "warning" } => {
 		current = next;
+		publishState();
 		const saved = persist ? saveGlobalState(next) : { ok: true as const };
 
 		if (!isInteractiveTerminal()) {
@@ -79,6 +89,9 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		// Let listeners (the pi-ui quick actions dialog) sync their badge even
+		// when this terminal cannot show the reading column.
+		publishState();
 		if (!isInteractiveTerminal()) return;
 
 		// Idempotent: only repaints when the screen moved since the last apply.
@@ -148,4 +161,14 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 	// The extension used to be called narrow; keep the old name working so
 	// muscle memory does not break. Drop this when it stops being useful.
 	pi.registerCommand("px:narrow", { ...command, description: `Deprecated alias for /px:focus (${command.description})` });
+
+	// Quick actions dialog in pi-ui emits this with `{ ctx }`; toggle and persist,
+	// exactly like the bare `/px:focus` command.
+	pi.events.on(FOCUS_MODE_TOGGLE_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const ctx = (payload as { ctx?: ExtensionContext }).ctx;
+		if (!ctx) return;
+		const { message, type } = applyState({ ...current, enabled: !current.enabled });
+		notify(ctx, message, type);
+	});
 }

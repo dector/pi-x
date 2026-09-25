@@ -13,6 +13,8 @@ const FRAME_TOKEN_PREFIX = "__pi_ui_frame_step:";
 const SAFE_MODE_TOGGLE_READER_EVENT = "px:safe-mode:toggle-reader";
 const SAFE_MODE_TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
 const SAFE_MODE_SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
+const FOCUS_MODE_TOGGLE_EVENT = "px:focus-mode:toggle";
+const FOCUS_MODE_STATE_EVENT = "px:focus-mode:state";
 const PROMPT_STASH_STASH_EVENT = "px:prompt-stash:stash";
 const PROMPT_STASH_POP_EVENT = "px:prompt-stash:pop";
 const PROMPT_STASH_LIST_EVENT = "px:prompt-stash:list";
@@ -1269,6 +1271,8 @@ export async function showHiDialog(
 		isLocked: () => boolean;
 		onToggleOuter: () => void;
 		onSetYoloPlus: () => void;
+		onToggleFocus: () => void;
+		isFocusEnabled: () => boolean;
 		onShowPromptPreviews: () => Promise<void>;
 		onPromptStashStash: () => void;
 		onPromptStashPop: () => void;
@@ -1311,6 +1315,8 @@ export async function showHiDialog(
 					isLocked,
 					onToggleOuter,
 					onSetYoloPlus,
+					onToggleFocus,
+					isFocusEnabled,
 					onShowPromptPreviews,
 					onPromptStashStash,
 					onPromptStashPop,
@@ -1335,7 +1341,7 @@ export async function showHiDialog(
 				if (closeRequestedBeforeInit) {
 					closeDialog();
 				}
-				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean };
+				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean; focusOn: boolean };
 				type DialogGroup = "PROMPTS & NOTES" | "AGENTS" | "ACCESS & SAFETY" | "";
 				type DialogAction = {
 					hotkey: string;
@@ -1357,7 +1363,7 @@ export async function showHiDialog(
 					menu: DialogMenu;
 				};
 
-				const getSafeModeUiState = (): DialogState => {
+				const getDialogState = (): DialogState => {
 					type MaybeSafeModeEntry = {
 						type?: string;
 						customType?: string;
@@ -1378,6 +1384,7 @@ export async function showHiDialog(
 						readerOn: mode === "reader",
 						outerOn: mode !== "paranoid" && outerAccess,
 						yoloPlusOn: mode === "yolo" && outerAccess,
+						focusOn: isFocusEnabled(),
 					};
 				};
 
@@ -1466,6 +1473,15 @@ export async function showHiDialog(
 						toggleSeverity: "warning",
 						isEnabled: (state) => state.outerOn,
 						run: onToggleOuter,
+					},
+					{
+						hotkey: Key.ctrl("f"),
+						hotkeyLabel: "Ctrl+f",
+						label: "Focus mode",
+						group: "ACCESS & SAFETY",
+						toggleSeverity: "none",
+						isEnabled: (state) => state.focusOn,
+						run: onToggleFocus,
 					},
 					{
 						hotkey: "p",
@@ -1656,7 +1672,7 @@ export async function showHiDialog(
 						const outerWidth = Math.max(0, width - frameWidth);
 						const outerLeft = " ".repeat(Math.floor(outerWidth / 2));
 						const outerRight = " ".repeat(Math.ceil(outerWidth / 2));
-						const state = getSafeModeUiState();
+						const state = getDialogState();
 						const border = (text: string): string => `\x1b[97m${text}\x1b[39m`;
 						const selectedBg = "\x1b[48;2;0;0;0m";
 						const selectedFg = "\x1b[97m";
@@ -1886,6 +1902,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let requestActionDialogClose: (() => void) | undefined;
 	let requestActionDialogRender: (() => void) | undefined;
 	let agentsRewireEnabled = false;
+	let focusModeEnabled = false;
 	let locked = false;
 	let lockedTui: LockableTui | undefined;
 	let removeLockGate: (() => void) | undefined;
@@ -1919,6 +1936,14 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 	pi.events.on(STATUS_BAR_REWIRE_CLEAR_EVENT, () => {
 		agentsRewireEnabled = false;
+		requestActionDialogRender?.();
+	});
+	// focus-mode broadcasts its state on session start and on every change.
+	pi.events.on(FOCUS_MODE_STATE_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const enabled = (payload as { enabled?: unknown }).enabled;
+		if (typeof enabled !== "boolean") return;
+		focusModeEnabled = enabled;
 		requestActionDialogRender?.();
 	});
 
@@ -2204,6 +2229,10 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					onSetYoloPlus: () => {
 						pi.events.emit(SAFE_MODE_SET_YOLO_PLUS_EVENT, { ctx });
 					},
+					onToggleFocus: () => {
+						pi.events.emit(FOCUS_MODE_TOGGLE_EVENT, { ctx });
+					},
+					isFocusEnabled: () => focusModeEnabled,
 					onShowPromptPreviews: async () => {
 						await showPromptPreviewDialog(ctx);
 					},

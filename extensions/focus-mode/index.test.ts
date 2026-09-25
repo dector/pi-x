@@ -25,6 +25,8 @@ function setup() {
 	process.env.PI_FOCUS_MODE_STATE_PATH = statePath;
 	const commands = new Map<string, Command>();
 	const events = new Map<string, Array<() => void | Promise<void>>>();
+	const bus = new Map<string, Array<(payload: unknown) => void>>();
+	const emitted: Array<{ event: string; payload: unknown }> = [];
 	const pi = {
 		on(event: string, handler: () => void | Promise<void>) {
 			const list = events.get(event) ?? [];
@@ -33,6 +35,18 @@ function setup() {
 		},
 		registerCommand(name: string, options: Command) {
 			commands.set(name, options);
+		},
+		events: {
+			on(event: string, handler: (payload: unknown) => void) {
+				const list = bus.get(event) ?? [];
+				list.push(handler);
+				bus.set(event, list);
+				return () => bus.set(event, (bus.get(event) ?? []).filter((candidate) => candidate !== handler));
+			},
+			emit(event: string, payload: unknown) {
+				emitted.push({ event, payload });
+				for (const handler of bus.get(event) ?? []) handler(payload);
+			},
 		},
 	} as unknown as ExtensionAPI;
 
@@ -49,6 +63,8 @@ function setup() {
 	return {
 		commands,
 		events,
+		bus,
+		emitted,
 		notifications,
 		run: async (args: string) => {
 			const command = commands.get("px:focus");
@@ -165,6 +181,18 @@ describe("px:focus command", () => {
 		await run("");
 		expect(state().enabled).toBe(false);
 		expect(state().bias).toBe(-40);
+	});
+
+	test("the quick actions toggle event toggles and publishes state", () => {
+		const { bus, emitted, state } = setup();
+		const listeners = bus.get("px:focus-mode:toggle") ?? [];
+		expect(listeners).toHaveLength(1);
+		listeners[0]({ ctx: { hasUI: true, ui: { notify: () => {} } } });
+		expect(state().enabled).toBe(false);
+		expect(emitted.at(-1)).toEqual({
+			event: "px:focus-mode:state",
+			payload: { enabled: false, width: 100, bias: 0 },
+		});
 	});
 
 	test("set accepts columns/bias and leaves the bias alone without it", async () => {
