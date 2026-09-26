@@ -140,6 +140,7 @@ import { type RpcChild } from "./rpc-client.ts";
 import { sendControl, sendSteer, SubagentRegistry, type SubagentRunRuntime } from "./registry.ts";
 import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
+import { formatSubagentError, subagentErrorEntry, SUBAGENT_ERROR_CUSTOM_TYPE, type SubagentErrorEntry } from "./subagent-error.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { RewirePresetListView, type RewirePresetListResult } from "./rewire-preset-list.ts";
 import {
@@ -2465,6 +2466,25 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	// Session/provider failures are independent transcript entries so they remain
+	// visible even when the subagent tool call is collapsed or was detached.
+	pi.registerEntryRenderer<SubagentErrorEntry>(SUBAGENT_ERROR_CUSTOM_TYPE, (entry, _options, theme) => {
+		const data = entry.data;
+		return new Text(theme.fg("error", `✗ ${formatSubagentError(data)}`), RUN_LINE_OUTPUT_PAD, 0);
+	});
+	function publishSubagentErrors(details: SubagentDetails | undefined): void {
+		if (!details || shuttingDown || process.env.PI_SUBAGENT_CHILD === "1") return;
+		for (const result of details.results) {
+			const entry = subagentErrorEntry(result);
+			if (!entry) continue;
+			try {
+				pi.appendEntry(SUBAGENT_ERROR_CUSTOM_TYPE, entry);
+			} catch {
+				// A replaced session must not break dispatch completion.
+			}
+		}
+	}
+
 	// Renderer for the live per-run line. The host owns transcript spacing and
 	// adds one blank line before every entry; the entry API never receives
 	// `outputPad`, so the line pads itself. Expanded adds the identity the
@@ -2684,6 +2704,14 @@ export default function (pi: ExtensionAPI) {
 			const makeRunner = (target: PreparedSubagentDispatch): DispatchRuntimeDependencies => ({
 				runSingle: (request) => runSingleAgent(request, target, runtime),
 			});
+			const runDispatch = async (
+				dispatchSignal: AbortSignal | undefined,
+				update: typeof onUpdate | undefined,
+			) => {
+				const result = await runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, update);
+				publishSubagentErrors(result.details);
+				return result;
+			};
 
 			// Track the whole post-preparation execution so shutdown can abort and
 			// await blocking runs (and the pre-spawn window) before disposing the tab.
@@ -2695,8 +2723,7 @@ export default function (pi: ExtensionAPI) {
 					// child to the background without restarting it.
 					const handle = dispatchManager.start(
 						dispatch,
-						(dispatchSignal, gatedUpdate) =>
-							runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, gatedUpdate),
+						(dispatchSignal, gatedUpdate) => runDispatch(dispatchSignal, gatedUpdate),
 						{
 							attach: { parentSignal: signal, onUpdate },
 							onDetach: markDispatchDetached,
@@ -2732,7 +2759,7 @@ export default function (pi: ExtensionAPI) {
 				// tool signal or the completed invocation's onUpdate callback; live UI
 				// comes from the registry and active-subagents widget instead.
 				const handle = dispatchManager.start(dispatch, (dispatchSignal) =>
-					runPreparedDispatch(dispatch, makeRunner(dispatch), dispatchSignal, undefined),
+					runDispatch(dispatchSignal, undefined),
 				);
 				if (!handle) {
 					return buildDispatchExceptionResult(

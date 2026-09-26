@@ -182,6 +182,11 @@ function isToolEntry(candidate: unknown): boolean {
 	return className(candidate) === "ToolExecutionComponent";
 }
 
+/** Pi stores the actual tool result here; a failed tool must remain fully visible. */
+function isToolError(candidate: unknown): boolean {
+	return isToolEntry(candidate) && (candidate as AnyRecord).result?.isError === true;
+}
+
 function isAssistant(candidate: unknown): boolean {
 	return className(candidate) === "AssistantMessageComponent";
 }
@@ -205,6 +210,9 @@ function toolId(component: AnyRecord): string | undefined {
 
 /** True when the assistant message has text worth showing (thinking does not count). */
 function hasVisibleText(component: AnyRecord): boolean {
+	// Pi renders provider errors outside the message's text blocks. An error-only
+	// assistant message must not be mistaken for a thinking-only message.
+	if (component.lastMessage?.stopReason === "error" || component.lastMessage?.stopReason === "aborted") return true;
 	const content = component.lastMessage?.content;
 	if (!Array.isArray(content)) return false;
 	return content.some(
@@ -214,7 +222,7 @@ function hasVisibleText(component: AnyRecord): boolean {
 
 /** A child that contributes nothing visible while in `hidden` mode. */
 function isRunPart(candidate: unknown): boolean {
-	if (isToolEntry(candidate)) return true;
+	if (isToolEntry(candidate)) return !isToolError(candidate);
 	return isAssistant(candidate) && !hasVisibleText(candidate as AnyRecord);
 }
 
@@ -392,7 +400,7 @@ function sync(tui: AnyRecord | undefined): void {
 			// `hidden` visibility is resolved per run below; this only handles
 			// `full` and per-tool reveals in `compact`.
 			const revealed =
-				toolsVisible || (mode === "compact" && id !== undefined && current.revealedTools.has(id));
+				toolsVisible || isToolError(component) || (mode === "compact" && id !== undefined && current.revealedTools.has(id));
 			component.hideComponent = !revealed;
 		} else if (isAssistant(child)) {
 			const component = child as AnyRecord;
@@ -431,7 +439,7 @@ function sync(tui: AnyRecord | undefined): void {
 		}
 	} else if (mode === "compact") {
 		for (let index = 0; index < children.length; index += 1) {
-			if (!isToolEntry(children[index])) continue;
+			if (!isToolEntry(children[index]) || isToolError(children[index])) continue;
 			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
 			index += 1;
 		}
