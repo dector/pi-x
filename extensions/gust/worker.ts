@@ -7,9 +7,11 @@
  *   session dir: ~/.pi/gust/sessions (override with GUST_SESSION_DIR)
  *   session id:  gust-<rootHash>-<threadId>
  *
- * A worker is an ephemeral `pi --print` process that resumes the thread's
- * session, so the next reply continues with the previous context instead of
- * starting over. The process exits when the turn is done; the session stays.
+ * A worker is an ephemeral Pi process in RPC mode (`--mode rpc`) that resumes
+ * the thread's session, so the next reply continues with the previous context
+ * instead of starting over. It runs with `--no-extensions`, so it is headless:
+ * no dialogs to answer, no extension status noise. The process exits when the
+ * turn settles; the session stays.
  */
 
 import { spawn } from "node:child_process";
@@ -88,7 +90,19 @@ Do this:
 Keep the reply short. Do not narrate your process.`;
 }
 
-/** Run one worker turn, resuming the thread's session. */
+interface RpcRecord {
+	type?: string;
+	id?: string;
+	method?: string;
+	command?: string;
+	success?: boolean;
+}
+
+/**
+ * Run one worker turn over RPC, resuming the thread's session. Resolves when
+ * the agent settles and the process exits, when the process errors, or when the
+ * signal aborts it (code 124).
+ */
 export function runWorker(options: {
 	thread: Thread;
 	root: string;
@@ -101,42 +115,99 @@ export function runWorker(options: {
 	fs.mkdirSync(dir, { recursive: true });
 	const prompt = buildWorkerPrompt(options.thread, options.invocationHint || "gust", options.socketHint);
 	const { command, args } = getPiInvocation([
-		"--print",
+		"--mode",
+		"rpc",
+		"--no-extensions",
 		"--session-dir",
 		dir,
 		"--session-id",
 		id,
-		prompt,
 	]);
 	return new Promise((resolve) => {
-		const child = spawn(command, args, { cwd: options.root, shell: false, env: process.env });
+		const child = spawn(command, args, {
+			cwd: options.root,
+			shell: false,
+			env: process.env,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
 		let stdout = "";
 		let stderr = "";
+		let buffer = "";
 		let settled = false;
-		const finish = (result: WorkerResult) => {
+		const requestId = `prompt-${process.pid}-${Date.now()}`;
+
+		const write = (record: unknown): void => {
+			if (child.stdin.writable) child.stdin.write(`${JSON.stringify(record)}\n`);
+		};
+		const finish = (code: number): void => {
 			if (settled) return;
 			settled = true;
 			options.signal.removeEventListener("abort", onAbort);
-			resolve(result);
+			resolve({ code, stdout, stderr, sessionId: id });
 		};
-		const onAbort = () => child.kill("SIGKILL");
+		const onAbort = (): void => {
+			try {
+				child.kill("SIGKILL");
+			} catch {
+				// Already gone.
+			}
+			finish(124);
+		};
+		const handleLine = (line: string): void => {
+			if (!line) return;
+			let record: RpcRecord;
+			try {
+				record = JSON.parse(line) as RpcRecord;
+			} catch {
+				return;
+			}
+			if (record.type === "extension_ui_request") {
+				// Extensions are disabled, but never let a dialog hang the worker.
+				if (
+					record.method === "select" ||
+					record.method === "confirm" ||
+					record.method === "input" ||
+					record.method === "editor"
+				) {
+					write({ type: "extension_ui_response", id: record.id, cancelled: true });
+				}
+				return;
+			}
+			if (record.type === "response" && record.id === requestId && record.success === false) {
+				finish(1);
+				return;
+			}
+			if (record.type === "agent_settled") {
+				// Settled: ask for an orderly shutdown; `close` resolves us.
+				child.stdin.end();
+			}
+		};
+
+		child.stdin.on("error", () => {
+			// The child may exit before reading its prompt.
+		});
 		if (options.signal.aborted) {
 			onAbort();
-			finish({ code: 124, stdout, stderr, sessionId: id });
 			return;
 		}
 		options.signal.addEventListener("abort", onAbort, { once: true });
-		child.stdout?.on("data", (data: Buffer) => {
-			stdout += data.toString();
+		child.stdout.on("data", (data: Buffer) => {
+			const text = data.toString();
+			stdout += text;
+			buffer += text;
+			let newline = buffer.indexOf("\n");
+			while (newline >= 0) {
+				handleLine(buffer.slice(0, newline).replace(/\r$/, ""));
+				buffer = buffer.slice(newline + 1);
+				newline = buffer.indexOf("\n");
+			}
 		});
-		child.stderr?.on("data", (data: Buffer) => {
+		child.stderr.on("data", (data: Buffer) => {
 			stderr += data.toString();
 		});
-		child.on("error", (error) => {
-			finish({ code: 127, stdout, stderr: `${stderr}${error.message}`, sessionId: id });
-		});
-		child.on("close", (code) => {
-			finish({ code: code ?? 0, stdout, stderr, sessionId: id });
-		});
+		child.on("error", () => finish(127));
+		child.on("close", (code) => finish(code ?? 0));
+
+		write({ type: "prompt", id: requestId, message: prompt });
 	});
 }

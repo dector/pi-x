@@ -31,12 +31,14 @@ its own). It blocks on `gust ctl comments watch --since <cursor>`, and for each
 newly submitted thread it:
 
 1. claims the thread with `gust ctl comments seen <id>`;
-2. runs one worker as `pi --print --session-dir <dir> --session-id <id>`, which
-   resumes the thread's existing session and posts the reply + `review` itself.
+2. runs one worker as `pi --mode rpc --no-extensions --session-dir <dir>
+   --session-id <id>`, which resumes the thread's existing session and posts
+   the reply + `review` itself.
 
 Workers run serially (one at a time) to avoid concurrent edits to the same
-working tree. A thread maps to one persistent session, so a later human reply
-resumes the same worker context instead of starting over:
+working tree, and headless (`--no-extensions`), so no extension dialog can block
+them. A thread maps to one persistent session, so a later human reply resumes
+the same worker context instead of starting over:
 
 | Setting | Default |
 | --- | --- |
