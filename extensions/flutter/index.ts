@@ -9,7 +9,7 @@ const STATUS_BAR_FIRST_LINE_CLEAR_EVENT = "px:status-bar:first-line:clear";
 const STATUS_BAR_PING_EVENT = "px:status-bar:ping";
 const STATUS_BAR_PONG_EVENT = "px:status-bar:pong";
 const STATUS_BAR_WARNING_DELAY_MS = 500;
-const FIRST_LINE_PRIORITY = 200; // status-bar git totals use 100 and skill counts use -100; render before both.
+const FIRST_LINE_PRIORITY = 200; // neo-bar git totals use 100 and skill counts use -100; render before both.
 const MAX_LOG_LINES = 1000;
 const STOP_TERM_DELAY_MS = 2000;
 const STOP_KILL_DELAY_MS = 5000;
@@ -263,7 +263,7 @@ export default function flutterExtension(pi: ExtensionAPI): void {
 		if (statusBarAvailable || warnedMissingStatusBar) return;
 		warnedMissingStatusBar = true;
 		if (activeSessionContext?.hasUI) {
-			activeSessionContext.ui.notify("flutter extension requires status-bar extension for first-line status", "warning");
+			activeSessionContext.ui.notify("flutter extension requires neo-bar extension for first-line status", "warning");
 		}
 	};
 

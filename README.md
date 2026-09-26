@@ -10,14 +10,14 @@ This repo currently contains the following extension(s):
 
 | name | description | dependencies |
 | --- | --- | --- |
-| [`status-bar`](extensions/status-bar/README.md) | **Required shared dependency** for other status-producing extensions in this repo. Install this first. | |
+| [`neo-bar`](extensions/neo-bar/README.md) | **Required shared dependency** for other status-producing extensions in this repo. Install this first. | |
 | [`no-reflection`](extensions/no-reflection/README.md) | Removes pi's built-in documentation reference block from the agent system prompt without dumping the prompt anywhere. Disable with `PI_NO_REFLECTION=false`, `no`, `n`, or `0`. | |
-| [`switch-thinking`](extensions/switch-thinking/README.md) | Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. | `status-bar` |
-| [`review-level`](extensions/review-level/README.md) | Adds `/px:review` with session-scoped `auto`, `off`, `minimal`, `normal`, and `high` review recommendations, injects explicit guidance into the agent prompt, and shows an eye icon in the editor border. | `status-bar` |
-| [`safe-mode`](extensions/safe-mode/README.md) | Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. | `status-bar`, `bash-parser` |
+| [`switch-thinking`](extensions/switch-thinking/README.md) | Adds fast keyboard workflows for thinking modes: `Ctrl+Alt+T` opens a picker, and `Ctrl+T` cycles your saved favorites. | `neo-bar` |
+| [`review-level`](extensions/review-level/README.md) | Adds `/px:review` with session-scoped `auto`, `off`, `minimal`, `normal`, and `high` review recommendations, injects explicit guidance into the agent prompt, and shows an eye icon in the editor border. | `neo-bar` |
+| [`safe-mode`](extensions/safe-mode/README.md) | Intercepts tool calls and enforces approval policies with four modes: `paranoid`, `reader`, `smart`, and `yolo`. | `neo-bar`, `bash-parser` |
 | [`permissions-core`](extensions/permissions-core/README.md) | Headless network permission provider: validates and classifies `perm:net` requests and owns the session network policy (Auto, explicit, PARANOID). | `hub` |
 | [`permissions-ui`](extensions/permissions-ui/README.md) | Adds the `/px:net` selector to configure the network policy through permissions-core. | `permissions-core` |
-| [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/px:flutter run`, `/px:flutter reload`, `/px:flutter restart`, `/px:flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `status-bar`, `flutter` CLI |
+| [`flutter`](extensions/flutter/README.md) | Owns a `flutter run --debug` process with `/px:flutter run`, `/px:flutter reload`, `/px:flutter restart`, `/px:flutter stop`, plus `Alt+R`/`Alt+Shift+R` hot controls. | `neo-bar`, `flutter` CLI |
 | [`proc`](extensions/proc/README.md) | Runs and manages long-lived background processes with a `proc` tool, per-process log cursors, and a collapsible above-editor Processes widget. | `panels` |
 | [`http`](extensions/http/README.md) | Adds an `http` tool backed by Node native fetch, with HTTPie-like structured request fields, curl-compatible args support, and optional web-to-Markdown (`webToMd`) conversion via `pandoc`. | `cheerio`, `pandoc` for `http_md` |
 | [`sqlite`](extensions/sqlite/README.md) | Adds a `sqlite` query tool for file-backed and in-memory databases, with read-only/mutating SQL classification for safe-mode integration. | `sqlite3` CLI |
@@ -41,13 +41,13 @@ This repo currently contains the following extension(s):
 `http_md`, `web_search`). The tools ask the hub for `perm:net` with normalized
 request data; the hub routes it to permissions-core, which validates,
 classifies, and disposes under the effective policy. `permissions-ui` provides
-`/px:net`, and `status-bar` renders the effective token after the safe mode.
+`/px:net`, and `neo-bar` renders the effective token after the safe mode.
 
 ```text
 http/http_md/web_search ──perm:net──▶ hub ──▶ permissions-core
                                                     │
                               state/changed ──▶ permissions-ui (/px:net)
-                                            └──▶ status-bar (NET / NET? / NET+)
+                                            └──▶ neo-bar (NET / NET? / NET+)
 ```
 
 Decision matrix (classification → disposition):

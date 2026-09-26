@@ -36,7 +36,7 @@ cache. Otherwise, it shows a red warning that changing the setting might
 invalidate the cache. These messages predict Pi's request serialization; they do
 not confirm the provider's cache result.
 
-When `status-bar` is installed, the selected eye icon appears in the editor's
+When `neo-bar` is installed, the selected eye icon appears in the editor's
 top-left label immediately after model effort (`<effort> · <eye>`) for explicit
 levels. The separator and icon use the frame-border purple. Auto is hidden, though
 its icon mapping remains available in code for possible reuse.

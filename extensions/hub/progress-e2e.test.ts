@@ -5,7 +5,7 @@
  *
  * 1. the hub extension's progress event wiring owns the registry;
  * 2. the subagent child relay (`applyProgressRelay`) delivers a mutation;
- * 3. the status-bar `ProgressObserver`/`formatProgressRow` renders the row.
+ * 3. the neo-bar `ProgressObserver`/`formatProgressRow` renders the row.
  *
  * This is NOT a replacement for the manual TUI smoke test in
  * `idea-progress.md` section 12, which still needs a real Pi TUI (`./pitest`).
@@ -25,7 +25,7 @@ import {
 	applyProgressRelay,
 	type ProgressRelayChannel,
 } from "../subagent/progress-relay.ts";
-import { formatProgressRow, ProgressObserver } from "../status-bar/progress.ts";
+import { formatProgressRow, ProgressObserver } from "../neo-bar/progress.ts";
 
 // ---------------------------------------------------------------------------
 // In-process event bus (same pattern as `progress-wiring.test.ts`)
@@ -153,14 +153,14 @@ afterEach(() => {
 });
 
 describe("hub progress end-to-end smoke", () => {
-	test("child relay updates the parent hub snapshot and status-bar row", async () => {
+	test("child relay updates the parent hub snapshot and neo-bar row", async () => {
 		const { bus, lifecycle, commands } = setup();
 		await lifecycle.get("session_start")?.({}, {});
 
 		// 1. Root creates a three-chunk tracker over the hub protocol.
 		bus.send(CH.create, createPayload());
 
-		// 2. Status-bar observer attaches to live `changed` events before the
+		// 2. Neo-bar observer attaches to live `changed` events before the
 		//    child reports. It also records every snapshot for the pure formatter.
 		const changedSnapshots: ProgressSnapshot[] = [];
 		const offChanged = bus.on(CH.changed, (payload) => {
@@ -268,7 +268,7 @@ describe("hub progress end-to-end smoke", () => {
 		expect(gone[0]).toBe("progress: no trackers");
 	});
 
-	test("an empty unit still renders the status-bar row with the default noun", async () => {
+	test("an empty unit still renders the neo-bar row with the default noun", async () => {
 		const { bus, lifecycle } = setup();
 		await lifecycle.get("session_start")?.({}, {});
 
@@ -279,7 +279,7 @@ describe("hub progress end-to-end smoke", () => {
 		observer.activate();
 
 		// The hub treats an empty display noun as absent and stores the default.
-		// Before the fix it published `unit: ""`, which the strict status-bar
+		// Before the fix it published `unit: ""`, which the strict neo-bar
 		// snapshot parser rejected wholesale, freezing the row.
 		bus.send(CH.create, { ...createPayload(), unit: "" });
 		relay(bus, "hub:progress:update", {

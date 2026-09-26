@@ -54,7 +54,7 @@ export const PROCESSES_COLLAPSED_ICON = "\u{f054f}";
  */
 export const PROCESSES_REFRESH_INTERVAL_MS = 1000;
 
-/** Default exited-process retention, matching the retired status-bar row. */
+/** Default exited-process retention, matching the retired neo-bar row. */
 export const PROCESSES_DEFAULT_EXITED_RETENTION_MS = 60_000;
 
 export type ProcessState = "running" | "stopping" | "exited";
@@ -134,7 +134,7 @@ function exitLabel(entry: ProcessesWidgetEntry): string {
 }
 
 /**
- * State color mapping, matching the retired status-bar row: green running,
+ * State color mapping, matching the retired neo-bar row: green running,
  * yellow stopping, gray exited (0), red exited (non-zero/signal).
  */
 export function processStateTone(entry: ProcessesWidgetEntry): ProcessTone {

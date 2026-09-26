@@ -24,28 +24,28 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
-	BORDER_PRIORITY_STATUS_BAR_LAYOUT,
-	DEFAULT_STATUS_BAR_DISPLAY_MODE,
-	DEFAULT_STATUS_BAR_LAYOUT,
-	STATUS_BAR_DISPLAY_MODES,
+	BORDER_PRIORITY_NEO_BAR_LAYOUT,
+	DEFAULT_NEO_BAR_DISPLAY_MODE,
+	DEFAULT_NEO_BAR_LAYOUT,
+	NEO_BAR_DISPLAY_MODES,
 	STATUS_BAR_EVENTS,
-	STATUS_BAR_JOIN_SEPARATOR,
-	type StatusBarAliasConfig,
-	type StatusBarAliasMap,
-	type StatusBarClearPayload,
-	type StatusBarDisplayMode,
-	type StatusBarFirstLineClearPayload,
-	type StatusBarFirstLineSetPayload,
-	type StatusBarLayout,
-	type StatusBarPingPayload,
-	type StatusBarRewireSetPayload,
-	type StatusBarReviewLevel,
-	type StatusBarReviewLevelSetPayload,
-	type StatusBarSubagentDepthSetPayload,
-	type StatusBarRowClearPayload,
-	type StatusBarRowSetPayload,
-	type StatusBarSection,
-	type StatusBarSetPayload,
+	NEO_BAR_JOIN_SEPARATOR,
+	type NeoBarAliasConfig,
+	type NeoBarAliasMap,
+	type NeoBarClearPayload,
+	type NeoBarDisplayMode,
+	type NeoBarFirstLineClearPayload,
+	type NeoBarFirstLineSetPayload,
+	type NeoBarLayout,
+	type NeoBarPingPayload,
+	type NeoBarRewireSetPayload,
+	type NeoBarReviewLevel,
+	type NeoBarReviewLevelSetPayload,
+	type NeoBarSubagentDepthSetPayload,
+	type NeoBarRowClearPayload,
+	type NeoBarRowSetPayload,
+	type NeoBarSection,
+	type NeoBarSetPayload,
 } from "./contract";
 import {
 	BORDER_CONTEXT_ICON,
@@ -116,7 +116,7 @@ const SUPERSEDED_FIRST_LINE_IDS = new Set(["repo-stats", "skill-stats"]);
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
 const SUBAGENT_DEPTH_ICON = "󰚩";
-const REVIEW_LEVEL_ICONS: Record<StatusBarReviewLevel, string> = {
+const REVIEW_LEVEL_ICONS: Record<NeoBarReviewLevel, string> = {
 	auto: "󰈈",
 	off: "󰛑",
 	minimal: "󱀧",
@@ -229,7 +229,7 @@ interface FrameContextParts {
 	separator: string;
 }
 
-// Uses the subdued accent for the first bucket; higher usage follows the status-bar context colors.
+// Uses the subdued accent for the first bucket; higher usage follows the neo-bar context colors.
 export function buildFrameContextParts(
 	ctx: ExtensionContext,
 	theme?: {
@@ -285,7 +285,7 @@ interface RelocatedBorderLabels {
 
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
-	getDisplayMode: () => StatusBarDisplayMode;
+	getDisplayMode: () => NeoBarDisplayMode;
 	/** Bottom-left context usage + cost, split so only the cost relocates on narrow frames. */
 	bottomLeft?: () => FrameContextParts | undefined;
 	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
@@ -418,7 +418,7 @@ export function progressFooterLines(args: {
  */
 export class FrameStatusEditor extends CustomEditor {
 	private locked = false;
-	private readonly getDisplayMode: () => StatusBarDisplayMode;
+	private readonly getDisplayMode: () => NeoBarDisplayMode;
 	private readonly bottomLeftProvider?: () => FrameContextParts | undefined;
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
@@ -471,7 +471,7 @@ export class FrameStatusEditor extends CustomEditor {
 
 	/** Wrap pi's dynamic interrupt callback after the editor has been installed. */
 	protectInterrupt(): void {
-		if (!this.onEscape) throw new Error("status-bar: pi did not wire the editor interrupt handler");
+		if (!this.onEscape) throw new Error("neo-bar: pi did not wire the editor interrupt handler");
 		this.onEscape = createProtectedInterrupt(this.onEscape, this.interruptConfirmation);
 	}
 
@@ -956,8 +956,8 @@ export function styleDarkAccent(
 // thinking level name.
 function buildBorderModelLabel(
 	ctx: ExtensionContext,
-	providerAliases: StatusBarAliasMap,
-	modelAliases: StatusBarAliasMap,
+	providerAliases: NeoBarAliasMap,
+	modelAliases: NeoBarAliasMap,
 	thinkingLevel: string | undefined,
 ): string | undefined {
 	const model = ctx.model;
@@ -982,7 +982,7 @@ function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): st
 function getContextWatcherOverrides(
 	ctx: ExtensionContext,
 	theme: { fg: (token: "muted" | "text" | "warning" | "error", text: string) => string },
-	modelAliases: StatusBarAliasMap = {},
+	modelAliases: NeoBarAliasMap = {},
 ): Map<string, string | undefined> {
 	const overrides = new Map<string, string | undefined>([
 		[CONTEXT_WATCHER_IDS.tokens, undefined],
@@ -1008,7 +1008,7 @@ function getContextWatcherOverrides(
 	return overrides;
 }
 
-// First-line token breakdown (new display mode), colored like the status-bar context items.
+// First-line token breakdown (new display mode), colored like the neo-bar context items.
 // The icon is decorated before styling so it shares the label's themed color.
 export function buildFirstLineTokenLabel(
 	ctx: ExtensionContext,
@@ -1089,7 +1089,7 @@ export function buildMessageSizeLabel(
 
 interface FirstLineEntry {
 	content: string;
-	section: StatusBarSection;
+	section: NeoBarSection;
 	priority: number;
 	order: number;
 }
@@ -1099,21 +1099,21 @@ interface RowEntry {
 	order: number;
 }
 
-function isSetPayload(value: unknown): value is StatusBarSetPayload {
+function isSetPayload(value: unknown): value is NeoBarSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarSetPayload>;
+	const maybe = value as Partial<NeoBarSetPayload>;
 	return typeof maybe.id === "string" && typeof maybe.content === "string";
 }
 
-function isClearPayload(value: unknown): value is StatusBarClearPayload {
+function isClearPayload(value: unknown): value is NeoBarClearPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarClearPayload>;
+	const maybe = value as Partial<NeoBarClearPayload>;
 	return typeof maybe.id === "string";
 }
 
-function isFirstLineSetPayload(value: unknown): value is StatusBarFirstLineSetPayload {
+function isFirstLineSetPayload(value: unknown): value is NeoBarFirstLineSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarFirstLineSetPayload>;
+	const maybe = value as Partial<NeoBarFirstLineSetPayload>;
 	if (typeof maybe.id !== "string") return false;
 	if (typeof maybe.content !== "string") return false;
 	if (maybe.section !== undefined && maybe.section !== "left" && maybe.section !== "center" && maybe.section !== "right") {
@@ -1123,15 +1123,15 @@ function isFirstLineSetPayload(value: unknown): value is StatusBarFirstLineSetPa
 	return true;
 }
 
-function isFirstLineClearPayload(value: unknown): value is StatusBarFirstLineClearPayload {
+function isFirstLineClearPayload(value: unknown): value is NeoBarFirstLineClearPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarFirstLineClearPayload>;
+	const maybe = value as Partial<NeoBarFirstLineClearPayload>;
 	return typeof maybe.id === "string";
 }
 
-function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload {
+function isRewireSetPayload(value: unknown): value is NeoBarRewireSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarRewireSetPayload>;
+	const maybe = value as Partial<NeoBarRewireSetPayload>;
 	return (
 		typeof maybe.model === "string" &&
 		maybe.model.trim().length > 0 &&
@@ -1142,9 +1142,9 @@ function isRewireSetPayload(value: unknown): value is StatusBarRewireSetPayload 
 	);
 }
 
-function isSubagentDepthSetPayload(value: unknown): value is StatusBarSubagentDepthSetPayload {
+function isSubagentDepthSetPayload(value: unknown): value is NeoBarSubagentDepthSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarSubagentDepthSetPayload>;
+	const maybe = value as Partial<NeoBarSubagentDepthSetPayload>;
 	return typeof maybe.depth === "number" && Number.isInteger(maybe.depth) && maybe.depth >= -1;
 }
 
@@ -1156,40 +1156,40 @@ function renderSubagentDepthLabel(depth: number, theme: ExtensionContext["ui"]["
 	return theme.fg("warning", text);
 }
 
-export function isReviewLevelSetPayload(value: unknown): value is StatusBarReviewLevelSetPayload {
+export function isReviewLevelSetPayload(value: unknown): value is NeoBarReviewLevelSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const level = (value as Partial<StatusBarReviewLevelSetPayload>).level;
+	const level = (value as Partial<NeoBarReviewLevelSetPayload>).level;
 	return typeof level === "string" && Object.hasOwn(REVIEW_LEVEL_ICONS, level);
 }
 
-export function formatReviewLevelLabel(level: StatusBarReviewLevel): string | undefined {
+export function formatReviewLevelLabel(level: NeoBarReviewLevel): string | undefined {
 	// Keep the Auto glyph mapping above: we may make the implicit/default state visible again later.
 	if (level === "auto") return undefined;
 	return `${REVIEW_LEVEL_ICONS[level]} `;
 }
 
-function isPingPayload(value: unknown): value is StatusBarPingPayload {
+function isPingPayload(value: unknown): value is NeoBarPingPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarPingPayload>;
+	const maybe = value as Partial<NeoBarPingPayload>;
 	return typeof maybe.id === "string";
 }
 
-function isRowSetPayload(value: unknown): value is StatusBarRowSetPayload {
+function isRowSetPayload(value: unknown): value is NeoBarRowSetPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarRowSetPayload>;
+	const maybe = value as Partial<NeoBarRowSetPayload>;
 	if (typeof maybe.id !== "string") return false;
 	if (typeof maybe.content !== "string") return false;
 	if (maybe.order !== undefined && typeof maybe.order !== "number") return false;
 	return true;
 }
 
-function isRowClearPayload(value: unknown): value is StatusBarRowClearPayload {
+function isRowClearPayload(value: unknown): value is NeoBarRowClearPayload {
 	if (!value || typeof value !== "object") return false;
-	const maybe = value as Partial<StatusBarRowClearPayload>;
+	const maybe = value as Partial<NeoBarRowClearPayload>;
 	return typeof maybe.id === "string";
 }
 
-function parseSetArgs(args: string): StatusBarSetPayload | undefined {
+function parseSetArgs(args: string): NeoBarSetPayload | undefined {
 	const input = args.trim();
 	if (!input) return undefined;
 	const firstSpace = input.indexOf(" ");
@@ -1200,7 +1200,7 @@ function parseSetArgs(args: string): StatusBarSetPayload | undefined {
 	return { id, content };
 }
 
-function parseClearArgs(args: string): StatusBarClearPayload | undefined {
+function parseClearArgs(args: string): NeoBarClearPayload | undefined {
 	const id = args.trim();
 	if (!id) return undefined;
 	return { id };
@@ -1297,8 +1297,8 @@ function fgRgb(rgb: Rgb, text: string): string {
 	return `\x1b[38;2;${rgb.r};${rgb.g};${rgb.b}m${text}\x1b[39m`;
 }
 
-function isDisplayMode(value: unknown): value is StatusBarDisplayMode {
-	return typeof value === "string" && (STATUS_BAR_DISPLAY_MODES as readonly string[]).includes(value);
+function isDisplayMode(value: unknown): value is NeoBarDisplayMode {
+	return typeof value === "string" && (NEO_BAR_DISPLAY_MODES as readonly string[]).includes(value);
 }
 
 function readSettingsFile(): Record<string, unknown> {
@@ -1313,8 +1313,8 @@ function readSettingsFile(): Record<string, unknown> {
 	return {};
 }
 
-function normalizeAliasMap(value: unknown): StatusBarAliasMap {
-	const aliases: StatusBarAliasMap = {};
+function normalizeAliasMap(value: unknown): NeoBarAliasMap {
+	const aliases: NeoBarAliasMap = {};
 	if (!value || typeof value !== "object" || Array.isArray(value)) return aliases;
 	for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
 		if (typeof raw === "string" && raw.trim()) aliases[key] = raw.trim();
@@ -1324,7 +1324,7 @@ function normalizeAliasMap(value: unknown): StatusBarAliasMap {
 
 // Exact-name alias tables (no pattern matching). Configured under
 // `providerAliases` / `modelAliases` in ~/.pi/agent/status-bar.json.
-function loadAliases(): StatusBarAliasConfig {
+function loadAliases(): NeoBarAliasConfig {
 	const settings = readSettingsFile();
 	return {
 		providerAliases: normalizeAliasMap(settings.providerAliases),
@@ -1332,7 +1332,7 @@ function loadAliases(): StatusBarAliasConfig {
 	};
 }
 
-function normalizeDisplayMode(value: unknown): StatusBarDisplayMode | undefined {
+function normalizeDisplayMode(value: unknown): NeoBarDisplayMode | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
 	return isDisplayMode(normalized) ? normalized : undefined;
@@ -1362,7 +1362,7 @@ function loadFrameCornerStyle(): FrameCornerStyle {
 	return normalizeFrameCornerStyle(process.env.PI_STATUS_BAR_FRAME_CORNERS) ?? FRAME_CORNER_STYLE;
 }
 
-function loadDisplayMode(): StatusBarDisplayMode {
+function loadDisplayMode(): NeoBarDisplayMode {
 	const fromEnv = normalizeDisplayMode(process.env.PI_STATUS_BAR_DISPLAY_MODE);
 	if (fromEnv) return fromEnv;
 
@@ -1374,10 +1374,10 @@ function loadDisplayMode(): StatusBarDisplayMode {
 		// Missing or invalid settings file: fall back to the default.
 	}
 
-	return DEFAULT_STATUS_BAR_DISPLAY_MODE;
+	return DEFAULT_NEO_BAR_DISPLAY_MODE;
 }
 
-function saveDisplayMode(mode: StatusBarDisplayMode): { ok: true } | { ok: false; error: string } {
+function saveDisplayMode(mode: NeoBarDisplayMode): { ok: true } | { ok: false; error: string } {
 	let tempPath = "";
 	try {
 		let existing: Record<string, unknown> = {};
@@ -1535,29 +1535,29 @@ function renderThreeSectionLine(width: number, left?: string, center?: string, r
 	return truncateToWidth(normalizedLeft ?? "", width, "");
 }
 
-interface StatusBarContractSettingItem {
+interface NeoBarContractSettingItem {
 	id: string;
 	label: string;
 	value: string;
 	description?: string;
 }
 
-function formatAliasSummary(aliases: StatusBarAliasMap): string {
+function formatAliasSummary(aliases: NeoBarAliasMap): string {
 	const entries = Object.entries(aliases);
 	if (entries.length === 0) return "(none)";
 	return entries.map(([from, to]) => `${from}->${to}`).join(", ");
 }
 
-async function showStatusBarContractUI(
+async function showNeoBarContractUI(
 	ctx: ExtensionContext,
-	displayMode: StatusBarDisplayMode,
-	aliases: StatusBarAliasConfig,
+	displayMode: NeoBarDisplayMode,
+	aliases: NeoBarAliasConfig,
 ): Promise<void> {
 	if (!ctx.hasUI) return;
 
-	const layout = displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
+	const layout = displayMode === "new" ? BORDER_PRIORITY_NEO_BAR_LAYOUT : DEFAULT_NEO_BAR_LAYOUT;
 
-	const items: StatusBarContractSettingItem[] = [
+	const items: NeoBarContractSettingItem[] = [
 		{
 			id: "display-mode",
 			label: "Display mode",
@@ -1604,7 +1604,7 @@ async function showStatusBarContractUI(
 		{
 			id: "item-join",
 			label: "Item join separator",
-			value: JSON.stringify(STATUS_BAR_JOIN_SEPARATOR),
+			value: JSON.stringify(NEO_BAR_JOIN_SEPARATOR),
 			description: "Used between items within the same section.",
 		},
 		{
@@ -1760,10 +1760,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	const rowById = new Map<string, RowEntry>();
 	let firstLineOrderCounter = 0;
 	let rowOrderCounter = 0;
-	let rewireTarget: StatusBarRewireSetPayload | undefined;
+	let rewireTarget: NeoBarRewireSetPayload | undefined;
 	let subagentDepth: number | undefined;
-	let reviewLevel: StatusBarReviewLevel | undefined;
-	let displayMode: StatusBarDisplayMode = loadDisplayMode();
+	let reviewLevel: NeoBarReviewLevel | undefined;
+	let displayMode: NeoBarDisplayMode = loadDisplayMode();
 	// Git dirty totals for the current cwd, collected internally. `undefined`
 	// while the repo is clean or `ctx.cwd` is not inside a git repo.
 	let gitStats: GitStats | undefined;
@@ -1794,13 +1794,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		frameEditor?.setLocked(lockMode);
 	});
 
-	const activeLayout = (): StatusBarLayout =>
-		displayMode === "new" ? BORDER_PRIORITY_STATUS_BAR_LAYOUT : DEFAULT_STATUS_BAR_LAYOUT;
+	const activeLayout = (): NeoBarLayout =>
+		displayMode === "new" ? BORDER_PRIORITY_NEO_BAR_LAYOUT : DEFAULT_NEO_BAR_LAYOUT;
 
 	const renderSection = (
 		ids: string[],
 		overrides?: Map<string, string | undefined>,
-		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
+		joinSeparator: string = NEO_BAR_JOIN_SEPARATOR,
 	): string | undefined => composeSectionItems(ids, (id) => contentById.get(id), joinSeparator, overrides);
 
 	const isCrowded = (width: number, left?: string, center?: string, right?: string): boolean => {
@@ -1848,8 +1848,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	const renderFirstLineSection = (
-		section: StatusBarSection,
-		joinSeparator: string = STATUS_BAR_JOIN_SEPARATOR,
+		section: NeoBarSection,
+		joinSeparator: string = NEO_BAR_JOIN_SEPARATOR,
 		attensionCoreSuffix?: string,
 		rewireContent?: string,
 	): string | undefined => {
@@ -1966,7 +1966,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					let line1: string;
 					if (hasFirstLineContent()) {
-						const firstLineJoinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
+						const firstLineJoinSeparator = theme.fg("muted", NEO_BAR_JOIN_SEPARATOR);
 						const hasAttensionCore = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content);
 						const attensionCoreSuffix = hasAttensionCore ? defaultFirstLine : undefined;
 						const producerLeft = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
@@ -2020,7 +2020,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const contextOverrides =
 						layout.right.length > 0 ? getContextWatcherOverrides(activeCtx, theme, modelAliases) : undefined;
 
-					let joinSeparator = theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR);
+					let joinSeparator = theme.fg("muted", NEO_BAR_JOIN_SEPARATOR);
 					// Network token: on the status line in `legacy` mode, on the border in
 					// `new` mode. Exactly one surface renders it, so there is no duplication.
 					const networkResolution = resolveNetworkStatus({ displayMode, state: networkStore.current, theme });
@@ -2040,7 +2040,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							getContent: (id) => contentById.get(id),
 							networkLabel: networkStatusLabel,
 							subagentLabel: subagentStatusLabel,
-							networkSeparator: theme.fg("muted", STATUS_BAR_JOIN_SEPARATOR),
+							networkSeparator: theme.fg("muted", NEO_BAR_JOIN_SEPARATOR),
 							itemSeparator,
 							safeModeId: SAFE_MODE_ID,
 							overrides: extraOverrides,
@@ -2168,7 +2168,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			frameEditor.setLocked(lockMode);
 			return frameEditor;
 		});
-		if (!frameEditor) throw new Error("status-bar: pi did not create the editor synchronously");
+		if (!frameEditor) throw new Error("neo-bar: pi did not create the editor synchronously");
 		frameEditor.protectInterrupt();
 
 		editorOwnerContext = ctx;
@@ -2384,7 +2384,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			bindContextAndRender(ctx);
 			if (!ctx.hasUI) return;
-			await showStatusBarContractUI(ctx, displayMode, { providerAliases, modelAliases });
+			await showNeoBarContractUI(ctx, displayMode, { providerAliases, modelAliases });
 		},
 	});
 

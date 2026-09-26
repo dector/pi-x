@@ -10,7 +10,7 @@ session, accepts an inherited `--network-policy` session flag, observes
 safe-mode, and exposes a validated state contract. The
 `http`, `http_md`, and `web_search` tools consume this provider, the
 `/px:net` selector in [`../permissions-ui/`](../permissions-ui/README.md) reads
-and changes the state through the same contract, and `status-bar` renders the
+and changes the state through the same contract, and `neo-bar` renders the
 effective token.
 
 ## Model
@@ -90,7 +90,7 @@ extension additionally requires a one-time execution authorization from
 safe-mode (see [`../http/README.md`](../http/README.md)). Without safe-mode's
 final allow/user-approval handoff, no network request executes. The `/px:net`
 selector is available in [`../permissions-ui/`](../permissions-ui/README.md), and
-`status-bar` renders the effective token.
+`neo-bar` renders the effective token.
 
 ## State contract and persistence
 

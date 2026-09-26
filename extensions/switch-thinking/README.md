@@ -4,7 +4,7 @@ Quickly switch thinking modes and cycle favorite modes.
 
 ## Dependency
 
-Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for status indicator rendering.
+Requires [`neo-bar`](../neo-bar/README.md) to be installed and enabled for status indicator rendering.
 
 ## Features
 
@@ -82,7 +82,7 @@ Why this helps:
 
 ## Notes
 
-- Status rendering is emitted via status-bar events (`px:status-bar:set` / `px:status-bar:clear` with `id: "switch-thinking"`) rather than direct `ui.setStatus`.
+- Status rendering is emitted via neo-bar events (`px:status-bar:set` / `px:status-bar:clear` with `id: "switch-thinking"`) rather than direct `ui.setStatus`.
 - In non-UI modes, picker is skipped safely.
 - If favorites are empty or unavailable on current model, the extension shows a warning and does nothing.
 - Corrupt favorites JSON falls back to empty favorites.

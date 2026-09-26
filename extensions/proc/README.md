@@ -65,7 +65,7 @@ err: warn ...
 
 `proc` publishes its non-interactive Processes content to the [`panels`](../panels/README.md)
 coordinator. The coordinator renders all panels in a fixed order inside one
-above-editor widget. `proc` no longer uses the `status-bar` extension.
+above-editor widget. `proc` no longer uses the `neo-bar` extension.
 
 The widget is **collapsed by default** to a single summary line with an expand
 icon:

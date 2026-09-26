@@ -1073,7 +1073,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 		globalState.pi = pi;
 		globalState.ctx = ctx;
 		// Clear a footer row left by the pre-widget proc extension during /reload.
-		// The new Processes widget does not depend on status-bar being installed.
+		// The new Processes widget does not depend on neo-bar being installed.
 		pi.events.emit("px:status-bar:row:clear", { id: "proc" });
 		widget.reset();
 		registerPanel();

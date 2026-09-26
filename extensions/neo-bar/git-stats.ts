@@ -1,4 +1,4 @@
-// Git dirty totals for the status bar. Collected internally by status-bar (it is
+// Git dirty totals for the status bar. Collected internally by neo-bar (it is
 // the only consumer), rendered either as the plain first-line label (`legacy`
 // display mode) or as the editor-frame top-right label via
 // `compose.decorateBorderGitStats`.

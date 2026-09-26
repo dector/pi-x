@@ -82,7 +82,7 @@ test("widget id is stable", () => {
 	expect(ACTIVE_SUBAGENT_WIDGET_ID).toBe("px-subagents-active");
 });
 
-test("the retired status-bar row helpers are gone", () => {
+test("the retired neo-bar row helpers are gone", () => {
 	expect("formatSubagentStatusRow" in statusRow).toBe(false);
 	expect("StatusBarPresence" in statusRow).toBe(false);
 	expect("SUBAGENT_STATUS_ROW_ID" in statusRow).toBe(false);

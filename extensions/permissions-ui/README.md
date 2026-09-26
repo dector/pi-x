@@ -6,7 +6,7 @@ validated event contract. This extension owns no policy logic and no persisted
 state.
 
 Status: the selector is implemented and is the only policy control in V1;
-`status-bar` renders the resulting effective token.
+`neo-bar` renders the resulting effective token.
 
 ## Usage
 

@@ -1,4 +1,4 @@
-// Pure composition helpers for status-bar surfaces.
+// Pure composition helpers for neo-bar surfaces.
 //
 // Kept free of pi runtime and TUI imports so `index.ts` can wire them to real
 // themes and tests can assert complete rendered strings. `network.ts` owns the

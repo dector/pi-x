@@ -4,7 +4,7 @@ Intercepts tool calls and applies configurable approval policies.
 
 ## Dependency
 
-Requires [`status-bar`](../status-bar/README.md) to be installed and enabled for status indicator rendering.
+Requires [`neo-bar`](../neo-bar/README.md) to be installed and enabled for status indicator rendering.
 
 ## Modes
 
@@ -310,7 +310,7 @@ Then run `/reload`.
 
 ## Notes
 
-Status rendering is emitted via status-bar events (`px:status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
+Status rendering is emitted via neo-bar events (`px:status-bar:set` with `id: "safe-mode"`) rather than direct `ui.setStatus`.
 For non-paranoid modes, `!` indicates `outerAccess=true`.
 
 Read-only bash matching is intentionally strict and AST-based (via `bash-parser`).

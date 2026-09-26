@@ -1,5 +1,5 @@
 // Skill read counter for the status bar first line. Collected internally by
-// status-bar (it is the only consumer), so no producer event contract is needed.
+// neo-bar (it is the only consumer), so no producer event contract is needed.
 //
 // No pi runtime or TUI imports: the tracker takes the event fields it needs, so
 // tests can drive it without a session.

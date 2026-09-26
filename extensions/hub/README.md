@@ -5,7 +5,7 @@ Central signal hub for cooperating pi-x extensions.
 ## Purpose
 
 Most pi-x extensions currently talk to each other ad hoc over `pi.events`
-(for example `status-bar` producers and `pi-ui` actions). Hub is meant to
+(for example `neo-bar` producers and `pi-ui` actions). Hub is meant to
 become the missing central point that defines and arbitrates those signals:
 who is present, what each extension can do, and how requests/approvals flow
 between them (permissions being the first target).
@@ -69,7 +69,7 @@ Hub brokers explicit **semantic progress** for a coordinating agent and its
 subagents. The `progress` tool creates a tracker with a fixed, ordered tree,
 reports each leaf's lifecycle state, and finishes the tracker. A node may name
 an earlier `parentId`; a branch's `childUnit` names its direct children. Hub
-publishes detached aggregate snapshots on `hub:progress:changed`; `status-bar`
+publishes detached aggregate snapshots on `hub:progress:changed`; `neo-bar`
 renders one footer row and `/px:progress` shows a detailed view. Progress is
 reported state, never inferred from tool calls or subagent runtime state.
 

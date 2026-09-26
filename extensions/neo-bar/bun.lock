@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "status-bar",
+      "name": "neo-bar",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "^0.85.1",
         "@earendil-works/pi-tui": "^0.85.1",

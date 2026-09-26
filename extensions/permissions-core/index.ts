@@ -55,7 +55,7 @@ function warnInvalidInheritedPolicy(ctx: ExtensionContext, raw: unknown): void {
  * permissions-core: headless network permission provider.
  *
  * Owns the effective network policy and answers `perm:net` hub requests. State
- * is exposed to UI/status-bar through `px:permissions-core:net:state:*`. Safe
+ * is exposed to UI/neo-bar through `px:permissions-core:net:state:*`. Safe
  * mode is only observed (read-only); this extension never changes it.
  */
 export default function permissionsCoreExtension(pi: ExtensionAPI): void {

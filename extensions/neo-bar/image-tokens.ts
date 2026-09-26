@@ -1,4 +1,4 @@
-// Image token estimation for the status-bar's unsent-message size label.
+// Image token estimation for the neo-bar's unsent-message size label.
 //
 // DeepSeek publishes the exact resize + token algorithm behind its image token
 // calculator. We port it here (model `v41`: patch 14, downsample 3, 1024-token

@@ -120,7 +120,7 @@ test("sortProcessEntries is stable for equal timestamps", () => {
 	expect([second, first].sort(sortProcessEntries).map((entry) => entry.name)).toEqual(["b", "a"]);
 });
 
-test("state tone matches the retired status-bar colors", () => {
+test("state tone matches the retired neo-bar colors", () => {
 	expect(processStateTone(makeEntry({ state: "running" }))).toBe("success");
 	expect(processStateTone(makeEntry({ state: "stopping" }))).toBe("warning");
 	expect(processStateTone(makeEntry({ state: "exited", exitCode: 0 }))).toBe("muted");

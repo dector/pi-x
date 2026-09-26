@@ -1,5 +1,5 @@
 {
-  "name": "status-bar",
+  "name": "neo-bar",
   "private": true,
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.85.1",

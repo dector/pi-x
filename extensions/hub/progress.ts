@@ -383,7 +383,7 @@ export class ProgressRegistry {
 			owner: parsed.owner,
 			title: parsed.title,
 			// Treat an empty unit as absent so the observer snapshot always carries
-			// the default display noun; the status-bar rejects an empty `unit`.
+			// the default display noun; the neo-bar rejects an empty `unit`.
 			unit: parsed.unit || DEFAULT_PROGRESS_UNIT,
 			chunks: parsed.chunks.map((chunk, i) => {
 				const stored: ProgressChunkRecord = { id: chunk.id, index: i + 1, state: "pending", updatedAt: now };

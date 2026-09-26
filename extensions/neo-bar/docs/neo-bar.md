@@ -1,4 +1,4 @@
-# Status Bar (Final Spec)
+# Neo Bar (Final Spec)
 
 Centralized status rendering for extensions.
 
@@ -51,30 +51,30 @@ Producers publish content to the shared event bus:
 - `px:status-bar:pong`
   - payload: `{ id: string }`
 
-When `status-bar` receives a valid `px:status-bar:ping`, it emits `px:status-bar:pong` echoing the same `id`.
+When `neo-bar` receives a valid `px:status-bar:ping`, it emits `px:status-bar:pong` echoing the same `id`.
 
 `id` is the producer ID (for example `safe-mode`, `switch-thinking`). The git dirty totals and the skill counter are produced internally and are not part of this contract; the first-line ids `repo-stats` and `skill-stats` are ignored.
 
 ## Rendering path
 
-Status-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), not `ctx.ui.setStatus(...)`.
+Neo-bar is rendered via `ctx.ui.setFooter(...)` (custom footer component), not `ctx.ui.setStatus(...)`.
 
 Footer lines:
 
 1. first-line sections (left/center/right), keeping cwd + git branch + optional session name on the left when no producer owns the left section. In `new` display mode the git branch carries the border branch icon (`~/pi-x ( trunk)`) and the context token breakdown, prefixed with the total-usage icon (`󰓡 ↑0/↓0/0`), is appended to the right section after the producers.
-2. status-bar line (left/center/right)
+2. neo-bar line (left/center/right)
 
 ## Status-line rendering rules
 
-Status-bar stores latest content per producer (`id -> content`) and resolves second-line section values by `DEFAULT_STATUS_BAR_LAYOUT`.
+Neo-bar stores latest content per producer (`id -> content`) and resolves second-line section values by `DEFAULT_NEO_BAR_LAYOUT`.
 
-For `context-watcher-*` IDs, status-bar now computes values internally from the active context/session.
+For `context-watcher-*` IDs, neo-bar now computes values internally from the active context/session.
 
 ### Cost display
 
 The token item (`context-watcher-tokens`) renders `↑<input>/↓<output>/<cacheRead>`.
 
-When the active provider is in the cost-display whitelist (currently `deepseek` only), status-bar appends the cumulative session cost:
+When the active provider is in the cost-display whitelist (currently `deepseek` only), neo-bar appends the cumulative session cost:
 
 ```
 ↑12k/↓3.4k/45k ($0.0023)
@@ -123,7 +123,7 @@ context/model/safe-mode info:
   `safe-mode`, `switch-thinking`, `context-watcher-model`, and
   `context-watcher-percent` are hidden. The git dirty totals also move
   from the first line to the frame top-right.
-- `legacy` (status-bar priority): editor frame is the plain pi editor (no side
+- `legacy` (neo-bar priority): editor frame is the plain pi editor (no side
   borders, no corner labels); status line uses the default layout with the
   effective network token inserted directly after `safe-mode`.
 
@@ -163,7 +163,7 @@ Aliases load at session start, so reload/restart after editing the file.
 
 ## Editor frame
 
-Status-bar replaces the editor component with a `CustomEditor` subclass, draws a
+Neo-bar replaces the editor component with a `CustomEditor` subclass, draws a
 full frame (heavy `┃` sides + light arc `╭ ╮ ╰ ╯` corners; set
 `PI_STATUS_BAR_FRAME_CORNERS=square` or change the source constant
 `FRAME_CORNER_STYLE` for the heavy square `┏ ┓ ┗ ┛` corners), enables one column of
@@ -238,7 +238,7 @@ and `↑ N more` sits on the right of the top border.
 - Emit `px:status-bar:set` when content changes.
 - Emit `px:status-bar:clear` when content should disappear.
 
-### Status-bar extension
+### Neo-bar extension
 
 - Own layout, joining, alignment, and truncation.
 - Resolve first-line left/center/right sections, ordered by priority descending then stable registration order.

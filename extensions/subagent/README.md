@@ -509,7 +509,7 @@ widget while scrolling in fullscreen mode is not reliably implementable. The
 widget is intentionally non-interactive; use `/px:agents` to inspect and control
 runs.
 
-`subagent` no longer publishes a `status-bar` row, so `status-bar` is not
+`subagent` no longer publishes a `neo-bar` row, so `neo-bar` is not
 required for this feature.
 
 ## Run log (`/px:agent:log`)

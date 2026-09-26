@@ -2,14 +2,14 @@
 
 Automated coverage lives in `bun test` (see the extension READMEs). This is the
 manual end-to-end check for behavior that only exists in a real interactive pi
-session: status-bar rendering, `/px:net`, and the safe-mode approval dialog.
+session: neo-bar rendering, `/px:net`, and the safe-mode approval dialog.
 
 ## Setup
 
 From the repo root:
 
 ```sh
-for e in status-bar permissions-core permissions-ui http; do (cd "extensions/$e" && bun install); done
+for e in neo-bar permissions-core permissions-ui http; do (cd "extensions/$e" && bun install); done
 ./pitest
 ```
 

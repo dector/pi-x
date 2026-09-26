@@ -1,10 +1,10 @@
-# status-bar (pi extension)
+# neo-bar (pi extension)
 
-Centralized status-bar renderer for producer extensions.
+Centralized neo-bar renderer for producer extensions.
 
 ## Dependency role
 
-`status-bar` is a shared dependency for other extensions in this repository.
+`neo-bar` is a shared dependency for other extensions in this repository.
 Install and enable it first so producer extensions can render their status output.
 
 ## Contract
@@ -14,7 +14,7 @@ Install and enable it first so producer extensions can render their status outpu
 - `px:status-bar:ping` with `{ id }`
 - `px:status-bar:pong` with `{ id }`
 
-When `status-bar` receives a valid ping payload, it emits a pong payload echoing the same `id`.
+When `neo-bar` receives a valid ping payload, it emits a pong payload echoing the same `id`.
 
 ### Second line sections
 
@@ -26,7 +26,7 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 - `new` display mode uses an empty second line (see [Display mode](#display-mode)) because
   context/model/safe-mode are shown on the editor frame border and the token breakdown
   moves to the first line.
-- `context-watcher-*` IDs are computed internally by `status-bar` from active context usage/model.
+- `context-watcher-*` IDs are computed internally by `neo-bar` from active context usage/model.
 - Token label format: `↑<input>/↓<output>/<cacheRead>`.
 - Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
   - Cost comes from pi's per-message `usage.cost.total` (derived from the model price table), summed over the active branch.
@@ -95,19 +95,19 @@ When `status-bar` receives a valid ping payload, it emits a pong payload echoing
 
 ### Progress row
 
-`status-bar` observes the hub semantic-progress protocol and renders the active
-progress text near the status bar. It subscribes to `hub:progress:changed` and,
+`neo-bar` observes the hub semantic-progress protocol and renders the active
+progress text near the neo bar. It subscribes to `hub:progress:changed` and,
 on `session_start` and `session_tree`, issues a correlated
 `hub:progress:query` after installing its `hub:progress:snapshot` listener. The
 text is hidden while no tracker is active.
 
-- Contract mirror: `status-bar` does not import hub runtime files; channels and
+- Contract mirror: `neo-bar` does not import hub runtime files; channels and
   snapshot types are mirrored locally in `progress.ts`.
 - Every text field (`title`, `unit`, `label`, `phase`) is stripped of ANSI/OSC
   escapes and all C0/C1 controls by `sanitizeUntrustedProgressText` before
   rendering.
 - Placement: the text renders centered on its own line(s) directly above the
-  status bar's first line (line `-1`), between the input and the status bar.
+  neo bar's first line (line `-1`), between the input and the neo bar.
   The first status line is left untouched.
 - The text is shortened on very narrow screens (for example a phone):
   `Milestone` -> `M`, `Phase` -> `P`, `Step` -> `St`, and wrapped to at most
@@ -133,7 +133,7 @@ text is hidden while no tracker is active.
 
 ### Editor frame
 
-`status-bar` also replaces the editor component with a `CustomEditor` subclass.
+`neo-bar` also replaces the editor component with a `CustomEditor` subclass.
 The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
@@ -161,7 +161,7 @@ labels are rendered in the frame corners:
   when the status line is crowded.
 - Mouse coordinates are translated by one column so click-to-position keeps working.
 - Pressing the configured interrupt key (Escape by default) while an agent operation is active opens a `y/n` confirmation instead of aborting immediately. Declining (or pressing Escape again) keeps the operation running, and idle Escape behavior is unchanged.
-- **top-right** — git dirty totals collected internally by `status-bar`
+- **top-right** — git dirty totals collected internally by `neo-bar`
   (`git-stats.ts`), rendered as two icon groups, files first then changed lines,
   separated by ` · `:
   `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
@@ -273,7 +273,7 @@ labels are rendered in the frame corners:
     producer items (after the skill counter), prefixed with the total-usage icon,
     and omits the cost suffix because the border already shows cost.
   - `safe-mode`, the effective network token, `switch-thinking` (favorite thinking modes), model, and percent are hidden from the status line.
-- `legacy` — status-bar priority.
+- `legacy` — neo-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).
   - Status line uses the default layout: `left: ["safe-mode", "switch-thinking"]`
     with the effective network token inserted directly after `safe-mode`,
@@ -315,12 +315,12 @@ in `~/.pi/agent/status-bar.json`. Matching is by exact id only (no patterns).
 
 ## Implementation
 
-`status-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
+`neo-bar` renders via a custom footer: `ctx.ui.setFooter(...)`.
 
 The footer renders two core lines (plus optional leading progress lines and extra rows):
 
 1. First line from first-line section events plus built-in cwd + git branch + optional session name on the left when no producer owns the left section
-2. status-bar line with true left/center/right alignment
+2. neo-bar line with true left/center/right alignment
 
 ## Alignment and width behavior
 
@@ -342,7 +342,7 @@ Second-line producers:
 - `switch-thinking`
 
 Context usage (`context-watcher-*` IDs), the git dirty totals, and the skill
-counter are now produced internally by `status-bar`. The first-line ids
+counter are now produced internally by `neo-bar`. The first-line ids
 `repo-stats` and `skill-stats` (former standalone extensions) are ignored, so a
 stale installed copy cannot duplicate the counters.
 
@@ -373,8 +373,8 @@ Extra-row producers:
 
 Copy this folder into a standard pi extension location:
 
-- Global: `~/.pi/agent/extensions/status-bar/`
-- Project-local: `.pi/extensions/status-bar/`
+- Global: `~/.pi/agent/extensions/neo-bar/`
+- Project-local: `.pi/extensions/neo-bar/`
 
 Required files:
 

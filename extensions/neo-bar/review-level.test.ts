@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { formatReviewLevelLabel, isReviewLevelSetPayload } from "./index";
-import type { StatusBarReviewLevel } from "./contract";
+import type { NeoBarReviewLevel } from "./contract";
 
-const EXPECTED_ICONS: Record<StatusBarReviewLevel, string> = {
+const EXPECTED_ICONS: Record<NeoBarReviewLevel, string> = {
 	auto: "󰈈",
 	off: "󰛑",
 	minimal: "󱀧",
@@ -10,7 +10,7 @@ const EXPECTED_ICONS: Record<StatusBarReviewLevel, string> = {
 	high: "󰡬",
 };
 
-describe("status-bar review-level indicator", () => {
+describe("neo-bar review-level indicator", () => {
 	test("accepts exactly the five supported set payloads", () => {
 		for (const level of Object.keys(EXPECTED_ICONS)) {
 			expect(isReviewLevelSetPayload({ level })).toBe(true);

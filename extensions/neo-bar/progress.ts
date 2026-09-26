@@ -1,6 +1,6 @@
-// status-bar observer for the hub semantic-progress protocol.
+// neo-bar observer for the hub semantic-progress protocol.
 //
-// `status-bar` must not import across extension directories, so this module
+// `neo-bar` must not import across extension directories, so this module
 // mirrors the validated hub progress wire strings/types locally (exactly the
 // approach used by `network.ts`). It stays pure and testable: no pi runtime and
 // no TUI imports. `index.ts` binds it to `pi.events` and the footer row map.
@@ -13,7 +13,7 @@
 // Mirrored hub progress contract (see extensions/hub/contract.ts)
 // ---------------------------------------------------------------------------
 
-/** Only the channels the status-bar observer needs. */
+/** Only the channels the neo-bar observer needs. */
 export const HUB_PROGRESS_CHANNELS = {
 	changed: "hub:progress:changed",
 	query: "hub:progress:query",
@@ -400,7 +400,7 @@ export function queryProgressSnapshot(
 	events: EventBusLike,
 	options?: { timeoutMs?: number; requestId?: string },
 ): Promise<ProgressSnapshot | undefined> {
-	const id = options?.requestId ?? `status-bar-progress-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+	const id = options?.requestId ?? `neo-bar-progress-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS;
 
 	return new Promise((resolve) => {

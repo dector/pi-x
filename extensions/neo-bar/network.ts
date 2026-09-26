@@ -1,6 +1,6 @@
-// status-bar consumer for the permissions-core network state.
+// neo-bar consumer for the permissions-core network state.
 //
-// `status-bar` must not import across extension directories, so this module
+// `neo-bar` must not import across extension directories, so this module
 // mirrors the validated permissions-core contract (event names + payload
 // parsers) exactly like `permissions-ui` does. It stays pure and testable: no
 // pi runtime and no TUI imports. `index.ts` binds it to `pi.events` and the
@@ -182,7 +182,7 @@ export function queryNetworkState(
 	events: EventBusLike,
 	options?: { timeoutMs?: number; requestId?: string },
 ): Promise<NetworkPermissionState | undefined> {
-	const id = options?.requestId ?? `status-bar-net-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+	const id = options?.requestId ?? `neo-bar-net-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS;
 
 	return new Promise((resolve) => {

@@ -40,7 +40,7 @@ Line ranges are exact for this revision of the document.
   - [9.3 Parent handling](#93-parent-handling) — lines 717–770
   - [9.4 Nested subagents](#94-nested-subagents) — lines 771–780
 - [10. Observer and UI behavior](#10-observer-and-ui-behavior) — lines 781–897
-  - [10.1 Status-bar observer](#101-status-bar-observer) — lines 783–802
+  - [10.1 Neo-bar observer](#101-neo-bar-observer) — lines 783–802
   - [10.2 Formatting one tracker](#102-formatting-one-tracker) — lines 803–850
   - [10.3 Pure formatter](#103-pure-formatter) — lines 851–863
   - [10.4 Detailed command](#104-detailed-command) — lines 864–897
@@ -51,7 +51,7 @@ Line ranges are exact for this revision of the document.
   - [Stage 3: wire the registry into hub events](#stage-3-wire-the-registry-into-hub-events) — lines 1016–1068
   - [Stage 4: add the direct progress tool](#stage-4-add-the-direct-progress-tool) — lines 1069–1117
   - [Stage 5: add child-to-parent relay](#stage-5-add-child-to-parent-relay) — lines 1118–1172
-  - [Stage 6: add status-bar observer and formatter](#stage-6-add-status-bar-observer-and-formatter) — lines 1173–1222
+  - [Stage 6: add neo-bar observer and formatter](#stage-6-add-neo-bar-observer-and-formatter) — lines 1173–1222
   - [Stage 7: documentation and manual smoke test](#stage-7-documentation-and-manual-smoke-test) — lines 1223–1260
   - [Stage 8: final regression pass](#stage-8-final-regression-pass) — lines 1261–1283
 - [13. Acceptance criteria](#13-acceptance-criteria) — lines 1284–1305
@@ -88,7 +88,7 @@ V1 will:
 - keep lifecycle state separate from free-form phase text;
 - store and aggregate progress in the hub;
 - publish detached snapshots for observers;
-- show active progress through the status-bar extension;
+- show active progress through the neo-bar extension;
 - provide `/px:progress` for a detailed view;
 - relay progress from a subagent process into its immediate parent's hub;
 - make the tool available to restricted-tool subagents when the parent has the
@@ -137,7 +137,7 @@ root agent progress tool
   root hub ProgressRegistry
         |
         | hub:progress:changed
-        +----------------------> status-bar observer
+        +----------------------> neo-bar observer
         |
         +----------------------> /px:progress
 
@@ -780,13 +780,13 @@ the subagent tool schema. Do not attempt it accidentally in V1.
 
 ## 10. Observer and UI behavior
 
-### 10.1 Status-bar observer
+### 10.1 Neo-bar observer
 
-The status-bar extension subscribes to `hub:progress:changed`. On
+The neo-bar extension subscribes to `hub:progress:changed`. On
 `session_start` and `session_tree`, it emits a correlated
 `hub:progress:query` after installing its snapshot listener.
 
-Do not make status-bar inspect hub internals. Do not make hub emit private
+Do not make neo-bar inspect hub internals. Do not make hub emit private
 `px:status-bar:*` events for this feature.
 
 Store one internal extra row:
@@ -805,7 +805,7 @@ Hide the row when `snapshot.active === false`.
 Sanitize ANSI escapes/control characters in every text field before display.
 Create a dedicated `sanitizeUntrustedProgressText` that strips ANSI/OSC escapes
 and all C0/C1 controls. Do **not** reuse `sanitizeStatusText`; that helper
-intentionally preserves producer-supplied ANSI color. The existing status-bar
+intentionally preserves producer-supplied ANSI color. The existing neo-bar
 terminal-width truncation remains the final bound.
 
 If exactly one chunk is `active` or `blocked`, use the focused form:
@@ -850,7 +850,7 @@ Do not create one footer row per tracker in V1; it can flood small terminals.
 
 ### 10.3 Pure formatter
 
-Create `extensions/status-bar/progress.ts` containing:
+Create `extensions/neo-bar/progress.ts` containing:
 
 - strict structural parsing for an unknown snapshot;
 - count helpers;
@@ -858,7 +858,7 @@ Create `extensions/status-bar/progress.ts` containing:
 - `formatProgressRow(snapshot)` returning `string | undefined`.
 
 Keep formatting pure and test it independently. The observer in
-`extensions/status-bar/index.ts` should only update/delete `rowById` and request
+`extensions/neo-bar/index.ts` should only update/delete `rowById` and request
 a render.
 
 ### 10.4 Detailed command
@@ -918,7 +918,7 @@ It should not duplicate the full `/px:progress` listing.
   history. They are excluded from observer snapshots and the active status row.
 - Observer payloads are untrusted display data. Sanitize with the dedicated
   progress sanitizer before rendering.
-- Hub, status-bar, and subagent mirror progress wire strings/types locally where
+- Hub, neo-bar, and subagent mirror progress wire strings/types locally where
   needed. They must not add runtime imports between independently installable
   extension directories.
 - Do not log or display raw malformed relay payloads.
@@ -1170,14 +1170,14 @@ Then run the broader subagent suite because `index.ts` is high risk:
 bun test extensions/subagent
 ```
 
-### Stage 6: add status-bar observer and formatter
+### Stage 6: add neo-bar observer and formatter
 
 Files:
 
-- create `extensions/status-bar/progress.ts`;
-- create `extensions/status-bar/progress.test.ts`;
-- modify `extensions/status-bar/index.ts`;
-- modify `extensions/status-bar/README.md`.
+- create `extensions/neo-bar/progress.ts`;
+- create `extensions/neo-bar/progress.test.ts`;
+- modify `extensions/neo-bar/index.ts`;
+- modify `extensions/neo-bar/README.md`.
 
 Tasks:
 
@@ -1217,7 +1217,7 @@ Required tests:
 Run:
 
 ```bash
-bun test extensions/status-bar/progress.test.ts extensions/status-bar
+bun test extensions/neo-bar/progress.test.ts extensions/neo-bar
 ```
 
 ### Stage 7: documentation and manual smoke test
@@ -1228,7 +1228,7 @@ Files:
 - modify `extensions/hub/PROTOCOL.md`;
 - modify `extensions/hub/todo.md`;
 - modify `extensions/subagent/README.md`;
-- modify `extensions/status-bar/README.md`.
+- modify `extensions/neo-bar/README.md`.
 
 Tasks:
 
@@ -1237,12 +1237,12 @@ Tasks:
 3. Document the immediate-child relay limitation.
 4. Add a dedicated progress/status observer item to the hub roadmap, then mark
    it complete only after all tests and smoke tests pass. Do not repurpose the
-   existing user-wait status-bar observer item.
+   existing user-wait neo-bar observer item.
 5. Keep future persistence and milestone parsing as unchecked follow-ups.
 
 Manual smoke test:
 
-1. Start Pi through `./pitest` so hub, subagent, and status-bar load.
+1. Start Pi through `./pitest` so hub, subagent, and neo-bar load.
 2. Call `progress start` with three chunks and unit `Stage`.
 3. Mark chunk 1 active with phase `reviewing`.
 4. Verify the footer shows `Stage 1/3 (reviewing)`.
@@ -1265,7 +1265,7 @@ At minimum:
 
 ```bash
 bun test extensions/hub \
-  extensions/status-bar \
+  extensions/neo-bar \
   extensions/subagent \
   extensions/safe-mode
 ```
@@ -1299,7 +1299,7 @@ V1 is complete only when all are true:
 8. Malformed, oversized, wrong-owner, stale-token, and terminal-conflicting
    updates do not corrupt registry state or crash Pi.
 9. Observer snapshots are detached and deterministic.
-10. Existing hub permissions, user waits, status-bar rows, subagent controls,
+10. Existing hub permissions, user waits, neo-bar rows, subagent controls,
     process backend, and Herdr backend tests continue to pass.
 11. Documentation states that V1 is session-only and direct-child-only.
 

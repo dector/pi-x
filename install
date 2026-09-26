@@ -136,10 +136,10 @@ fi
 
 mkdir -p "$DEST_ROOT"
 
-# Install status-bar first because other extensions depend on it.
+# Install neo-bar first because other extensions depend on it.
 extensions=(
   "hub"
-  "status-bar"
+  "neo-bar"
   "panels"
   "subagent"
   "proc"
