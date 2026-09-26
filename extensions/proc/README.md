@@ -7,6 +7,7 @@ running in the Processes widget above the editor.
 ## Features
 
 - `proc` tool for the agent: run, list, status, logs, stop, kill, write, forget.
+- `/px:proc x <command>` starts a user-owned background process using the same manager.
 - Processes run detached in their own process group, so stopping a process also
   stops its children (no orphaned `node`/`npm` holding ports).
 - Ordered stdout/stderr ring buffer per process with independent read cursors:
@@ -166,12 +167,16 @@ The retired `statusRow` option is still honored as a compatibility fallback:
 
 ```text
 /px:proc                                interactive process manager
+/px:proc x <command>                    start a background shell command
 /px:proc list                           plain-text list
 /px:proc logs <name> [lines] [--start]  read logs (user cursor)
 /px:proc stop|kill|forget [name]        manage a process
 ```
 
-When `<name>` is omitted, a picker is shown.
+For example, `/px:proc x foo bar` runs `foo bar` via `bash -lc`, just like
+`proc run`. The command is passed through as written, including shell quotes;
+its process gets the usual automatic name, widget entry, and logs. When
+`<name>` is omitted, a picker is shown.
 
 ### Interactive manager (`/px:proc`)
 

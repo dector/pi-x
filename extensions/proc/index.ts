@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { parseRunCommand } from "./command.ts";
 import {
 	PROC_STOP_ALL_MAX_WAIT_MS,
 	PROC_STOP_ALL_REPLY_EVENT,
@@ -1211,12 +1212,28 @@ export default function procExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("px:proc", {
-		description: "Manage background processes interactively, or via list/logs/stop/kill/forget",
+		description: "Manage background processes, or run a command with x <command>",
 		handler: async (rawArgs, ctx) => {
 			globalState.pi = pi;
 			globalState.ctx = ctx;
-			const tokens = (rawArgs ?? "").trim().split(/\s+/).filter(Boolean);
+			const args = (rawArgs ?? "").trim();
+			const tokens = args.split(/\s+/).filter(Boolean);
 			const sub = tokens.shift();
+
+			const command = parseRunCommand(args);
+			if (command !== undefined) {
+				if (!command) {
+					notifyText(ctx, "Usage: /px:proc x <command>", "warning");
+					return;
+				}
+				try {
+					const record = startProcess(ctx, { command });
+					notifyText(ctx, `Started ${record.name} (pid ${record.pid ?? "?"}).\ncommand: ${record.command}\ncwd: ${record.cwd}`);
+				} catch (error) {
+					notifyText(ctx, error instanceof Error ? error.message : String(error), "warning");
+				}
+				return;
+			}
 
 			if (!sub) {
 				await openProcManager(ctx);
@@ -1284,7 +1301,7 @@ export default function procExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			notifyText(ctx, "Usage: /px:proc | /px:proc list | /px:proc logs <name> [lines] [--start] | /px:proc stop|kill|forget [name]", "warning");
+			notifyText(ctx, "Usage: /px:proc | /px:proc x <command> | /px:proc list | /px:proc logs <name> [lines] [--start] | /px:proc stop|kill|forget [name]", "warning");
 		},
 	});
 }
