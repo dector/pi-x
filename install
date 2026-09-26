@@ -158,7 +158,6 @@ extensions=(
   "save"
   "prompt-stash"
   "notes"
-  "git"
   "pi-nvim"
   "focus-mode"
   "herdr-agent-state"
