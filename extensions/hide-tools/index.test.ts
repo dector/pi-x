@@ -62,7 +62,7 @@ test("compact collapses failed tools; hidden still shows failed tools in full", 
 	expect(assistantError.render()).toEqual(["Error: Usage limit reached"]);
 });
 
-test("compact status changes from Nerd Font watch to check or x as results arrive", async () => {
+test("compact status changes from dot to check or x as results arrive", async () => {
 	const running = new ToolExecutionComponent("running");
 	const failed = new ToolExecutionComponent("failed");
 	const chat = { children: [running, failed] as any[] };
@@ -85,14 +85,14 @@ test("compact status changes from Nerd Font watch to check or x as results arriv
 	await command("compact -s", { mode: "tui", hasUI: true, ui });
 	const lines = () => chat.children.filter((child) => child.__px_hide_tools_line === "compact");
 	expect(lines().map((line) => line.render(80)[0])).toEqual([
-		" ▸ \u{f057a} bash echo ok", " ▸ \u{f057a} bash echo ok",
+		" ▸ · bash echo ok", " ▸ · bash echo ok",
 	]);
 	running.result = { isError: false };
 	failed.result = { isError: true };
 	failed.isPartial = true;
 	tui.doRender();
 	expect(lines().map((line) => line.render(80)[0])).toEqual([
-		" ▸ ✓ bash echo ok", " ▸ \u{f057a} bash echo ok",
+		" ▸ ✓ bash echo ok", " ▸ · bash echo ok",
 	]);
 	failed.isPartial = false;
 	tui.doRender();

@@ -267,9 +267,9 @@ function summaryText(count: number, revealed: boolean, width: number): string {
 	return `${" ".repeat(pad)}${themed("dim", plain)}`;
 }
 
-/** One-cell status glyphs; the running watch is a Nerd Font icon, not emoji. */
+/** One-cell status glyphs; the running dot becomes a check or x once the result lands. */
 function toolStatus(component: AnyRecord): string {
-	if (!component.result || component.isPartial === true) return "\u{f057a}"; // nf-md-watch
+	if (!component.result || component.isPartial === true) return "·";
 	return component.result.isError === true ? "x" : "✓";
 }
 
