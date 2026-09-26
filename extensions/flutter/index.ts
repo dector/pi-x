@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const EXTENSION_ID = "flutter";
@@ -150,6 +150,47 @@ function findRepoRoot(cwd: string): string | undefined {
 	return result.stdout.split("\n")[0]?.trim() || undefined;
 }
 
+function isFlutterProject(dir: string): boolean {
+	const pubspecPath = join(dir, "pubspec.yaml");
+	if (!existsSync(pubspecPath)) return false;
+	try {
+		return readFileSync(pubspecPath, "utf8").includes("flutter");
+	} catch {
+		// Unreadable pubspec still marks a project directory.
+		return true;
+	}
+}
+
+function findRepoRootSync(cwd: string): string | undefined {
+	let dir = resolve(cwd);
+	while (true) {
+		if (existsSync(join(dir, ".git"))) return dir;
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+}
+
+function hasFlutterProject(cwd: string): boolean {
+	const candidates = new Set<string>([resolve(cwd)]);
+	const repoRoot = findRepoRootSync(cwd);
+	if (repoRoot) candidates.add(repoRoot);
+
+	// Honor an explicitly configured workdir for monorepos where the app is not
+	// at the repo root or cwd.
+	for (const baseDir of [repoRoot, resolve(cwd)]) {
+		if (!baseDir) continue;
+		const configured = readFlutterConfig(join(baseDir, CONFIG_RELATIVE_PATH))?.workdir;
+		if (!configured) continue;
+		candidates.add(isAbsolute(configured) ? configured : resolve(baseDir, configured));
+	}
+
+	for (const dir of candidates) {
+		if (isFlutterProject(dir)) return true;
+	}
+	return false;
+}
+
 function readFlutterConfig(path: string): FlutterConfig | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
@@ -224,6 +265,11 @@ function formatExitMessage(record: FlutterProcessRecord): string {
 }
 
 export default function flutterExtension(pi: ExtensionAPI): void {
+	// Skip loading this extension entirely when the current project is not Flutter.
+	// The factory has no session context, so use the process working directory
+	// (pi is normally launched from the project) and the git repo root.
+	if (!hasFlutterProject(process.cwd())) return;
+
 	let activeSessionContext: ExtensionContext | undefined;
 	let statusBarAvailable = false;
 	let warnedMissingStatusBar = false;

@@ -2,6 +2,14 @@
 
 Owns a single `flutter run --debug` process and exposes fast hot reload/restart controls from pi.
 
+The extension only loads when a Flutter project is detected, so it stays out of the way in non-Flutter repositories. Detection checks, in order:
+
+- the current working directory,
+- the git repository root,
+- the configured `workdir` (see [Configuration](#configuration)).
+
+A directory counts as a Flutter project when it contains a `pubspec.yaml` that mentions `flutter`. Otherwise `/px:flutter` and the shortcuts are not registered.
+
 ## Features
 
 - `/px:flutter run` starts `flutter run --debug` in the configured Flutter app workdir, or the current pi cwd when no workdir is configured.
