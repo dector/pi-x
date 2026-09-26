@@ -1,18 +1,18 @@
 /**
- * Gust comment browser — TUI prototype.
+ * Gust comment browser — TUI.
  *
  * Two-pane browser for Gust threads (list on the left, selected thread on the
- * right). Data currently comes from ./fixtures.ts; actions mutate it in memory
- * so the interaction feels real. The layout, keybindings, and state rendering
- * are the point of this prototype.
+ * right) backed by `gust ctl comments` (see ./gust.ts). Replies typed here
+ * default to human (`--human`); `tab` switches to an agent reply. A human
+ * reply to a review thread reopens it as submitted on the Gust side.
  *
  * Keys:
  *   ↑/↓ or j/k      move selection
  *   shift+j/k       scroll the thread pane
- *   enter / r       reply to the selected thread (human by default, tab toggles)
+ *   enter / r       reply (human by default, tab toggles the author)
  *   s               review (agent reply + mark review)
  *   x               resolve (y/n confirm)
- *   w               dispatch a simulated worker
+ *   g               refresh from gust
  *   f               cycle the state filter
  *   esc             close (or go back / cancel)
  *
@@ -33,7 +33,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { loadFixtures, type FixtureSet } from "./fixtures.ts";
+import type { GustClient } from "./gust.ts";
 import type { Author, Thread, ThreadMessage, ThreadState } from "./types.ts";
 
 type Tone = "accent" | "muted" | "dim" | "success" | "warning" | "error" | "text";
@@ -52,7 +52,9 @@ const STATE_META: Record<ThreadState, StateMeta> = {
 	done: { glyph: "✓", tone: "muted", label: "done" },
 };
 
-const STATE_ORDER: ThreadState[] = ["created", "submitted", "seen", "review", "done"];
+// States the count legend and filter cycle cover. Resolved threads appear
+// because listThreads asks gust for `--filter all`.
+const COUNTED_STATES: ThreadState[] = ["created", "submitted", "seen", "review", "done"];
 
 const FILTERS = ["all", "open", "submitted", "seen", "review", "done"] as const;
 type Filter = (typeof FILTERS)[number];
@@ -70,6 +72,10 @@ interface DetailLine {
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function padRight(text: string, width: number): string {
@@ -98,10 +104,6 @@ function formatDateTime(iso: string): string {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function newMessageId(): string {
-	return Math.random().toString(16).slice(2, 10);
-}
-
 function isShiftLetter(data: string, letter: "j" | "k"): boolean {
 	return matchesKey(data, Key.shift(letter)) || data === letter.toUpperCase();
 }
@@ -124,10 +126,10 @@ type Mode = "browse" | "detail" | "reply" | "confirm";
 export class ThreadsDialog implements Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
+	private readonly client: GustClient;
 	private readonly done: () => void;
-	private readonly fixtures: FixtureSet;
 
-	private threads: Thread[];
+	private threads: Thread[] = [];
 	private selected = 0;
 	private listOffset = 0;
 	private detailScroll = 0;
@@ -136,16 +138,18 @@ export class ThreadsDialog implements Component, Focusable {
 	private replyIntent: "reply" | "review" = "reply";
 	private replyAuthor: Author = "human";
 	private replyEditor: Editor | null = null;
-	private working = new Map<string, ReturnType<typeof setTimeout>>();
+	private loading = true;
+	private busy = false;
 	private status = "";
+	private error = "";
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: () => void) {
+	constructor(tui: TUI, theme: Theme, client: GustClient, done: () => void) {
 		this.tui = tui;
 		this.theme = theme;
+		this.client = client;
 		this.done = done;
-		this.fixtures = loadFixtures();
-		this.threads = this.fixtures.threads;
+		void this.load();
 	}
 
 	get focused(): boolean {
@@ -159,6 +163,39 @@ export class ThreadsDialog implements Component, Focusable {
 
 	invalidate(): void {
 		this.replyEditor?.invalidate();
+	}
+
+	// --- data -----------------------------------------------------------------
+
+	async load(): Promise<void> {
+		this.loading = true;
+		this.error = "";
+		this.tui.requestRender();
+		try {
+			this.threads = await this.client.listThreads();
+		} catch (error) {
+			this.error = errorMessage(error);
+		}
+		this.loading = false;
+		this.syncSelection();
+		this.tui.requestRender();
+	}
+
+	async refresh(): Promise<void> {
+		if (this.loading) return;
+		const keepId = this.selectedThread()?.id;
+		try {
+			this.threads = await this.client.listThreads();
+			this.error = "";
+			if (keepId) {
+				const index = this.visibleThreads().findIndex((thread) => thread.id === keepId);
+				if (index >= 0) this.selected = index;
+			}
+		} catch (error) {
+			this.error = errorMessage(error);
+		}
+		this.syncSelection();
+		this.tui.requestRender();
 	}
 
 	// --- selection & filtering ------------------------------------------------
@@ -230,6 +267,7 @@ export class ThreadsDialog implements Component, Focusable {
 		this.replyEditor.focused = this._focused;
 		this.mode = "reply";
 		this.status = "";
+		this.error = "";
 		this.tui.requestRender();
 	}
 
@@ -243,7 +281,7 @@ export class ThreadsDialog implements Component, Focusable {
 		this.returnFromReply();
 	}
 
-	private submitReply(): void {
+	private async submitReply(): Promise<void> {
 		const thread = this.selectedThread();
 		const editor = this.replyEditor;
 		if (!thread || !editor) return;
@@ -253,26 +291,27 @@ export class ThreadsDialog implements Component, Focusable {
 			this.tui.requestRender();
 			return;
 		}
-		const now = new Date().toISOString();
 		const author: Author = this.replyIntent === "review" ? "agent" : this.replyAuthor;
-		const message: ThreadMessage = { id: newMessageId(), author, text, createdAt: now };
-		thread.messages.push(message);
-		thread.updatedAt = now;
-		if (this.replyIntent === "review") {
-			thread.state = "review";
-			this.status = `marked review: ${thread.path}`;
-		} else if (author === "human" && thread.state === "review") {
-			// Gust reopens a review thread as submitted on a human reply, and the
-			// fresh batch puts it back in the agent inbox.
-			thread.state = "submitted";
-			thread.batchId = newMessageId();
-			thread.submittedAt = now;
-			this.status = `human reply reopened ${thread.path} as submitted`;
-		} else {
-			this.status = `replied as ${author} to ${thread.path}`;
+		this.busy = true;
+		this.status = "sending…";
+		this.error = "";
+		this.tui.requestRender();
+		try {
+			if (this.replyIntent === "review") {
+				await this.client.review(thread.id, text);
+				this.status = `marked review: ${thread.path}`;
+			} else {
+				await this.client.reply(thread.id, text, author === "human");
+				this.status = `replied as ${author} to ${thread.path}`;
+			}
+			this.returnFromReply();
+			await this.refresh();
+		} catch (error) {
+			this.error = `send failed: ${errorMessage(error)}`;
+		} finally {
+			this.busy = false;
+			this.tui.requestRender();
 		}
-		this.detailScroll = Number.MAX_SAFE_INTEGER;
-		this.returnFromReply();
 	}
 
 	private requestResolve(): void {
@@ -292,58 +331,35 @@ export class ThreadsDialog implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
-	private confirmResolve(): void {
+	private async confirmResolve(): Promise<void> {
 		const thread = this.selectedThread();
 		if (!thread) return;
-		thread.state = "done";
-		thread.finishedAt = new Date().toISOString();
-		thread.updatedAt = thread.finishedAt;
-		this.status = `resolved ${thread.path}`;
+		this.busy = true;
 		this.mode = "browse";
+		this.status = "resolving…";
+		this.error = "";
 		this.tui.requestRender();
-	}
-
-	private dispatchWorker(): void {
-		const thread = this.selectedThread();
-		if (!thread) return;
-		if (this.working.has(thread.id)) {
-			this.status = "worker already running";
+		try {
+			await this.client.done(thread.id);
+			this.status = `resolved ${thread.path}`;
+			await this.refresh();
+		} catch (error) {
+			this.error = `resolve failed: ${errorMessage(error)}`;
+		} finally {
+			this.busy = false;
 			this.tui.requestRender();
-			return;
 		}
-		if (thread.state !== "submitted" && thread.state !== "seen") {
-			this.status = "worker: only submitted/seen threads are work items";
-			this.tui.requestRender();
-			return;
-		}
-		this.status = `worker dispatched for ${thread.path}`;
-		const handle = setTimeout(() => {
-			const now = new Date().toISOString();
-			thread.messages.push({
-				id: newMessageId(),
-				author: "agent",
-				text: "Located the source, changed it, and verified the page. Marked review.",
-				createdAt: now,
-			});
-			thread.state = "review";
-			thread.updatedAt = now;
-			this.working.delete(thread.id);
-			this.status = `worker finished ${thread.path} → review`;
-			this.tui.requestRender();
-		}, 2800);
-		this.working.set(thread.id, handle);
-		this.tui.requestRender();
 	}
 
 	private close(): void {
-		for (const handle of this.working.values()) clearTimeout(handle);
-		this.working.clear();
 		this.done();
 	}
 
 	// --- input ----------------------------------------------------------------
 
 	handleInput(data: string): void {
+		if (this.busy) return;
+
 		if (this.mode === "reply") {
 			this.handleReplyInput(data);
 			return;
@@ -351,7 +367,7 @@ export class ThreadsDialog implements Component, Focusable {
 
 		if (this.mode === "confirm") {
 			if (data === "y" || data === "Y") {
-				this.confirmResolve();
+				void this.confirmResolve();
 				return;
 			}
 			if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
@@ -412,8 +428,13 @@ export class ThreadsDialog implements Component, Focusable {
 			this.requestResolve();
 			return;
 		}
+		if (data === "g") {
+			void this.refresh();
+			return;
+		}
 		if (data === "w") {
-			this.dispatchWorker();
+			this.status = "worker not wired yet (next step)";
+			this.tui.requestRender();
 			return;
 		}
 		if (data === "f") {
@@ -428,7 +449,7 @@ export class ThreadsDialog implements Component, Focusable {
 			return;
 		}
 		if (matchesKey(data, Key.ctrl("s"))) {
-			this.submitReply();
+			void this.submitReply();
 			return;
 		}
 		if (matchesKey(data, Key.tab)) {
@@ -463,19 +484,20 @@ export class ThreadsDialog implements Component, Focusable {
 
 	private renderHeader(width: number): string {
 		const title = this.theme.fg("accent", this.theme.bold(" Gust comments "));
-		const subtitle = this.theme.fg("dim", ` ${this.fixtures.site} · fake data`);
+		const subtitle = this.theme.fg("dim", ` ${this.client.invocationLabel()} · ${this.client.socketLabel()}`);
 		const right = this.theme.fg("muted", `filter: ${this.filter} `);
 		const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(subtitle) - visibleWidth(right));
 		return truncateToWidth(title + subtitle + " ".repeat(gap) + right, width);
 	}
 
 	private renderCounts(width: number): string {
-		const parts = STATE_ORDER.map((state) => {
+		const parts = COUNTED_STATES.map((state) => {
 			const count = this.threads.filter((t) => t.state === state).length;
 			const meta = STATE_META[state];
 			return `${this.tone(meta.glyph, meta.tone)} ${this.theme.fg("muted", String(count))}`;
 		});
-		return truncateToWidth(this.theme.fg("dim", "  ") + parts.join("  "), width);
+		const total = this.theme.fg("dim", `${this.threads.length} threads`);
+		return truncateToWidth(`${this.theme.fg("dim", "  ")}${parts.join("  ")}   ${total}`, width);
 	}
 
 	private renderLeftCell(thread: Thread | undefined, rowWidth: number, isSelected: boolean): string {
@@ -491,9 +513,6 @@ export class ThreadsDialog implements Component, Focusable {
 			const preview = truncateToWidth(thread.text.replace(/\s+/g, " "), remaining - 1);
 			line += this.theme.fg("dim", ` ${preview}`);
 		}
-		if (this.working.has(thread.id)) {
-			line += this.theme.fg("warning", " ⏳");
-		}
 		return padRight(truncateToWidth(line, rowWidth), rowWidth);
 	}
 
@@ -501,19 +520,16 @@ export class ThreadsDialog implements Component, Focusable {
 		const thread = this.selectedThread();
 		const out: DetailLine[] = [];
 		if (!thread) {
-			out.push({ text: "No threads match this filter.", tone: "muted" });
+			out.push({ text: this.threads.length === 0 ? "No threads." : "No threads match this filter.", tone: "muted" });
 			return out;
 		}
 
 		const meta = STATE_META[thread.state];
 		out.push({ text: thread.path, tone: "accent", bold: true });
-		out.push({ text: `${meta.label}  ·  id ${thread.id}${thread.batchId ? `  ·  batch ${thread.batchId}` : ""}`, tone: meta.tone });
+		out.push({ text: `${meta.label}  ·  thread id ${thread.id}${thread.batchId ? `  ·  batch ${thread.batchId}` : ""}`, tone: meta.tone });
 		const times = [`created ${formatDateTime(thread.createdAt)}`];
 		if (thread.finishedAt) times.push(`resolved ${formatDateTime(thread.finishedAt)}`);
 		out.push({ text: times.join("  ·  "), tone: "dim" });
-		if (this.working.has(thread.id)) {
-			out.push({ text: "⏳ worker running…", tone: "warning" });
-		}
 		out.push({ text: "" });
 
 		if (thread.locator) {
@@ -545,9 +561,9 @@ export class ThreadsDialog implements Component, Focusable {
 		}
 		if (this.mode === "confirm") return " resolve this thread? y/n";
 		const narrow = this.tui.terminal.columns < TWO_PANE_MIN_WIDTH;
-		if (narrow && this.mode === "browse") return " ↑↓ select · enter open · f filter · esc close";
-		if (narrow) return " shift+j/k scroll · r reply · s review · x resolve · w worker · esc back";
-		return " ↑↓ select · shift+j/k scroll · enter/r reply · s review · x resolve · w worker · f filter · esc close";
+		if (narrow && this.mode === "browse") return " ↑↓ select · enter open · g refresh · f filter · esc close";
+		if (narrow) return " shift+j/k scroll · r reply · s review · x resolve · g refresh · esc back";
+		return " ↑↓ select · shift+j/k scroll · enter/r reply · s review · x resolve · g refresh · f filter · esc close";
 	}
 
 	private renderReplyBox(width: number, lines: string[]): void {
@@ -561,7 +577,7 @@ export class ThreadsDialog implements Component, Focusable {
 		lines.push(truncateToWidth(header + who, width));
 		const editorLines = this.replyEditor?.render(inner) ?? [""];
 		for (const line of editorLines) {
-			lines.push(truncateToWidth(` ${this.renderLine({ text: line })}`, width));
+			lines.push(truncateToWidth(` ${line}`, width));
 		}
 		lines.push(truncateToWidth(this.theme.fg("dim", this.footerHint()), width));
 		lines.push(border);
@@ -578,6 +594,15 @@ export class ThreadsDialog implements Component, Focusable {
 
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
 		const separator = this.theme.fg("dim", "─".repeat(renderWidth));
+
+		if (this.loading && this.threads.length === 0) {
+			return [
+				border,
+				this.renderHeader(renderWidth),
+				truncateToWidth(this.theme.fg("muted", " Loading threads…"), renderWidth),
+				border,
+			];
+		}
 
 		if (this.mode === "reply") {
 			const lines: string[] = [border, this.renderHeader(renderWidth), this.renderCounts(renderWidth), separator];
@@ -636,10 +661,13 @@ export class ThreadsDialog implements Component, Focusable {
 
 		lines.push(separator);
 		lines.push(truncateToWidth(this.theme.fg("dim", this.footerHint()), renderWidth));
-		if (this.status) {
+		if (this.busy) {
+			lines.push(truncateToWidth(this.theme.fg("warning", ` ${this.status}`), renderWidth));
+		} else if (this.error) {
+			lines.push(truncateToWidth(this.theme.fg("error", ` ${this.error}`), renderWidth));
+		} else if (this.status) {
 			lines.push(truncateToWidth(this.theme.fg("success", ` ${this.status}`), renderWidth));
 		}
-		lines.push(truncateToWidth(this.theme.fg("dim", ` socket ${this.fixtures.socket}`), renderWidth));
 		lines.push(border);
 		return lines;
 	}
