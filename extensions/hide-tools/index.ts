@@ -9,6 +9,10 @@ import { appendFileSync } from "node:fs";
  *   compact - one custom `▸ tool  args` line per tool call, thinking hidden
  *   hidden  - tool runs collapse to a centered `─── N tool calls hidden ───`
  *
+ * Click a compact line or a summary line to peek: the real tool call is shown
+ * below it, and clicking again collapses it. Works in fullscreen mode only,
+ * because regular mode leaves the mouse to the terminal.
+ *
  * Mechanism: capture the live TUI via `setWidget`, walk the layout tree to the
  * chat container, then per mode set `ToolExecutionComponent.hideComponent`,
  * insert our own replacement lines, and drop the thinking MouseRegion from
@@ -43,15 +47,27 @@ const MODE_MESSAGES: Record<HideMode, string> = {
 	hidden: "hide-tools: hidden (tool calls and thinking)",
 };
 
+interface MouseEventLike {
+	type: string;
+	button: string;
+}
+
 interface InsertedLine {
 	[LINE_FLAG]: "summary" | "compact";
 	render(width: number): string[];
 	invalidate(): void;
+	handleMouse?(event: MouseEventLike): { handled: boolean; render?: boolean } | undefined;
 }
 
 interface HideToolsState {
 	mode: HideMode;
+	/** Click-to-peek is enabled. */
+	peek: boolean;
 	chat?: AnyRecord;
+	/** Tool call ids whose compact line is expanded. */
+	revealedTools: Set<string>;
+	/** Run keys (`toolCallId` of the first tool) whose run is expanded in hidden mode. */
+	revealedRuns: Set<string>;
 	/** Original `render` methods for components we replaced with an empty render. */
 	hiddenRenders: WeakMap<object, (width: number) => string[]>;
 	/** Assistant components whose thinking was stripped from their content container. */
@@ -75,9 +91,19 @@ function state(): HideToolsState {
 	const global = globalRecord();
 	let existing = global[STATE_KEY] as (HideToolsState & { mode?: string }) | undefined;
 	if (!existing) {
-		existing = { mode: "full", hiddenRenders: new WeakMap(), thinkingFiltered: new WeakSet() };
+		existing = {
+			mode: "full",
+			peek: true,
+			revealedTools: new Set(),
+			revealedRuns: new Set(),
+			hiddenRenders: new WeakMap(),
+			thinkingFiltered: new WeakSet(),
+		};
 		global[STATE_KEY] = existing;
 	}
+	existing.revealedTools ??= new Set();
+	existing.revealedRuns ??= new Set();
+	if (existing.peek === undefined) existing.peek = true;
 	// Migrate the earlier two-mode values.
 	const rawMode = (existing as { mode?: string }).mode;
 	if (rawMode === "normal") existing.mode = "full";
@@ -112,6 +138,11 @@ function isSpacer(candidate: unknown): boolean {
 
 function isInsertedLine(candidate: unknown): boolean {
 	return !!candidate && typeof candidate === "object" && (candidate as AnyRecord)[LINE_FLAG] !== undefined;
+}
+
+/** Stable id used as a peek key for a tool component. */
+function toolId(component: AnyRecord): string | undefined {
+	return typeof component.toolCallId === "string" ? component.toolCallId : undefined;
 }
 
 /** True when the assistant message has text worth showing (thinking does not count). */
@@ -162,15 +193,16 @@ function themed(color: string, text: string): string {
 }
 
 /** Centered, dim `─── N tool calls hidden ───` line. */
-function summaryLine(count: number, width: number): string {
-	const label = count === 1 ? "1 tool call hidden" : `${count} tool calls hidden`;
+function summaryText(count: number, revealed: boolean, width: number): string {
+	const what = count === 1 ? "1 tool call" : `${count} tool calls`;
+	const label = revealed ? `${what} shown` : `${what} hidden`;
 	const plain = `─── ${label} ───`;
 	const pad = Math.max(0, Math.floor((width - plain.length) / 2));
 	return `${" ".repeat(pad)}${themed("dim", plain)}`;
 }
 
 /** One dim line describing a single tool call. */
-function compactLine(component: AnyRecord, width: number): string {
+function compactText(component: AnyRecord, revealed: boolean, width: number): string {
 	const name = typeof component.toolName === "string" && component.toolName ? component.toolName : "tool";
 	const args = component.args;
 	let detail = "";
@@ -182,25 +214,54 @@ function compactLine(component: AnyRecord, width: number): string {
 	} else if (typeof args === "string") {
 		detail = args;
 	}
-	let plain = `  ▸ ${name}${detail ? `  ${detail}` : ""}`.replace(/\s+/g, " ");
+	let plain = `  ${revealed ? "▾" : "▸"} ${name}${detail ? `  ${detail}` : ""}`.replace(/\s+/g, " ");
 	if (width > 0 && plain.length > width) plain = `${plain.slice(0, Math.max(0, width - 1))}…`;
 	return themed("dim", plain);
 }
 
-function makeSummary(count: number): InsertedLine {
-	return {
-		[LINE_FLAG]: "summary",
-		render: (width: number) => ["", summaryLine(count, width)],
-		invalidate: () => {},
-	} as InsertedLine;
+/** Build an inserted line, optionally clickable to toggle a peek. */
+function makeLine(
+	kind: "summary" | "compact",
+	render: (width: number) => string[],
+	onActivate?: () => void,
+): InsertedLine {
+	const line: InsertedLine = { [LINE_FLAG]: kind, render, invalidate: () => {} };
+	if (!onActivate || !state().peek) return line;
+	line.handleMouse = (event) => {
+		if (event.button !== "left") return undefined;
+		// Claim the press so the TUI synthesizes a click on release.
+		if (event.type === "press") return { handled: true };
+		if (event.type === "click") {
+			onActivate();
+			return { handled: true, render: true };
+		}
+		return undefined;
+	};
+	return line;
 }
 
-function makeCompact(component: AnyRecord): InsertedLine {
-	return {
-		[LINE_FLAG]: "compact",
-		render: (width: number) => [compactLine(component, width)],
-		invalidate: () => {},
-	} as InsertedLine;
+function makeSummaryLine(count: number, runKey: string): InsertedLine {
+	const revealed = state().revealedRuns.has(runKey);
+	return makeLine(
+		"summary",
+		(width: number) => ["", summaryText(count, revealed, width)],
+		() => toggleSet(state().revealedRuns, runKey),
+	);
+}
+
+function makeCompactLine(component: AnyRecord): InsertedLine {
+	const id = toolId(component);
+	const revealed = id !== undefined && state().revealedTools.has(id);
+	return makeLine(
+		"compact",
+		(width: number) => [compactText(component, revealed, width)],
+		id === undefined ? undefined : () => toggleSet(state().revealedTools, id),
+	);
+}
+
+function toggleSet(set: Set<string>, key: string): void {
+	if (set.has(key)) set.delete(key);
+	else set.add(key);
 }
 
 /** Replace a component's render with an empty one (reversible). */
@@ -261,13 +322,20 @@ function sync(tui: AnyRecord | undefined): void {
 		container.children = container.children.filter((child: unknown) => !isInsertedLine(child));
 	}
 	const children: unknown[] = container.children;
-	const mode = currentMode();
+	const current = state();
+	const mode = current.mode;
 	const toolsVisible = mode === "full";
 	const thinkingVisible = mode === "full";
 
 	for (const child of children) {
 		if (isToolEntry(child)) {
-			(child as AnyRecord).hideComponent = !toolsVisible;
+			const component = child as AnyRecord;
+			const id = toolId(component);
+			// `hidden` visibility is resolved per run below; this only handles
+			// `full` and per-tool reveals in `compact`.
+			const revealed =
+				toolsVisible || (mode === "compact" && id !== undefined && current.revealedTools.has(id));
+			component.hideComponent = !revealed;
 		} else if (isAssistant(child)) {
 			const component = child as AnyRecord;
 			if (!thinkingVisible && !hasVisibleText(component)) {
@@ -284,17 +352,29 @@ function sync(tui: AnyRecord | undefined): void {
 			if (!isRunPart(children[index])) continue;
 			let end = index;
 			let count = 0;
+			let runKey: string | undefined;
 			while (end < children.length && isRunPart(children[end])) {
-				if (isToolEntry(children[end])) count += 1;
+				if (isToolEntry(children[end])) {
+					count += 1;
+					runKey ??= toolId(children[end] as AnyRecord);
+				}
 				end += 1;
 			}
-			if (count > 0) children.splice(index, 0, makeSummary(count));
+			if (count > 0 && runKey !== undefined) {
+				const revealed = current.revealedRuns.has(runKey);
+				if (revealed) {
+					for (let entry = index; entry < end; entry += 1) {
+						if (isToolEntry(children[entry])) (children[entry] as AnyRecord).hideComponent = false;
+					}
+				}
+				children.splice(index, 0, makeSummaryLine(count, runKey));
+			}
 			index = end;
 		}
 	} else if (mode === "compact") {
 		for (let index = 0; index < children.length; index += 1) {
 			if (!isToolEntry(children[index])) continue;
-			children.splice(index, 0, makeCompact(children[index] as AnyRecord));
+			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
 			index += 1;
 		}
 	}
@@ -377,7 +457,7 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		// Keep the current mode across reload/resume; only drop the stale container.
+		// Keep the current mode and peeks across reload/resume.
 		state().chat = undefined;
 		capture(ctx);
 	});
