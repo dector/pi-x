@@ -133,7 +133,15 @@ The listener returns early (pass everything through) when:
   `ui_prompt_end` (these fire for **every** `ctx.ui.select/confirm/input/editor/custom`,
   so permission approvals and safe-mode prompts are covered), **or**
 - `tui.hasOverlay()` is true (built-in/extension overlays), **or**
+- the focused component is **not** the prompt editor — pi's built-in selectors
+  (e.g. the `Ctrl+L` model picker) swap the editor out of the layout and focus
+  the selector without going through `ctx.ui` or `showOverlay`, **or**
 - `pi-ui` lock mode is active — track via `px:pi-ui:lock-state`.
+
+Elsewhere **ignore key release events** (`isKeyRelease`): listeners run
+before pi-tui's release filter, and a Kitty release still matches the key it
+released, so an `Esc` release would otherwise re-trigger the press (e.g. drop
+to normal right after a selector closes).
 
 Otherwise:
 

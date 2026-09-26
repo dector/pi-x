@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
 	type Keybinding,
 	getKeybindings,
+	isKeyRelease,
 	isViewportTUI,
 	matchesKey,
 	parseKey,
@@ -55,9 +56,29 @@ interface VimTui {
 	addInputListener(listener: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
 	requestRender(): void;
 	hasOverlay?(): boolean;
+	/** Public on pi-tui >=0.85; lets us see when focus leaves the editor. */
+	getFocusedComponent?(): unknown;
 	/** Present on the fullscreen alt-screen TUI; preferred over tree walking. */
 	getPrimaryScrollView?(): unknown;
 	terminal?: { columns?: number };
+}
+
+/**
+ * pi's built-in selectors (e.g. the model picker on `Ctrl+L`) are shown by
+ * swapping the editor out of the layout and focusing the selector. They are
+ * not `ctx.ui` prompts and not overlays, so `ui_prompt_*` and `hasOverlay()`
+ * both miss them. Detect the swap by checking that the focused component is
+ * still the prompt editor (an `Editor`: it has `getText`/`setText`).
+ *
+ * When the accessor is unavailable (older pi-tui) we cannot tell, so assume
+ * the editor is focused and keep vim-mode working.
+ */
+export function isPromptEditorFocused(tui: VimTui | undefined): boolean {
+	if (typeof tui?.getFocusedComponent !== "function") return true;
+	const focused = tui.getFocusedComponent();
+	if (!focused || typeof focused !== "object") return false;
+	const candidate = focused as { getText?: unknown; setText?: unknown };
+	return typeof candidate.getText === "function" && typeof candidate.setText === "function";
 }
 
 /** A parsed key id carries an explicit modifier only when one is held. */
@@ -151,13 +172,20 @@ export default function vimModeExtension(pi: ExtensionAPI): void {
 	};
 
 	/**
-	 * Dialogs, overlays, permission prompts, and lock mode all own the keyboard.
-	 * While any of them is active the gate passes everything through untouched,
-	 * so hotkeys and approvals always work.
+	 * Dialogs, overlays, permission prompts, built-in selectors, and lock mode
+	 * all own the keyboard. While any of them is active the gate passes
+	 * everything through untouched, so hotkeys and approvals always work.
 	 */
-	const canGate = () => isLive() && !uiPromptOpen && !lockActive && !tui?.hasOverlay?.();
+	const canGate = () =>
+		isLive() && !uiPromptOpen && !lockActive && !tui?.hasOverlay?.() && isPromptEditorFocused(tui);
 
 	const gate = (data: string, ctx: ExtensionContext): { consume?: boolean; data?: string } | undefined => {
+		// pi-tui runs input listeners *before* its own key-release filter, and a
+		// Kitty release still matches the key it released (e.g. an Esc release
+		// matches "escape"). Acting on it would re-trigger the press: after a
+		// selector closes on Esc, the release would drop insert mode to normal.
+		if (isKeyRelease(data)) return undefined;
+
 		if (!canGate()) {
 			resetPending();
 			return undefined;
