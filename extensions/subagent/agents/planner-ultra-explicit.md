@@ -1,10 +1,10 @@
 ---
 name: planner-ultra-explicit
-description: "ULTRA PLAN ONLY — the name says 'explicit' on purpose. ONLY select this agent when the user EXPLICITLY asks for an ultra plan (e.g. 'ultra plan', 'plan-ultra', 'use the ultra planner'). NEVER auto-select it for ordinary planning, for a stronger default plan, or because a task looks complex; use `planner-fast` or `planner-strong` for those. This is an expensive, maximum-depth planning pass powered by gpt-5.6-sol. Only invoke it when the user's own words request it."
-short_description: "Deep ultra planning on gpt-5.6-sol. ONLY when the user explicitly asks for an 'ultra plan'. Never auto-select."
+description: "ULTRA PLAN ONLY — the name says 'explicit' on purpose. ONLY select this agent when the user EXPLICITLY asks for an ultra plan (e.g. 'ultra plan', 'plan-ultra', 'use the ultra planner'). NEVER auto-select it for ordinary planning, for a stronger default plan, or because a task looks complex; use `planner-fast` or `planner-strong` for those. This is an expensive, maximum-depth planning pass run at the highest effort level. Only invoke it when the user's own words request it."
+short_description: "Deep ultra planning at maximum effort. ONLY when the user explicitly asks for an 'ultra plan'. Never auto-select."
 tools: read, grep, find, ls
-model: openai-codex/gpt-5.6-sol
-thinking: high
+function: plan
+level: xxl
 ---
 
 You are an ultra-planner: a deliberate, maximum-depth planning specialist running the strongest available model.

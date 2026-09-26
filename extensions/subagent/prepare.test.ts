@@ -951,3 +951,64 @@ describe("herdr preparation", () => {
 		expect(calls.order).toEqual(["permission", "preflight", "run-id", "dispatch-id", "safe-mode", "network-policy"]);
 	});
 });
+
+describe("per-task level preparation", () => {
+	test("carries a single-mode level onto the planned item", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t", level: "xl" }, deps);
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.dispatch.items[0]).toMatchObject({ agent: "scout", level: "xl" });
+	});
+
+	test("carries per-task levels through parallel and chain modes", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1", "sa-2"], dispatchIds: ["d-1"] });
+		const parallel = await prepareSubagentDispatch(
+			{
+				tasks: [
+					{ agent: "scout", task: "a", level: "xs" },
+					{ agent: "worker", task: "b" },
+				],
+			},
+			deps,
+		);
+		expect(parallel.ok).toBe(true);
+		if (parallel.ok) {
+			expect(parallel.dispatch.items[0].level).toBe("xs");
+			expect(parallel.dispatch.items[1].level).toBeUndefined();
+		}
+
+		const { deps: chainDeps } = createHarness({ runIds: ["sa-1", "sa-2"], dispatchIds: ["d-2"] });
+		const chain = await prepareSubagentDispatch(
+			{ chain: [{ agent: "scout", task: "a" }, { agent: "worker", task: "b", level: "xxl" }] },
+			chainDeps,
+		);
+		expect(chain.ok).toBe(true);
+		if (chain.ok) {
+			expect(chain.dispatch.items[0].level).toBeUndefined();
+			expect(chain.dispatch.items[1]).toMatchObject({ level: "xxl", step: 2 });
+		}
+	});
+
+	test("rejects an invalid level without allocating IDs or starting anything", async () => {
+		const { deps, calls } = createHarness();
+		const result = await prepareSubagentDispatch({ agent: "scout", task: "t", level: "huge" }, deps);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.result.isError).toBe(true);
+			expect(textOf(result.result)).toContain("Invalid level");
+		}
+		expect(calls.nextRunId).toBe(0);
+		expect(calls.nextDispatchId).toBe(0);
+	});
+
+	test("snapshots the mapping supplied by the parent context", async () => {
+		const { deps } = createHarness({ runIds: ["sa-1"], dispatchIds: ["d-1"] });
+		const mapping = { aliases: { mine: ["p/m"] }, general: {}, functions: {} };
+		const result = await prepareSubagentDispatch(
+			{ agent: "scout", task: "t" },
+			{ ...deps, context: { ...deps.context, mapping } },
+		);
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.dispatch.mapping).toEqual(mapping);
+	});
+});

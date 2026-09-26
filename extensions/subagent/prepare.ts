@@ -26,6 +26,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, AgentDiscoveryResult, AgentScope } from "./agents.ts";
+import { isSubagentLevel, type ModelMapping, type SubagentLevel } from "./model-mapping.ts";
 import type { NetworkPolicySetting } from "./network-policy.ts";
 import { collectRestrictedAgentNames, suggestUnrestrictedAgents } from "./restricted-agent-policy.ts";
 import type { SafeModeSnapshot } from "./safe-mode.ts";
@@ -51,6 +52,8 @@ export interface SubagentTaskInput {
 	agent: string;
 	task: string;
 	cwd?: string;
+	/** Per-task level override; validated against the closed level vocabulary. */
+	level?: string;
 }
 
 /** Explicit Herdr opt-in. Presence of the object selects the Herdr backend. */
@@ -72,6 +75,8 @@ export interface SubagentRequest {
 	execution?: SubagentExecution;
 	/** Present means run behind the Herdr pane bridge instead of a direct child. */
 	herdr?: HerdrRequest;
+	/** Per-task level override for single mode. */
+	level?: string;
 }
 
 /** Result of the injected Herdr preflight: a backend choice or a clear failure. */
@@ -112,6 +117,8 @@ export interface PreparationContext {
 	/** Resolved parent model as `provider/id`. */
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
+	/** Function/level model mapping, snapshotted into the dispatch. */
+	mapping?: ModelMapping;
 	/** Enabled session-only override for every subagent profile. */
 	rewire?: SubagentRewireConfig;
 }
@@ -158,6 +165,7 @@ interface ResolvedItem {
 	task: string;
 	cwd?: string;
 	step?: number;
+	level?: SubagentLevel;
 }
 
 const HERDR_REQUEST_KEYS = new Set(["retain"]);
@@ -295,10 +303,39 @@ export async function prepareSubagentDispatch(
 				task: step.task,
 				cwd: step.cwd,
 				step: index + 1,
+				...(step.level !== undefined ? { level: step.level } : {}),
 			}))
 		: hasTasks
-			? (request.tasks ?? []).map((task) => ({ agent: task.agent, task: task.task, cwd: task.cwd }))
-			: [{ agent: request.agent as string, task: request.task as string, cwd: request.cwd }];
+			? (request.tasks ?? []).map((task) => ({
+					agent: task.agent,
+					task: task.task,
+					cwd: task.cwd,
+					...(task.level !== undefined ? { level: task.level } : {}),
+				}))
+			: [
+					{
+						agent: request.agent as string,
+						task: request.task as string,
+						cwd: request.cwd,
+						...(request.level !== undefined ? { level: request.level } : {}),
+					},
+				];
+
+	const invalidLevels = [
+		...new Set(
+			resolvedItems
+				.filter((item) => item.level !== undefined && !isSubagentLevel(item.level))
+				.map((item) => String(item.level)),
+		),
+	];
+	if (invalidLevels.length > 0) {
+		return fail(
+			`Invalid level(s): ${invalidLevels.map((level) => JSON.stringify(level)).join(", ")}. Valid levels: off, xxxs, xs, s, m, l, xl, xxl, xxxl.`,
+			mode,
+			"failed",
+			true,
+		);
+	}
 
 	const unknownAgents: string[] = [];
 	for (const item of resolvedItems) {
@@ -373,6 +410,7 @@ export async function prepareSubagentDispatch(
 		task: item.task,
 		...(item.cwd !== undefined ? { cwd: item.cwd } : {}),
 		...(item.step !== undefined ? { step: item.step } : {}),
+		...(item.level !== undefined ? { level: item.level } : {}),
 	}));
 
 	const dispatchId = deps.nextDispatchId();
@@ -396,6 +434,7 @@ export async function prepareSubagentDispatch(
 				model: deps.context.model,
 				thinkingLevel: deps.context.thinkingLevel,
 			},
+			...(deps.context.mapping ? { mapping: deps.context.mapping } : {}),
 			...(deps.context.rewire ? { rewire: { ...deps.context.rewire } } : {}),
 			cwd: deps.context.cwd,
 			safeModeSnapshot,

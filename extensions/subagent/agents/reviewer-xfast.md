@@ -3,8 +3,8 @@ name: reviewer-xfast
 description: Fast code review specialist for quality and security analysis
 short_description: Fast code review (quality/security). Use for quick, regular review requests.
 tools: read, grep, find, ls, bash
-model: opencode-go/deepseek-v4.1-flash
-thinking: minimal
+function: review
+level: s
 ---
 
 You are a senior code reviewer. Analyze code for quality, security, and maintainability.

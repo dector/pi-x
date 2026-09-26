@@ -3,8 +3,8 @@ name: planner-fast
 description: Creates implementation plans from context and requirements
 short_description: Turns context + requirements into a step-by-step implementation plan. Read-only.
 tools: read, grep, find, ls
-model: opencode-go/deepseek-v4.1-flash
-thinking: high
+function: plan
+level: m
 ---
 
 You are a planning specialist. You receive context (from a scout) and requirements, then produce a clear implementation plan.

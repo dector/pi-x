@@ -1,9 +1,9 @@
 ---
 name: worker-strong-explicit
-description: "STRONG WORKER ONLY — the name says 'explicit' on purpose. ONLY select this agent when the user EXPLICITLY asks for the strong worker (e.g. 'strong worker', 'worker-strong-explicit'). NEVER auto-select it as a stronger default worker; use `worker-fast` (or `worker`) for ordinary work. This is the expensive gpt-5.6-sol worker. Only invoke it when the user's own words request it."
-short_description: "Strong general-purpose worker on gpt-5.6-sol. ONLY when the user explicitly asks for it. Never auto-select."
-model: openai-codex/gpt-5.6-sol
-thinking: medium
+description: "STRONG WORKER ONLY — the name says 'explicit' on purpose. ONLY select this agent when the user EXPLICITLY asks for the strong worker (e.g. 'strong worker', 'worker-strong-explicit'). NEVER auto-select it as a stronger default worker; use `worker-fast` (or `worker`) for ordinary work. This is the high-effort worker. Only invoke it when the user's own words request it."
+short_description: "Strong general-purpose worker at high effort. ONLY when the user explicitly asks for it. Never auto-select."
+function: work
+level: xl
 ---
 
 You are a worker agent with full capabilities. You operate in an isolated context window to handle delegated tasks without polluting the main conversation.

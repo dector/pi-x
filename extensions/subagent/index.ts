@@ -16,6 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
@@ -167,6 +168,14 @@ import {
 	THINKING_LEVELS,
 } from "./rewire.ts";
 import {
+	DEFAULT_MODEL_MAPPING,
+	loadModelMapping,
+	modelMappingPath,
+	resolveMappedModel,
+	type ModelMapping,
+	type ResolvedAliasTarget,
+} from "./model-mapping.ts";
+import {
 	canDelegate,
 	childSubagentDepth,
 	formatSubagentDepth,
@@ -274,6 +283,61 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	}
 
 	return { command: "pi", args };
+}
+
+/**
+ * Pick the first available target for a model alias.
+ *
+ * Availability is the authenticated catalogue, not the interactive
+ * `enabledModels` scope: the mapping is explicit routing config, so a model the
+ * user named should be used even if it is not in the picker. Session-scoped
+ * models are added too, so a cold availability snapshot cannot hide one. An
+ * alias with no target in a populated catalogue hard-fails; a completely empty
+ * catalogue falls back to the synchronous lookup so a configured model is still
+ * usable before the first refresh.
+ */
+function resolveAliasTargets(ctx: ExtensionContext, targets: readonly string[]): ResolvedAliasTarget | undefined {
+	interface AliasCapableModel {
+		provider: string;
+		id: string;
+		reasoning: boolean;
+		thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+	}
+	let snapshot: Map<string, AliasCapableModel> | undefined;
+	const readSnapshot = (): Map<string, AliasCapableModel> => {
+		if (snapshot) return snapshot;
+		snapshot = new Map();
+		const add = (model: AliasCapableModel): void => {
+			snapshot!.set(`${model.provider}/${model.id}`, model);
+		};
+		try {
+			for (const model of ctx.modelRegistry.getAvailable()) add(model as AliasCapableModel);
+		} catch {
+			// Fail closed: an unavailable registry leaves the snapshot as-is.
+		}
+		try {
+			for (const entry of ctx.scopedModels) add(entry.model as AliasCapableModel);
+		} catch {
+			// Scoping is an optional refinement; ignore a stale context.
+		}
+		return snapshot;
+	};
+	const models = readSnapshot();
+	for (const target of targets) {
+		const slash = target.indexOf("/");
+		if (slash <= 0) continue;
+		let meta: AliasCapableModel | undefined = models.get(target);
+		if (!meta && models.size === 0) {
+			try {
+				meta = ctx.modelRegistry.find(target.slice(0, slash), target.slice(slash + 1)) as AliasCapableModel | undefined;
+			} catch {
+				meta = undefined;
+			}
+		}
+		if (!meta) continue;
+		return { model: target, supportedThinkingLevels: availableThinkingLevels(meta) };
+	}
+	return undefined;
 }
 
 /**
@@ -632,25 +696,53 @@ async function runSingleAgent(
 		const resolveModelAtLaunch = (): void => {
 			if (modelArgsResolved) return;
 			modelArgsResolved = true;
-			// Resolve at the backend's true launch boundary. Herdr may wait for a
-			// pane after this function starts, so reading the parent before
-			// `backend.spawn()` would still be too early.
-			let currentDispatchDefaults = dispatchDefaults;
-			if (dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire)) {
-				try {
-					currentDispatchDefaults = runtime.getCurrentDispatchDefaults?.() ?? dispatchDefaults;
-				} catch {
-					// A replaced/stale context is handled by the dispatch snapshot.
+			let model: string | undefined;
+			let thinkingLevel: DispatchDefaults["thinkingLevel"];
+			if (dispatch.rewire?.enabled) {
+				// Resolve at the backend's true launch boundary. Herdr may wait for a
+				// pane after this function starts, so reading the parent before
+				// `backend.spawn()` would still be too early.
+				let currentDispatchDefaults = dispatchDefaults;
+				if (isInheritedRewire(dispatch.rewire)) {
+					try {
+						currentDispatchDefaults = runtime.getCurrentDispatchDefaults?.() ?? dispatchDefaults;
+					} catch {
+						// A replaced/stale context is handled by the dispatch snapshot.
+					}
+				}
+				const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, dispatch.rewire, currentDispatchDefaults);
+				model = resolvedModel.model;
+				thinkingLevel = isInheritedRewire(dispatch.rewire)
+					? clampInheritedThinkingLevel(runtime.parentContext, model, resolvedModel.thinkingLevel)
+					: resolvedModel.thinkingLevel;
+			} else {
+				// Function/level mapping is the default path. A resolution failure
+				// throws; the dispatch runner converts it into a failed result rather
+				// than spawning a child on an unintended model.
+				const mapping = dispatch.mapping ?? DEFAULT_MODEL_MAPPING;
+				const resolution = resolveMappedModel(
+					mapping,
+					{ function: agent.function, level: agent.level },
+					request.level,
+					(targets) => resolveAliasTargets(runtime.parentContext, targets),
+				);
+				if (!resolution.ok) throw new Error(resolution.error);
+				model = resolution.model;
+				thinkingLevel = resolution.thinkingLevel;
+				const warnings = [...resolution.warnings];
+				if (agent.model || agent.thinking) {
+					warnings.push(
+						`Agent \`${agent.name}\` sets legacy model/thinking; ignored in favor of the function/level mapping.`,
+					);
+				}
+				for (const warning of warnings) {
+					const diagnostics = (currentResult.diagnostics ??= []);
+					if (diagnostics.length < 20 && !diagnostics.includes(warning)) diagnostics.push(warning);
 				}
 			}
-			const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, dispatch.rewire, currentDispatchDefaults);
-			const thinkingLevel =
-				dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire)
-					? clampInheritedThinkingLevel(runtime.parentContext, resolvedModel.model, resolvedModel.thinkingLevel)
-					: resolvedModel.thinkingLevel;
-			if (resolvedModel.model) spawnOptions.args.push("--model", resolvedModel.model);
+			if (model) spawnOptions.args.push("--model", model);
 			if (thinkingLevel) spawnOptions.args.push("--thinking", thinkingLevel);
-			currentResult.model = resolvedModel.model;
+			currentResult.model = model;
 			currentResult.thinkingLevel = thinkingLevel;
 		};
 		const backendContext = {
@@ -811,12 +903,24 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	level: Type.Optional(
+		Type.String({
+			description:
+				'Optional effort level override for this task: off, xxxs, xs, s, m, l, xl, xxl, xxxl. Omit to use the agent\'s level.',
+		}),
+	),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task; {previous} is replaced with the previous step's final output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	level: Type.Optional(
+		Type.String({
+			description:
+				'Optional effort level override for this step: off, xxxs, xs, s, m, l, xl, xxl, xxxl. Omit to use the agent\'s level.',
+		}),
+	),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -837,6 +941,12 @@ const HerdrSchema = Type.Object({
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
+	level: Type.Optional(
+		Type.String({
+			description:
+				'Optional effort level override for single mode: off, xxxs, xs, s, m, l, xl, xxl, xxxl. Omit to use the agent\'s level.',
+		}),
+	),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	action: Type.Optional(
@@ -895,6 +1005,17 @@ export default function (pi: ExtensionAPI) {
 	// re-read only the model when each child starts.
 	let rewireConfig: SubagentRewireConfig | undefined;
 	const presetFilePath = rewirePresetsPath(getAgentDir());
+	// Function/level mapping. Loaded per dispatch (like agents) so edits apply
+	// mid-session; a malformed user file falls back to the built-in default
+	// rather than failing every dispatch.
+	const modelMappingFilePath = modelMappingPath(getAgentDir());
+	const readModelMapping = (): ModelMapping => {
+		try {
+			return loadModelMapping(modelMappingFilePath);
+		} catch {
+			return DEFAULT_MODEL_MAPPING;
+		}
+	};
 	/**
 	 * Read the live parent model/effort. Extension contexts expose getters, but
 	 * an async dispatch can outlive the context that accepted it; in that case
@@ -2530,6 +2651,7 @@ export default function (pi: ExtensionAPI) {
 				context: {
 					cwd: ctx.cwd,
 					...readCurrentDispatchDefaults(ctx),
+					mapping: readModelMapping(),
 					...(rewireConfig?.enabled ? { rewire: { ...rewireConfig } } : {}),
 				},
 			});

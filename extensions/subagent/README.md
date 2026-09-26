@@ -20,6 +20,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Approval relay**: Child dialogs are labeled and serialized through the parent UI, even while detached
 - **Runtime controls**: `/px:agents` can inspect, pause, resume, abort, or reconfigure a running child
 - **Bounded delegation**: `/px:agents:config` controls whether delegation is disabled, top-level only, or recursively available with a finite depth budget
+- **Function/level model mapping**: agents declare a `function` (scout, plan, review, …) and a `level` (off … xxxl); a session mapping resolves `(function, level)` to a concrete model alias, so the same agent files work on any setup
 - **Session rewiring**: `/px:agents:rewire` can silently replace every subagent profile's model and effort for the current session without editing agent files
 - **Active widget**: While children run, a non-interactive two-line list above the input editor shows each active subagent's state, elapsed time, turns, model/effort, usage, readable id, and task preview
 - **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
@@ -32,6 +33,8 @@ subagent/
 ├── README.md            # This file
 ├── index.ts             # The extension (entry point)
 ├── agents.ts            # Agent discovery logic
+├── agent-parse.ts       # Pure frontmatter parsing (function/level, legacy model/thinking)
+├── model-mapping.ts     # Function/level -> alias/thinking mapping + user config merge
 ├── prepare.ts           # Validation, permission, and ID allocation before execution
 ├── restricted-agent-policy.ts # Pure pattern matching, tier ranking, and config parsing
 ├── restricted-agent-config.ts # Loads the global ~/.pi/agent/subagent.json policy
@@ -63,21 +66,21 @@ subagent/
 ├── types.ts             # Shared dispatch/result types
 ├── fixtures/            # Test fixtures (fake RPC child, legacy contracts)
 ├── agents/              # Sample agent definitions (stable <role>-<tier> profiles)
-│   ├── scout-fast.md    # Fast recon, returns compressed context (flash, low)
-│   ├── scout-xfast.md   # Fastest recon (flash, minimal)
-│   ├── planner-fast.md  # Creates implementation plans (flash, high)
-│   ├── planner-strong.md # Stronger implementation plans (gpt-5.6-sol, medium)
-│   ├── planner-ultra-explicit.md # Deep ultra plan (gpt-5.6-sol) — only on explicit request
-│   ├── reviewer-fast.md # Code review (flash, high)
-│   ├── reviewer-xfast.md # Fast code review (flash, minimal)
-│   ├── reviewer-strong.md # Strong code review (gpt-5.6-sol, high)
-│   ├── reviewer-ultra-explicit.md # Deep adversarial review (gpt-5.6-sol) — only on explicit request
-│   ├── reviewer-xultra-explicit.md # Deepest adversarial review (gpt-5.6-sol, xhigh) — only on explicit request
-│   ├── researcher-fast.md # Web + local research with citations (flash, high)
-│   ├── researcher-strong.md # Strong research with citations (gpt-5.6-sol, high)
-│   ├── worker-fast.md   # General-purpose (flash, high)
-│   ├── worker-xfast.md  # Fast general-purpose (flash, minimal)
-│   └── worker-strong-explicit.md # Strong general-purpose (gpt-5.6-sol, medium) — only on explicit request
+│   ├── scout-fast.md    # Fast recon (function scout, level xs)
+│   ├── scout-xfast.md   # Fastest recon (scout, xxxs)
+│   ├── planner-fast.md  # Implementation plans (plan, m)
+│   ├── planner-strong.md # Stronger plans (plan, xl)
+│   ├── planner-ultra-explicit.md # Deep ultra plan (plan, xxl) — only on explicit request
+│   ├── reviewer-fast.md # Code review (review, m)
+│   ├── reviewer-xfast.md # Fast code review (review, s)
+│   ├── reviewer-strong.md # Strong code review (review, l)
+│   ├── reviewer-ultra-explicit.md # Deep adversarial review (review, xxl) — only on explicit request
+│   ├── reviewer-xultra-explicit.md # Deepest adversarial review (review, xxxl) — only on explicit request
+│   ├── researcher-fast.md # Web + local research with citations (research, m)
+│   ├── researcher-strong.md # Strong research with citations (research, xl)
+│   ├── worker-fast.md   # General-purpose (work, m)
+│   ├── worker-xfast.md  # Fast general-purpose (work, xs)
+│   └── worker-strong-explicit.md # Strong general-purpose (work, xl) — only on explicit request
 └── prompts/             # Workflow presets (prompt templates)
     ├── implement.md     # scout-fast -> planner-fast -> worker-fast
     ├── scout-and-plan.md    # scout-fast -> planner-fast (no implementation)
@@ -367,9 +370,13 @@ The message carries the dispatch id, execution mode, mode (single/parallel/chain
 
 | Mode | Parameter | Description |
 |------|-----------|-------------|
-| Single | `{ agent, task }` | One agent, one task |
-| Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
-| Chain | `{ chain: [...] }` | Sequential; `{previous}` in a step's task is interpolated with the previous step's final output (empty for the first step) |
+| Single | `{ agent, task, level? }` | One agent, one task |
+| Parallel | `{ tasks: [{ agent, task, level? }, ...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
+| Chain | `{ chain: [{ agent, task, level? }, ...] }` | Sequential; `{previous}` in a step's task is interpolated with the previous step's final output (empty for the first step) |
+
+`level` is an optional per-task effort override (`off`, `xxxs`, `xs`, `s`, `m`, `l`, `xl`, `xxl`,
+`xxxl`). When omitted, the agent's `level`, then its function's default level, applies. See
+[Model Mapping](#model-mapping).
 | Execution | `execution` | `"async"` (default) detaches and returns immediately; `"blocking"` streams and waits |
 
 ## Delegation depth
@@ -390,7 +397,7 @@ Run `/px:agents:rewire` to configure one model and effort for all subagents. The
 
 Rewire presets are stored globally in `~/.pi/agent/subagent-rewire-presets.json`. Configuration shows `Presets (N)` first, where `N` includes the two built-in `Inherit model` and `Inherit All` entries; the other entries are stored user presets. In the preset list, press `n` to create a preset by selecting its model and effort, `d` to delete the preset under the cursor after confirmation (the built-in Inherit entries cannot be deleted), or `enter` to apply one to the current rewire configuration. The most recently applied user preset supplies the initial model and effort in later sessions and is preselected when creating another preset.
 
-When enabled, the configured values override each agent file's `model` and `thinking` fields. Select `Inherit model` to keep the configured effort while detecting the parent's active model, or `Inherit All` to detect both the parent's model and effort at the moment each subagent starts. This is resolved per child, so queued chain steps and parallel work can follow model changes made after the dispatch was accepted. The status bar shows a red `󰚩 󰒟 <provider>/<model> · <effort>` before the skills counter and applies the status bar's provider/model aliases; `Inherit model` keeps the configured effort in the status label, while `Inherit All` displays only `󰚩 󰒟 Inherit`. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
+When enabled, the configured values override the function/level mapping for every agent. Select `Inherit model` to keep the configured effort while detecting the parent's active model, or `Inherit All` to detect both the parent's model and effort at the moment each subagent starts. This is resolved per child, so queued chain steps and parallel work can follow model changes made after the dispatch was accepted. The status bar shows a red `󰚩 󰒟 <provider>/<model> · <effort>` before the skills counter and applies the status bar's provider/model aliases; `Inherit model` keeps the configured effort in the status label, while `Inherit All` displays only `󰚩 󰒟 Inherit`. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
 
 ## Runtime manager
 
@@ -576,9 +583,9 @@ Agents are markdown files with YAML frontmatter:
 name: my-agent
 description: What this agent does
 short_description: Brief one-liner shown in the subagent tool description
+function: review
+level: m
 tools: read, grep, find, ls
-model: opencode-go/deepseek-v4.1-flash
-thinking: high
 ---
 
 System prompt for the agent goes here.
@@ -589,10 +596,11 @@ brief version surfaced to the parent model in the `subagent` tool description, s
 knows which agent to pick without trial and error. Keep it short to save tokens; when
 omitted, the full `description` is used instead.
 
-When `model` is omitted, the subagent inherits the dispatching session's active model and thinking level.
-When `thinking` is omitted but `model` is set, the model's default thinking level is used.
-The `thinking` field accepts pi thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
-Levels the chosen model does not support are clamped by pi.
+`function` selects the model-mapping row (see [Model Mapping](#model-mapping)); an
+in-tree agent should always set it. `level` is optional and overrides the function's
+default level. A missing or unknown `function` degrades to `general` and records a
+warning. The legacy `model`/`thinking` fields are still parsed but ignored by the
+mapping resolver (a warning is recorded); they are reserved for a future opt-in.
 
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (loaded with the default `agentScope: "user"` and with `"both"`; skipped by `"project"`)
@@ -600,31 +608,101 @@ Levels the chosen model does not support are clamped by pi.
 
 Project agents override user agents with the same name when `agentScope: "both"`.
 
+## Model Mapping
+
+Agents do not hardcode a model. Each agent declares a `function` (the kind of work)
+and an optional `level` (how much effort), and the extension resolves
+`(function, level)` to a concrete model alias plus a thinking level.
+
+**Functions:** `scout`, `plan`, `research`, `work`, `review`, `test`, `docs`, `debug`, `general`.
+**Levels (ordered):** `off`, `xxxs`, `xs`, `s`, `m`, `l`, `xl`, `xxl`, `xxxl`.
+
+Aliases name a versioned model identity and resolve to the first *available* provider
+target (the authenticated catalogue, plus any session-scoped models). `enabledModels`
+does not gate routing: a model named in the mapping is used even if it is not in the
+picker.
+
+| alias | targets |
+|-------|---------|
+| `deepseek-v4.1-flash` | `opencode-go/deepseek-v4.1-flash` |
+| `deepseek-v4-pro` | `opencode-go/deepseek-v4-pro`, `deepseek/deepseek-v4-pro` |
+| `mimo-v2.6-flash` / `mimo-v2.6-pro` | `opencode-go/mimo-v2.6-*` |
+| `gpt-6-luna` / `gpt-6-sol` | `openai-codex/gpt-6-*` |
+| `gpt-5.6-terra` | `openai-codex/gpt-5.6-terra` |
+| `space-bunny-free` | `opencode-go/space-bunny-free` |
+
+The built-in `general` row is the fallback for every function:
+
+| level | model | thinking |
+|-------|-------|----------|
+| `off`–`s` | deepseek-v4.1-flash | low |
+| `m` | deepseek-v4.1-flash | high |
+| `l` | deepseek-v4.1-flash | max |
+| `xl` | gpt-6-sol | high |
+| `xxl` | gpt-6-sol | xhigh |
+| `xxxl` | gpt-6-sol | max |
+
+Functions add a default level, a floor, and sparse cell overrides:
+
+| function | default | floor | overrides |
+|----------|---------|-------|-----------|
+| `scout` | `xs` | `off` | `off`/`xs` → mimo-v2.6-flash · low |
+| `plan` | `m` | `s` | — |
+| `research` | `m` | `s` | `m` → deepseek-v4-pro · high, `l` → deepseek-v4-pro · max |
+| `work` | `m` | `xs` | — |
+| `review` | `m` | `s` | `l` → gpt-6-sol · xhigh |
+| `test` | `s` | `xs` | — |
+| `docs` | `s` | `off` | `off`/`s` → mimo-v2.6-flash · low |
+| `debug` | `m` | `s` | `l` → gpt-6-sol · high |
+| `general` | `m` | `off` | — |
+
+**Resolution:** per-task `level` → agent `level` → function `defaultLevel` → `m`; the
+result is clamped up to the function `floor`; the cell is read from the function row,
+then from `general`. A task may pass `level` in single, parallel, or chain mode;
+`function` is fixed by the agent and cannot be overridden.
+
+**Configuration:** the built-in mapping is deep-merged with
+`~/.pi/agent/subagent-models.json`. Override a single cell without restating a row:
+
+```json
+{
+  "aliases": { "deepseek-v4.1-flash": ["my-provider/deepseek-v4.1-flash"] },
+  "functions": { "review": { "cells": { "l": { "alias": "mimo-v2.6-pro", "thinking": "high" } } } }
+}
+```
+
+**Failures:** a missing cell with no `general` fallback, an unknown alias, or an alias
+whose targets are all unavailable is a hard error — the dispatch fails rather than
+silently substituting a different-priced model. A thinking level the chosen model does
+not support is clamped and warned. Session rewiring (below) overrides the mapping
+entirely while enabled.
+
 ## Sample Agents
 
 Each role ships as a family of stable `<role>-<tier>` profiles. The `-fast`
 profiles are the everyday defaults used by the workflow prompts; `-xfast` trades
-reasoning for speed, `-strong` uses `gpt-5.6-sol`, and the `-explicit` profiles
-are opt-in only (see below). The table lists the original sample-agent name for
-each renamed profile; newly added profiles have a blank Existing name.
+reasoning for speed, `-strong` reaches for a stronger model, and the `-explicit`
+profiles are opt-in only (see below). The `Level` column is the profile's default;
+a dispatch can override it per task. The "Default mapping" column shows what the
+built-in mapping resolves to on this machine — it changes with the available models.
 
-| Existing name | New name | Model | Thinking/Effort |
-|---------------|----------|-------|-----------------|
-| `scout` | `scout-fast` | `opencode-go/deepseek-v4.1-flash` | low |
-|  | `scout-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
-| `planner` | `planner-fast` | `opencode-go/deepseek-v4.1-flash` | high |
-|  | `planner-strong` | `openai-codex/gpt-5.6-sol` | medium |
-|  | `planner-ultra-explicit` | `openai-codex/gpt-5.6-sol` | high |
-| `worker` | `worker-fast` | `opencode-go/deepseek-v4.1-flash` | high |
-|  | `worker-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
-|  | `worker-strong-explicit` | `openai-codex/gpt-5.6-sol` | medium |
-| `reviewer` | `reviewer-fast` | `opencode-go/deepseek-v4.1-flash` | high |
-|  | `reviewer-xfast` | `opencode-go/deepseek-v4.1-flash` | minimal |
-|  | `reviewer-strong` | `openai-codex/gpt-5.6-sol` | high |
-| `ultra-reviewer-explicit` | `reviewer-ultra-explicit` | `openai-codex/gpt-5.6-sol` | high |
-|  | `reviewer-xultra-explicit` | `openai-codex/gpt-5.6-sol` | xhigh |
-| `researcher` | `researcher-fast` | `opencode-go/deepseek-v4.1-flash` | high |
-|  | `researcher-strong` | `openai-codex/gpt-5.6-sol` | high |
+| New name | Function | Level | Default mapping |
+|----------|----------|-------|-----------------|
+| `scout-fast` | scout | `xs` | mimo-v2.6-flash · low |
+| `scout-xfast` | scout | `xxxs` | deepseek-v4.1-flash · low |
+| `planner-fast` | plan | `m` | deepseek-v4.1-flash · high |
+| `planner-strong` | plan | `xl` | gpt-6-sol · high |
+| `planner-ultra-explicit` | plan | `xxl` | gpt-6-sol · xhigh |
+| `worker-fast` | work | `m` | deepseek-v4.1-flash · high |
+| `worker-xfast` | work | `xs` | deepseek-v4.1-flash · low |
+| `worker-strong-explicit` | work | `xl` | gpt-6-sol · high |
+| `reviewer-fast` | review | `m` | deepseek-v4.1-flash · high |
+| `reviewer-xfast` | review | `s` | deepseek-v4.1-flash · low |
+| `reviewer-strong` | review | `l` | gpt-6-sol · xhigh |
+| `reviewer-ultra-explicit` | review | `xxl` | gpt-6-sol · xhigh |
+| `reviewer-xultra-explicit` | review | `xxxl` | gpt-6-sol · max |
+| `researcher-fast` | research | `m` | deepseek-v4-pro · high |
+| `researcher-strong` | research | `xl` | gpt-6-sol · high |
 
 Explicit-only profiles (`worker-strong-explicit`, `planner-ultra-explicit`,
 `reviewer-ultra-explicit`, and `reviewer-xultra-explicit`) must never be

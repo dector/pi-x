@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig, AgentScope } from "./agents.ts";
+import type { ModelMapping, SubagentLevel } from "./model-mapping.ts";
 import type { NetworkPolicySetting } from "./network-policy.ts";
 import type { SafeMode, SafeModeSnapshot } from "./safe-mode.ts";
 import type { SubagentTiming } from "./timing.ts";
@@ -102,6 +103,8 @@ export interface PreparedDispatchItem {
 	task: string;
 	cwd?: string;
 	step?: number;
+	/** Per-task level override; the agent/function default applies when omitted. */
+	level?: SubagentLevel;
 }
 
 /**
@@ -123,6 +126,12 @@ export interface PreparedSubagentDispatch {
 	projectAgentsDir: string | null;
 	agents: AgentConfig[];
 	dispatchDefaults: DispatchDefaults;
+	/**
+	 * Function/level model mapping snapshotted at preparation time. Omitted for
+	 * dispatches prepared before the mapping existed or when the user config was
+	 * unreadable; the resolver then uses the built-in default.
+	 */
+	mapping?: ModelMapping;
 	/**
 	 * Session rewire snapshotted at dispatch preparation time. Inherited
 	 * model/thinking selection is resolved at child start.

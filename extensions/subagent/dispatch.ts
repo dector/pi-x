@@ -29,6 +29,7 @@ import type {
 	SubagentDispatchStatus,
 	SubagentMode,
 } from "./types.ts";
+import type { SubagentLevel } from "./model-mapping.ts";
 
 export const MAX_CONCURRENCY = 4;
 
@@ -131,6 +132,8 @@ export interface SingleRunRequest {
 	task: string;
 	cwd?: string;
 	step?: number;
+	/** Per-task level override; omitted means the agent/function default applies. */
+	level?: SubagentLevel;
 	/** Pre-allocated run ID from preparation. Required: the runner never mints IDs. */
 	runId: string;
 	/**
@@ -272,6 +275,7 @@ export async function runPreparedDispatch(
 					signal,
 					onUpdate: chainUpdate,
 					makeDetails: makeDetailsFor(dispatch, "chain"),
+					...(item.level !== undefined ? { level: item.level } : {}),
 				},
 				item,
 				signal,
@@ -341,6 +345,7 @@ export async function runPreparedDispatch(
 						}
 					},
 					makeDetails: makeDetailsFor(dispatch, "parallel"),
+					...(item.level !== undefined ? { level: item.level } : {}),
 				},
 				item,
 				signal,
@@ -373,6 +378,7 @@ export async function runPreparedDispatch(
 			signal,
 			onUpdate,
 			makeDetails: makeDetailsFor(dispatch, "single"),
+			...(item.level !== undefined ? { level: item.level } : {}),
 		},
 		item,
 		signal,
