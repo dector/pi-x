@@ -44,6 +44,9 @@ resumes the same worker context instead of starting over:
 | Session id | `gust-<rootHash>-<threadId>` |
 
 The footer shows the orchestrator phase and the widget lists tracked threads.
+Inside the browser the counts line shows `workers <phase>▶<id>`, and `⚙` marks
+the thread a worker is currently handling. Press `w` to start or stop workers
+without leaving the browser.
 
 ## Invocation discovery
 
@@ -92,7 +95,7 @@ HTML, and message timeline. Below 84 columns it collapses to a single pane:
 | `s` | Agent reply and mark the thread `review` |
 | `x` | Resolve the thread (`gust ctl comments done`, `y`/`n` confirm) |
 | `g` | Refresh from Gust |
-| `w` | Dispatch a worker for the selected thread |
+| `w` | Start/stop the worker orchestrator |
 | `f` | Cycle the state filter (all → open → submitted → seen → review → done) |
 | `esc` | Close, go back, or cancel |
 

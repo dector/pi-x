@@ -69,7 +69,6 @@ test("dispatches one worker for a submitted thread", async () => {
 	const orchestrator = new Orchestrator(
 		"/root",
 		client,
-		() => {},
 		async (options) => {
 			dispatched.push(options.thread.id);
 			return { code: 0 };
@@ -116,7 +115,6 @@ test("recovers seen threads on the first snapshot only", async () => {
 	const orchestrator = new Orchestrator(
 		"/root",
 		client,
-		() => {},
 		async (options) => {
 			dispatched.push(options.thread.id);
 			return { code: 0 };

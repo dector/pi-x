@@ -37,6 +37,7 @@ export interface OrchestratorThread {
 
 export interface OrchestratorStatus {
 	running: boolean;
+	started: boolean;
 	phase: string;
 	active: string | null;
 	processed: number;
@@ -76,6 +77,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 export class Orchestrator {
 	private abort = new AbortController();
 	private running = false;
+	private started = false;
 	private phase = "idle";
 	private active: string | null = null;
 	private cursor = 0;
@@ -86,14 +88,30 @@ export class Orchestrator {
 	private queue: string[] = [];
 	private threads = new Map<string, Thread>();
 	private notes = new Map<string, string>();
+	private listeners = new Set<() => void>();
 	private loop: Promise<void> | undefined;
 
 	constructor(
 		private readonly root: string,
 		private readonly client: GustClient,
-		private readonly onChange: () => void,
 		private readonly dispatch: WorkerDispatch = runWorker,
 	) {}
+
+	/** Subscribe to state changes; returns an unsubscribe function. */
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private emit(): void {
+		for (const listener of this.listeners) {
+			try {
+				listener();
+			} catch {
+				// A listener must not break the orchestration loop.
+			}
+		}
+	}
 
 	isRunning(): boolean {
 		return this.running;
@@ -106,6 +124,7 @@ export class Orchestrator {
 			.map<OrchestratorThread>((t) => ({ id: t.id, state: t.state, path: t.path, note: this.notes.get(t.id) }));
 		return {
 			running: this.running,
+			started: this.started,
 			phase: this.phase,
 			active: this.active,
 			processed: this.processed,
@@ -119,10 +138,11 @@ export class Orchestrator {
 	start(): void {
 		if (this.running) return;
 		this.running = true;
+		this.started = true;
 		this.abort = new AbortController();
 		this.phase = "watching";
 		this.lastError = undefined;
-		this.onChange();
+		this.emit();
 		this.loop = this.run();
 	}
 
@@ -130,13 +150,13 @@ export class Orchestrator {
 		if (!this.running) return;
 		this.running = false;
 		this.phase = "stopping";
-		this.onChange();
+		this.emit();
 		this.abort.abort();
 		await this.loop?.catch(() => {});
 		this.loop = undefined;
 		this.active = null;
 		this.phase = "stopped";
-		this.onChange();
+		this.emit();
 	}
 
 	private async run(): Promise<void> {
@@ -148,7 +168,7 @@ export class Orchestrator {
 				if (!this.running) break;
 				this.lastError = message(error);
 				this.phase = "gust unreachable";
-				this.onChange();
+				this.emit();
 				await delay(2000, this.abort.signal);
 				continue;
 			}
@@ -165,7 +185,7 @@ export class Orchestrator {
 		for (const comment of comments) {
 			this.threads.set(comment.id, comment);
 		}
-		this.onChange();
+		this.emit();
 	}
 
 	private enqueue(comments: Thread[], recover: boolean): void {
@@ -182,12 +202,12 @@ export class Orchestrator {
 			const id = this.queue.shift() as string;
 			this.active = id;
 			this.phase = "working";
-			this.onChange();
+			this.emit();
 			try {
 				const thread = await this.client.seen(id);
 				this.threads.set(id, thread);
 				this.phase = "worker";
-				this.onChange();
+				this.emit();
 				const result = await this.dispatch({
 					thread,
 					root: this.root,
@@ -211,12 +231,12 @@ export class Orchestrator {
 				this.notes.set(id, this.lastError);
 			} finally {
 				this.active = null;
-				this.onChange();
+				this.emit();
 			}
 		}
 		if (this.running) {
 			this.phase = "watching";
-			this.onChange();
+			this.emit();
 		}
 	}
 }

@@ -32,7 +32,8 @@ function projectRoot(ctx: ExtensionContext): string {
 
 function ensureOrchestrator(ctx: ExtensionCommandContext): Orchestrator {
 	if (!orchestrator) {
-		orchestrator = new Orchestrator(projectRoot(ctx), gustClient, () => renderStatus());
+		orchestrator = new Orchestrator(projectRoot(ctx), gustClient);
+		orchestrator.subscribe(renderStatus);
 	}
 	return orchestrator;
 }
@@ -54,7 +55,7 @@ function renderStatus(): void {
 	if (!ctx) return;
 	try {
 		const status = orchestrator?.status();
-		if (!status) {
+		if (!status || (!status.running && !status.started)) {
 			ctx.ui.setStatus("gust", undefined);
 			ctx.ui.setWidget("gust", undefined);
 			return;
@@ -70,13 +71,14 @@ function renderStatus(): void {
 	}
 }
 
-async function openThreads(ctx: ExtensionContext): Promise<void> {
+async function openThreads(ctx: ExtensionCommandContext): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("gust: the thread browser requires an interactive session", "warning");
 		return;
 	}
+	const worker = ensureOrchestrator(ctx);
 	await ctx.ui.custom<null>((tui, theme, _keybindings, done) =>
-		new ThreadsDialog(tui, theme, gustClient, () => done(null)),
+		new ThreadsDialog(tui, theme, gustClient, () => done(null), worker),
 	);
 }
 

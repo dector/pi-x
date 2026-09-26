@@ -34,6 +34,7 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { GustClient } from "./gust.ts";
+import type { Orchestrator } from "./orchestrator.ts";
 import type { Author, Thread, ThreadMessage, ThreadState } from "./types.ts";
 
 type Tone = "accent" | "muted" | "dim" | "success" | "warning" | "error" | "text";
@@ -143,12 +144,23 @@ export class ThreadsDialog implements Component, Focusable {
 	private status = "";
 	private error = "";
 	private _focused = false;
+	private readonly orchestrator: Orchestrator | null;
+	private readonly unsubscribe: (() => void) | undefined;
+	private activeWorkerId: string | null = null;
 
-	constructor(tui: TUI, theme: Theme, client: GustClient, done: () => void) {
+	constructor(
+		tui: TUI,
+		theme: Theme,
+		client: GustClient,
+		done: () => void,
+		orchestrator: Orchestrator | null = null,
+	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.client = client;
 		this.done = done;
+		this.orchestrator = orchestrator;
+		this.unsubscribe = orchestrator?.subscribe(() => this.tui.requestRender());
 		void this.load();
 	}
 
@@ -243,6 +255,22 @@ export class ThreadsDialog implements Component, Focusable {
 
 	private scrollDetail(delta: number): void {
 		this.detailScroll = Math.max(0, this.detailScroll + delta);
+		this.tui.requestRender();
+	}
+
+	private async toggleWorkers(): Promise<void> {
+		if (!this.orchestrator) {
+			this.status = "worker orchestrator unavailable";
+			this.tui.requestRender();
+			return;
+		}
+		if (this.orchestrator.isRunning()) {
+			await this.orchestrator.stop();
+			this.status = "workers stopped";
+		} else {
+			this.orchestrator.start();
+			this.status = "workers started";
+		}
 		this.tui.requestRender();
 	}
 
@@ -352,6 +380,7 @@ export class ThreadsDialog implements Component, Focusable {
 	}
 
 	private close(): void {
+		this.unsubscribe?.();
 		this.done();
 	}
 
@@ -433,8 +462,7 @@ export class ThreadsDialog implements Component, Focusable {
 			return;
 		}
 		if (data === "w") {
-			this.status = "worker not wired yet (next step)";
-			this.tui.requestRender();
+			void this.toggleWorkers();
 			return;
 		}
 		if (data === "f") {
@@ -497,13 +525,24 @@ export class ThreadsDialog implements Component, Focusable {
 			return `${this.tone(meta.glyph, meta.tone)} ${this.theme.fg("muted", String(count))}`;
 		});
 		const total = this.theme.fg("dim", `${this.threads.length} threads`);
-		return truncateToWidth(`${this.theme.fg("dim", "  ")}${parts.join("  ")}   ${total}`, width);
+		let line = `${this.theme.fg("dim", "  ")}${parts.join("  ")}   ${total}`;
+		if (this.orchestrator) {
+			const status = this.orchestrator.status();
+			if (status.started) {
+				const label = status.running
+					? `workers ${status.phase}${status.active ? `▶${status.active.slice(0, 6)}` : ""}`
+					: "workers off";
+				line += this.theme.fg("dim", `   ${label}`);
+			}
+		}
+		return truncateToWidth(line, width);
 	}
 
 	private renderLeftCell(thread: Thread | undefined, rowWidth: number, isSelected: boolean): string {
 		if (!thread) return " ".repeat(rowWidth);
 		const meta = STATE_META[thread.state];
-		const marker = isSelected ? this.theme.fg("accent", "▌") : " ";
+		const working = thread.id === this.activeWorkerId;
+		const marker = working ? this.theme.fg("warning", "⚙") : isSelected ? this.theme.fg("accent", "▌") : " ";
 		const glyph = this.tone(meta.glyph, meta.tone);
 		let line = `${marker} ${glyph} `;
 		const pathColor = isSelected ? this.theme.fg("accent", this.theme.bold(thread.path)) : this.theme.fg("muted", thread.path);
@@ -527,6 +566,7 @@ export class ThreadsDialog implements Component, Focusable {
 		const meta = STATE_META[thread.state];
 		out.push({ text: thread.path, tone: "accent", bold: true });
 		out.push({ text: `${meta.label}  ·  thread id ${thread.id}${thread.batchId ? `  ·  batch ${thread.batchId}` : ""}`, tone: meta.tone });
+		if (thread.id === this.activeWorkerId) out.push({ text: "⚙ worker running", tone: "warning" });
 		const times = [`created ${formatDateTime(thread.createdAt)}`];
 		if (thread.finishedAt) times.push(`resolved ${formatDateTime(thread.finishedAt)}`);
 		out.push({ text: times.join("  ·  "), tone: "dim" });
@@ -561,9 +601,9 @@ export class ThreadsDialog implements Component, Focusable {
 		}
 		if (this.mode === "confirm") return " resolve this thread? y/n";
 		const narrow = this.tui.terminal.columns < TWO_PANE_MIN_WIDTH;
-		if (narrow && this.mode === "browse") return " ↑↓ select · enter open · g refresh · f filter · esc close";
-		if (narrow) return " shift+j/k scroll · r reply · s review · x resolve · g refresh · esc back";
-		return " ↑↓ select · shift+j/k scroll · enter/r reply · s review · x resolve · g refresh · f filter · esc close";
+		if (narrow && this.mode === "browse") return " ↑↓ select · enter open · g refresh · f filter · w workers · esc close";
+		if (narrow) return " shift+j/k scroll · r reply · s review · x resolve · w workers · esc back";
+		return " ↑↓ select · shift+j/k scroll · enter/r reply · s review · x resolve · g refresh · f filter · w workers · esc close";
 	}
 
 	private renderReplyBox(width: number, lines: string[]): void {
@@ -590,6 +630,7 @@ export class ThreadsDialog implements Component, Focusable {
 		const bodyRows = clamp(Math.floor(rows * 0.55), 8, 24);
 
 		this.syncSelection();
+		this.activeWorkerId = this.orchestrator?.status().active ?? null;
 		const filtered = this.visibleThreads();
 
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
