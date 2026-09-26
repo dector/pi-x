@@ -9,6 +9,8 @@ export const STATUS_BAR_EVENTS = {
 	subagentDepthClear: "px:status-bar:subagent-depth:clear",
 	reviewLevelSet: "px:status-bar:review-level:set",
 	reviewLevelClear: "px:status-bar:review-level:clear",
+	inputModeSet: "px:status-bar:input-mode:set",
+	inputModeClear: "px:status-bar:input-mode:clear",
 	rowSet: "px:status-bar:row:set",
 	rowClear: "px:status-bar:row:clear",
 	ping: "px:status-bar:ping",
@@ -77,6 +79,15 @@ export type NeoBarReviewLevel = (typeof NEO_BAR_REVIEW_LEVELS)[number];
 
 export interface NeoBarReviewLevelSetPayload {
 	level: NeoBarReviewLevel;
+}
+
+// Which way the editor's keyboard is routed. `insert` is ordinary pi input;
+// `normal` holds plain keys back for modal navigation. Published by vim-mode.
+export const NEO_BAR_INPUT_MODES = ["normal", "insert"] as const;
+export type NeoBarInputMode = (typeof NEO_BAR_INPUT_MODES)[number];
+
+export interface NeoBarInputModeSetPayload {
+	mode: NeoBarInputMode;
 }
 
 // Extra footer rows. Each registered id renders as its own line after the two

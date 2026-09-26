@@ -28,6 +28,7 @@ import {
 	DEFAULT_NEO_BAR_DISPLAY_MODE,
 	DEFAULT_NEO_BAR_LAYOUT,
 	NEO_BAR_DISPLAY_MODES,
+	NEO_BAR_INPUT_MODES,
 	STATUS_BAR_EVENTS,
 	NEO_BAR_JOIN_SEPARATOR,
 	type NeoBarAliasConfig,
@@ -36,6 +37,8 @@ import {
 	type NeoBarDisplayMode,
 	type NeoBarFirstLineClearPayload,
 	type NeoBarFirstLineSetPayload,
+	type NeoBarInputMode,
+	type NeoBarInputModeSetPayload,
 	type NeoBarLayout,
 	type NeoBarPingPayload,
 	type NeoBarRewireSetPayload,
@@ -318,6 +321,8 @@ interface FrameStatusEditorOptions {
 	 * (brightest); higher depths are the trailing fade behind the direction of motion.
 	 */
 	highlightColor?: (text: string, depth: number) => string;
+	/** Frame line color while normal mode holds keyboard keys back. Defaults to the accent. */
+	dimColor?: (text: string) => string;
 }
 
 /**
@@ -400,6 +405,20 @@ export function progressFooterLines(args: {
 	return wrapProgressText(shortened, args.width, PROGRESS_MAX_LINES);
 }
 
+/** The editor's zero-width hardware-cursor marker (pi-tui scans for it). */
+const CURSOR_MARKER = "\u001B_pi:c\u0007";
+// The editor draws its text cursor as reverse video, closed by SGR 0.
+const REVERSE_VIDEO_CURSOR = /\x1b\[7m([^\x1b]*)\x1b\[0m/g;
+
+/**
+ * Remove the text cursor from already-rendered editor lines: no hardware-cursor
+ * marker (so the TUI hides the terminal cursor) and no reverse-video block (so
+ * an editor that ignores keys stops looking typeable). Width is unchanged.
+ */
+export function stripEditorCursor(lines: readonly string[]): string[] {
+	return lines.map((line) => line.split(CURSOR_MARKER).join("").replace(REVERSE_VIDEO_CURSOR, "$1\x1b[0m"));
+}
+
 /**
  * Default editor with heavy borders and rounded arc corners, plus status labels
  * rendered in the frame corners. In `new` display mode the top-left corner shows
@@ -433,6 +452,16 @@ export class FrameStatusEditor extends CustomEditor {
 	private readonly lockedStripeColor: (text: string) => string;
 	private readonly lockedRuleColor: (text: string) => string;
 	private readonly highlightColor?: (text: string, depth: number) => string;
+	/**
+	 * pi assigns `borderColor` after construction (the thinking-level color) and
+	 * updates it when the level changes. Remember the latest non-dim value here so
+	 * normal mode can dim the frame and restore the accent afterwards.
+	 */
+	private lastAccent: ((text: string) => string) | undefined;
+	/** Frame line color while normal mode holds keys back. */
+	private readonly dimColor: (text: string) => string;
+	/** Current vim input mode; `undefined` when vim-mode is off. */
+	private inputMode: NeoBarInputMode | undefined;
 	private readonly frameTui: TUI;
 	private working = false;
 	private workingTick = 0;
@@ -462,11 +491,27 @@ export class FrameStatusEditor extends CustomEditor {
 		this.lockedStripeColor = options.lockedStripeColor ?? ((text) => this.borderColor(text));
 		this.lockedRuleColor = options.lockedRuleColor ?? ((text) => this.borderColor(text));
 		this.highlightColor = options.highlightColor;
+		this.dimColor = options.dimColor ?? theme.borderColor;
 	}
 
 	setLocked(locked: boolean): void {
 		this.locked = locked;
 		this.frameTui.requestRender();
+	}
+
+	/** Publish the editor input mode; `normal` dims the frame and hides the cursor. */
+	setInputMode(mode: NeoBarInputMode | undefined): void {
+		this.inputMode = mode;
+		this.frameTui.requestRender();
+	}
+
+	private isInputInactive(): boolean {
+		return this.inputMode === "normal";
+	}
+
+	/** Accent used for frame labels; stays purple while the frame line dims. */
+	private labelColor(text: string): string {
+		return (this.lastAccent ?? this.borderColor)(text);
 	}
 
 	/** Wrap pi's dynamic interrupt callback after the editor has been installed. */
@@ -546,7 +591,7 @@ export class FrameStatusEditor extends CustomEditor {
 		if (chars.length === 0) return "";
 		this.lastModelLabelLength = chars.length;
 
-		const highlight = this.highlightColor ?? ((text: string) => this.borderColor(text));
+		const highlight = this.highlightColor ?? ((text: string) => this.labelColor(text));
 
 		if (this.working && this.getWorkingAnimation() === "glitch") {
 			// Drop cells that no longer point at a character (e.g. after a model switch).
@@ -556,7 +601,7 @@ export class FrameStatusEditor extends CustomEditor {
 			return chars
 				.map((ch, i) => {
 					const cell = this.glitchCells.get(i);
-					if (!cell) return this.borderColor(ch);
+					if (!cell) return this.labelColor(ch);
 					return highlight(cell.glyph, WORKING_GLITCH_DEPTH[cell.glyph] ?? 0);
 				})
 				.join("");
@@ -565,9 +610,9 @@ export class FrameStatusEditor extends CustomEditor {
 		const bounce = this.working ? bounceState(chars.length, this.workingTick) : undefined;
 		return chars
 			.map((ch, i) => {
-				if (!bounce) return this.borderColor(ch);
+				if (!bounce) return this.labelColor(ch);
 				const depth = (bounce.index - i) * bounce.direction;
-				return depth >= 0 && depth <= WORKING_TRAIL_LENGTH ? highlight(ch, depth) : this.borderColor(ch);
+				return depth >= 0 && depth <= WORKING_TRAIL_LENGTH ? highlight(ch, depth) : this.labelColor(ch);
 			})
 			.join("");
 	}
@@ -583,7 +628,7 @@ export class FrameStatusEditor extends CustomEditor {
 	 * While streaming the label runs the configured animation.
 	 */
 	private topLeftSegment(label: string, reviewLabel?: string): string {
-		const body = composeTopLeftModelReview(this.renderModelLabel(label), reviewLabel, (text) => this.borderColor(text));
+		const body = composeTopLeftModelReview(this.renderModelLabel(label), reviewLabel, (text) => this.labelColor(text));
 		return `${this.borderColor(FRAME_LEFT_CORNER_OPEN)}${body}${this.borderColor(FRAME_LABEL_CLOSE)}`;
 	}
 
@@ -609,6 +654,17 @@ export class FrameStatusEditor extends CustomEditor {
 	 * outside the frame.
 	 */
 	render(width: number): string[] {
+		// pi owns the accent (thinking-level color) and rewrites `borderColor` after
+		// construction. Track the latest accent, then swap the frame line to dim in
+		// normal mode while the labels keep the accent. The cursor disappears too.
+		if (this.borderColor !== this.dimColor) this.lastAccent = this.borderColor;
+		const inactive = this.isInputInactive();
+		this.borderColor = inactive ? this.dimColor : (this.lastAccent ?? this.borderColor);
+		const lines = this.renderFrame(width);
+		return inactive ? stripEditorCursor(lines) : lines;
+	}
+
+	private renderFrame(width: number): string[] {
 		if (this.locked) {
 			// Only replace the editor body; border labels remain live while locked.
 			const label = "LOCKED \u{f023}"; // Nerd Font fa-lock
@@ -792,7 +848,12 @@ export class FrameStatusEditor extends CustomEditor {
 		const messageSegment = hasVisibleText(messageLabel)
 			? `${this.borderColor(FRAME_LABEL_OPEN)}${sanitizeStatusText(messageLabel)}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`
 			: "";
-		const rightSegment = messageSegment ? `${scrollSegment}${messageSegment}` : scrollSegment;
+		// Mode word disabled for now; the dim frame + hidden cursor carry the signal.
+		// Keep for later:
+		// const modeSegment = this.isInputInactive()
+		// 	? `${this.labelColor(FRAME_LABEL_OPEN)}${this.labelColor("NORMAL")}${this.labelColor(FRAME_LABEL_CLOSE)}`
+		// 	: "";
+		const rightSegment = `${scrollSegment}${messageSegment}`;
 		const borderColor = (text: string) => this.borderColor(text);
 
 		// On a narrow frame the cost no longer fits. Keep the usage meter on the border
@@ -1160,6 +1221,12 @@ export function isReviewLevelSetPayload(value: unknown): value is NeoBarReviewLe
 	if (!value || typeof value !== "object") return false;
 	const level = (value as Partial<NeoBarReviewLevelSetPayload>).level;
 	return typeof level === "string" && Object.hasOwn(REVIEW_LEVEL_ICONS, level);
+}
+
+export function isInputModeSetPayload(value: unknown): value is NeoBarInputModeSetPayload {
+	if (!value || typeof value !== "object") return false;
+	const mode = (value as Partial<NeoBarInputModeSetPayload>).mode;
+	return typeof mode === "string" && (NEO_BAR_INPUT_MODES as readonly string[]).includes(mode);
 }
 
 export function formatReviewLevelLabel(level: NeoBarReviewLevel): string | undefined {
@@ -1763,6 +1830,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let rewireTarget: NeoBarRewireSetPayload | undefined;
 	let subagentDepth: number | undefined;
 	let reviewLevel: NeoBarReviewLevel | undefined;
+	let inputMode: NeoBarInputMode | undefined;
 	let displayMode: NeoBarDisplayMode = loadDisplayMode();
 	// Git dirty totals for the current cwd, collected internally. `undefined`
 	// while the repo is clean or `ctx.cwd` is not inside a git repo.
@@ -2144,6 +2212,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				confirm: () => showInterruptConfirmation(activeContext()),
 			}),
 			subduedColor: (text) => styleDarkAccent(activeContext().ui.theme, text),
+			dimColor: (text) => activeContext().ui.theme.fg("dim", text),
 			lockedStripeColor: (text) => activeContext().ui.theme.fg("dim", text),
 			lockedRuleColor: (text) => activeContext().ui.theme.fg("muted", text),
 			highlightColor: (text, depth) => {
@@ -2166,6 +2235,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			requestEditorRender = () => tui.requestRender();
 			frameEditor = new FrameStatusEditor(tui, editorTheme, keybindings, options);
 			frameEditor.setLocked(lockMode);
+			frameEditor.setInputMode(inputMode);
 			return frameEditor;
 		});
 		if (!frameEditor) throw new Error("neo-bar: pi did not create the editor synchronously");
@@ -2284,6 +2354,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		progressStore.deactivate();
 		subagentDepth = undefined;
 		reviewLevel = undefined;
+		inputMode = undefined;
 		gitStatsWatcher.dispose();
 		gitStats = undefined;
 		skillStatsTracker.reset();
@@ -2357,6 +2428,19 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.reviewLevelClear, () => {
 		reviewLevel = undefined;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.inputModeSet, (payload) => {
+		if (!isInputModeSetPayload(payload)) return;
+		inputMode = payload.mode;
+		frameEditor?.setInputMode(inputMode);
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.inputModeClear, () => {
+		inputMode = undefined;
+		frameEditor?.setInputMode(undefined);
 		requestRender();
 	});
 
