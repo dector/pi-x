@@ -20,11 +20,18 @@ export interface GustInvocation {
 	label: string;
 }
 
+export interface WatchSnapshot {
+	cursor: number;
+	comments: Thread[];
+}
+
 export interface GustClient {
 	listThreads(): Promise<Thread[]>;
+	seen(id: string): Promise<Thread>;
 	reply(id: string, text: string, human: boolean): Promise<Thread>;
 	review(id: string, text: string): Promise<Thread>;
 	done(id: string): Promise<Thread>;
+	watch(since: number, signal?: AbortSignal): Promise<WatchSnapshot>;
 	invocationLabel(): string;
 	socketLabel(): string;
 }
@@ -33,6 +40,7 @@ export class GustError extends Error {}
 
 interface CtlOptions {
 	timeoutMs?: number;
+	signal?: AbortSignal;
 }
 
 interface CtlResult {
@@ -46,6 +54,7 @@ interface RunResult {
 	stdout: string;
 	stderr: string;
 	spawnError?: NodeJS.ErrnoException;
+	aborted?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -73,7 +82,7 @@ function cwd(): string {
 	return process.env.GUST_CWD?.trim() || process.cwd();
 }
 
-function runOnce(invocation: GustInvocation, args: string[], timeoutMs: number): Promise<RunResult> {
+function runOnce(invocation: GustInvocation, args: string[], options: CtlOptions): Promise<RunResult> {
 	return new Promise((resolve) => {
 		const child = spawn(invocation.command, [...invocation.args, "ctl", ...socketArgs(), ...args], {
 			cwd: cwd(),
@@ -82,16 +91,30 @@ function runOnce(invocation: GustInvocation, args: string[], timeoutMs: number):
 		let stdout = "";
 		let stderr = "";
 		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
 		const finish = (result: RunResult) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timer);
+			if (timer) clearTimeout(timer);
+			options.signal?.removeEventListener("abort", onAbort);
 			resolve(result);
 		};
-		const timer = setTimeout(() => {
+		const onAbort = () => {
 			child.kill("SIGKILL");
-			finish({ code: 124, stdout, stderr: `${stderr}\nctl timed out after ${timeoutMs}ms` });
-		}, timeoutMs);
+			finish({ code: 124, stdout, stderr, aborted: true });
+		};
+		if (options.signal?.aborted) {
+			onAbort();
+		} else {
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+		}
+		const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		if (timeoutMs > 0) {
+			timer = setTimeout(() => {
+				child.kill("SIGKILL");
+				finish({ code: 124, stdout, stderr: `${stderr}\nctl timed out after ${timeoutMs}ms` });
+			}, timeoutMs);
+		}
 
 		child.stdout?.on("data", (data: Buffer) => {
 			stdout += data.toString();
@@ -116,7 +139,10 @@ async function ctl(args: string[], options: CtlOptions = {}): Promise<CtlResult>
 		: candidates;
 
 	for (const invocation of ordered) {
-		const result = await runOnce(invocation, args, timeoutMs);
+		const result = await runOnce(invocation, args, { timeoutMs, signal: options.signal });
+		if (result.aborted) {
+			throw new GustError("aborted");
+		}
 		const missing =
 			result.spawnError?.code === "ENOENT" ||
 			(invocation.command === "go" && /no such tool/i.test(result.stderr));
@@ -172,6 +198,9 @@ export const gustClient: GustClient = {
 		// returns only the unfinished ones.
 		return parseThreads((await ctl(["comments", "--filter", "all"])).stdout);
 	},
+	async seen(id: string): Promise<Thread> {
+		return parseThread((await ctl(["comments", "seen", id])).stdout);
+	},
 	async reply(id: string, text: string, human: boolean): Promise<Thread> {
 		const args = ["comments", "reply", id, text];
 		if (human) args.push("--human");
@@ -182,6 +211,17 @@ export const gustClient: GustClient = {
 	},
 	async done(id: string): Promise<Thread> {
 		return parseThread((await ctl(["comments", "done", id])).stdout);
+	},
+	async watch(since: number, signal?: AbortSignal): Promise<WatchSnapshot> {
+		// `watch` blocks until a thread changes, so it runs without a timeout and
+		// is cancelled through the signal.
+		const { stdout } = await ctl(["comments", "watch", "--since", String(since)], { timeoutMs: 0, signal });
+		const value = parseJSON<{ cursor?: number; comments?: unknown }>(stdout, "watch snapshot");
+		if (!Array.isArray(value.comments)) throw new GustError("gust watch response was not a snapshot");
+		return {
+			cursor: typeof value.cursor === "number" ? value.cursor : 0,
+			comments: value.comments as Thread[],
+		};
 	},
 	invocationLabel,
 	socketLabel,

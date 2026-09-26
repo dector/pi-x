@@ -1,11 +1,13 @@
 # gust (pi extension)
 
-TUI browser for [Gust](https://github.com/dector/gust) comment threads, backed
-by `gust ctl comments`.
+TUI browser and worker orchestrator for [Gust](https://github.com/dector/gust)
+comment threads, backed by `gust ctl comments`.
 
 Each Gust comment is a thread: a root human request plus replies. The browser
-lists unfinished threads, shows one in detail, and replies to / reviews /
-resolves it through the real control socket.
+lists threads, shows one in detail, and replies to / reviews / resolves it
+through the real control socket. `/px:gust process` runs a deterministic
+orchestrator that watches thread updates and drives one persistent Pi worker
+session per thread.
 
 ## Requirements
 
@@ -13,11 +15,35 @@ resolves it through the real control socket.
   `gust -e '<app>' -p '?:?' --optin comments`.
 - The socket is discovered from the current directory, so run Pi in the same
   directory Gust was launched from.
-- Comments live in Gust's memory: if Gust exits, they are gone.
+- Comments persist in a per-project state file and survive restarts.
 
-## Command
+## Commands
 
 - `/px:gust` — open the thread browser.
+- `/px:gust process` — start the worker orchestrator.
+- `/px:gust process stop` — stop it.
+- `/px:gust status` — print a one-line status.
+
+## Worker orchestration
+
+`/px:gust process` starts a deterministic, in-process orchestrator (no LLM of
+its own). It blocks on `gust ctl comments watch --since <cursor>`, and for each
+newly submitted thread it:
+
+1. claims the thread with `gust ctl comments seen <id>`;
+2. runs one worker as `pi --print --session-dir <dir> --session-id <id>`, which
+   resumes the thread's existing session and posts the reply + `review` itself.
+
+Workers run serially (one at a time) to avoid concurrent edits to the same
+working tree. A thread maps to one persistent session, so a later human reply
+resumes the same worker context instead of starting over:
+
+| Setting | Default |
+| --- | --- |
+| Session dir | `~/.pi/gust/sessions` (override `GUST_SESSION_DIR`) |
+| Session id | `gust-<rootHash>-<threadId>` |
+
+The footer shows the orchestrator phase and the widget lists tracked threads.
 
 ## Invocation discovery
 
@@ -66,7 +92,7 @@ HTML, and message timeline. Below 84 columns it collapses to a single pane:
 | `s` | Agent reply and mark the thread `review` |
 | `x` | Resolve the thread (`gust ctl comments done`, `y`/`n` confirm) |
 | `g` | Refresh from Gust |
-| `w` | Dispatch a worker — not wired yet |
+| `w` | Dispatch a worker for the selected thread |
 | `f` | Cycle the state filter (all → open → submitted → seen → review → done) |
 | `esc` | Close, go back, or cancel |
 
@@ -87,17 +113,19 @@ thread reopens it as `submitted` and creates a fresh batch for the agent inbox.
 
 ## Limitations / next steps
 
-- Requires a Gust build with `comments --filter` (the browser asks for
-  `--filter all` to include resolved threads).
-- No auto-refresh: press `g` (Gust has no push channel; `comments --wait`
-  blocks and would occupy the UI).
-- `w` is a placeholder. The next step is spawning one async `pi` subagent per
-  thread, which posts `review` on completion, plus a listener that keeps
-  receiving re-opened threads until the human resolves them.
+- Requires a Gust build with `comments --filter`, `comments seen`, and
+  `comments watch`.
+- The browser has no auto-refresh: press `g` to reload.
+- The orchestrator serializes workers; per-thread `git worktree` isolation for
+  real parallelism is a later step.
+- The release build of Gust is required if you do not run it as a Go tool.
 
 ## Files
 
-- `gust.ts` — `gust ctl` client (spawn, auto-detect, parse)
+- `gust.ts` — `gust ctl` client (spawn, auto-detect, parse, `seen`, `watch`)
 - `dialog.ts` — the TUI component
+- `orchestrator.ts` — watch loop, thread reconciliation, serial dispatch
+- `worker.ts` — per-thread Pi invocation, session id, prompt
 - `types.ts` — `Thread` / `ThreadMessage` / `ThreadState` (mirror the ctl JSON)
-- `index.ts` — `/px:gust` registration
+- `index.ts` — `/px:gust` registration and status widget
+- `orchestrator.test.ts` — unit tests (`bun test`)
