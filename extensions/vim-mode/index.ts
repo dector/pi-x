@@ -1,5 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isViewportTUI, matchesKey, parseKey, type TUI } from "@earendil-works/pi-tui";
+import {
+	type Keybinding,
+	getKeybindings,
+	isViewportTUI,
+	matchesKey,
+	parseKey,
+	type TUI,
+} from "@earendil-works/pi-tui";
 import {
 	getPrimaryScrollView,
 	jumpToAdjacentEntry,
@@ -21,11 +28,26 @@ const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
 const TUI_CAPTURE_WIDGET_KEY = "px:vim-mode-tui-capture";
 const TUI_REFERENCE_KEY = "__pi_vim_mode_tui_v1";
 
-/** `a` appends at the end; this is pi's `tui.editor.cursorLineEnd` (Ctrl+E). */
-const END_OF_LINE = "\x05";
-
 /** Digits that start a motion count (`3j`, `10k`). `0` is handled separately. */
 const COUNT_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+
+/** Terminal sequences we can send for the common "move to line end" keys. */
+const LINE_END_SEQUENCES = ["\x1b[F", "\x1bOF", "\x1b[1;5F", "\x1b[1;2F", "\x05"] as const;
+
+/**
+ * The sequence that moves the editor cursor to the end of the line, taken from
+ * the user's own `tui.editor.cursorLineEnd` binding. Respecting the binding
+ * avoids collisions — e.g. `ctrl+e` remapped to the external editor.
+ */
+function lineEndSequence(): string | undefined {
+	const keys = getKeybindings().getKeys("tui.editor.cursorLineEnd" as Keybinding);
+	for (const key of keys) {
+		for (const sequence of LINE_END_SEQUENCES) {
+			if (matchesKey(sequence, key)) return sequence;
+		}
+	}
+	return undefined;
+}
 
 type InputMode = "normal" | "insert";
 
@@ -154,9 +176,14 @@ export default function vimModeExtension(pi: ExtensionAPI): void {
 			setMode("insert");
 			return { consume: true };
 		}
-		if (matchesKey(data, "a")) {
+		// `A` (shift+a) appends at the end of the line. The end-of-line key is
+		// resolved from the user's `tui.editor.cursorLineEnd` binding, so a remapped
+		// key can never collide with an app shortcut. `a` stays free for a future
+		// "append after cursor".
+		if (matchesKey(data, "shift+a") || data === "A") {
 			setMode("insert");
-			return { data: END_OF_LINE };
+			const sequence = lineEndSequence();
+			return sequence ? { data: sequence } : { consume: true };
 		}
 		// Esc reaches pi (abort); modifier chords reach pi (hotkeys, dialogs).
 		if (matchesKey(data, "escape") || hasModifier(data)) {

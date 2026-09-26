@@ -22,7 +22,7 @@ Stashed files (old `status-bar` path; recoverable via `git stash@{0}`):
 
 - **Phases 1–4: implemented.** (The Phase 2–4 worker chain died after Phase 3; Phase 4
   was finished by hand.)
-  - Phase 1 — insert default; `Esc`/`Ctrl+;` → normal; `i`/`a` → insert; fullscreen
+  - Phase 1 — insert default; `Esc`/`Ctrl+;` → normal; `i`/`A` → insert; fullscreen
     detection via `isViewportTUI`; input-listener gate with `ui_prompt_*` / `hasOverlay` /
     lock guards; publishes `px:status-bar:input-mode:*`. `neo-bar` dims the frame, keeps
     labels purple, and hides the cursor (the `NORMAL` word is commented out for now).
@@ -57,7 +57,7 @@ mode, text objects). Only modal input + transcript scrolling/jumping.
 | `Esc` in insert | **Always** leaves insert → normal |
 | `Esc` in normal | Passes to pi → **abort** |
 | Leave-insert alias | `Ctrl+;` (Kitty-only; `Esc` is primary) |
-| v1 keys | `j` `k` `J` `K` `Esc` `i` `a` |
+| v1 keys | `j` `k` `J` `K` `Esc` `i` `A` |
 | Next | `[`/`]` = every entry incl. tools · `{`/`}` = skip tools (user/assistant) · `h`/`l` = `{`/`}` |
 | Later | `gg` `G` `3j` `5k` `$` = `G`, `0` = `gg` |
 | Normal-mode look | Dim gray border, purple labels, `NORMAL` word, cursor hidden |
@@ -73,14 +73,14 @@ mode, text objects). Only modal input + transcript scrolling/jumping.
 
 - Session starts in **insert**.
 - `Esc` (insert) → **normal**. `Esc` (normal) → pi abort.
-- `i` → insert (keep cursor). `a` → insert (append — exact semantics TBD; see
-  §7).
+- `i` → insert (keep cursor). `A` (shift+a) → insert and append at the end of
+  the line. `a` is reserved for a future append-after-cursor.
 - `/px:vim on | off | status` toggles for the session; no argument toggles.
 
 ### 3.2 Key map
 
 **v1 (core):** `j`/`k` scroll 1 line · `J`/`K` scroll 5 lines · `Esc` abort ·
-`i` insert · `a` append-insert.
+`i` insert · `A` append-at-end.
 
 **Next:** `[`/`]` step over **every** transcript entry (including tool calls);
 `{`/`}` step only between **user and assistant** messages (skip tool calls);
@@ -138,7 +138,7 @@ The listener returns early (pass everything through) when:
 Otherwise:
 
 - **insert:** pass everything except `Esc` / `Ctrl+;` (→ normal).
-- **normal:** claim `i`/`a`/`j`/`k`/`J`/`K`; pass `Esc` and any modifier chord;
+- **normal:** claim `i`/`A`/`j`/`k`/`J`/`K`; pass `Esc` and any modifier chord;
   consume the rest.
 
 This keeps app hotkeys (modifiers), permission dialogs, and all dialogs working
@@ -200,7 +200,7 @@ in both modes.
 ## 6. Implementation phases
 
 **Phase 1 — visual spike (do first, before the rest):** minimal mode state
-(insert default) + `Esc`/`i`/`a` gate + publish mode + `neo-bar` frame restyle
+(insert default) + `Esc`/`i`/`A` gate + publish mode + `neo-bar` frame restyle
 + `NORMAL` word + cursor hide + fullscreen detection. Goal: confirm the mode
 visual works before building navigation.
 
@@ -214,8 +214,9 @@ visual works before building navigation.
 
 ## 7. Open questions
 
-1. Exact `a` semantics: append **after the cursor** (vim `a`) vs **at end of
-   text**. (Recommendation: after the cursor; `A`/end later.)
+1. Resolved: `A` = append at end of line. The end-of-line key is resolved from
+   `tui.editor.cursorLineEnd`, so a user remap (e.g. `ctrl+e` → external editor)
+   cannot collide. `a` stays reserved for a future append-after-cursor.
 2. `NORMAL` word placement (bottom-right recommended) and exact shades — tune
    live during the Phase 1 spike.
 3. `Esc` vs pi's autocomplete: in insert mode, `Esc` currently dismisses
