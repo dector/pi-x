@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
  *
  * Alt+E cycles the modes (same as `/px:hide-tools`):
  *   full    - pi's default: tools and thinking visible
- *   compact - one custom `▸ tool  args` line per tool call, thinking hidden
+ *   compact - one custom `▸ status tool  args` line per tool call, thinking hidden
  *   hidden  - tool runs collapse to a centered `─── N tool calls hidden ───`
  *
  * Ctrl+Alt+E does the same but never writes the config file: the change
@@ -182,7 +182,7 @@ function isToolEntry(candidate: unknown): boolean {
 	return className(candidate) === "ToolExecutionComponent";
 }
 
-/** Pi stores the actual tool result here; a failed tool must remain fully visible. */
+/** Pi stores the actual tool result here; hidden mode keeps failed tools visible. */
 function isToolError(candidate: unknown): boolean {
 	return isToolEntry(candidate) && (candidate as AnyRecord).result?.isError === true;
 }
@@ -267,6 +267,12 @@ function summaryText(count: number, revealed: boolean, width: number): string {
 	return `${" ".repeat(pad)}${themed("dim", plain)}`;
 }
 
+/** One-cell status glyphs; the running watch is a Nerd Font icon, not emoji. */
+function toolStatus(component: AnyRecord): string {
+	if (!component.result || component.isPartial === true) return "\u{f057a}"; // nf-md-watch
+	return component.result.isError === true ? "x" : "✓";
+}
+
 /** One dim line describing a single tool call. */
 function compactText(component: AnyRecord, revealed: boolean, width: number): string {
 	const name = typeof component.toolName === "string" && component.toolName ? component.toolName : "tool";
@@ -280,7 +286,7 @@ function compactText(component: AnyRecord, revealed: boolean, width: number): st
 	} else if (typeof args === "string") {
 		detail = args;
 	}
-	let plain = `  ${revealed ? "▾" : "▸"} ${name}${detail ? `  ${detail}` : ""}`.replace(/\s+/g, " ");
+	let plain = `  ${revealed ? "▾" : "▸"} ${toolStatus(component)} ${name}${detail ? `  ${detail}` : ""}`.replace(/\s+/g, " ");
 	if (width > 0 && plain.length > width) plain = `${plain.slice(0, Math.max(0, width - 1))}…`;
 	return themed("dim", plain);
 }
@@ -400,7 +406,11 @@ function sync(tui: AnyRecord | undefined): void {
 			// `hidden` visibility is resolved per run below; this only handles
 			// `full` and per-tool reveals in `compact`.
 			const revealed =
-				toolsVisible || isToolError(component) || (mode === "compact" && id !== undefined && current.revealedTools.has(id));
+				toolsVisible ||
+				(mode === "hidden" && isToolError(component)) ||
+				(mode === "compact" && id !== undefined && current.revealedTools.has(id));
+			// Future setting: add `|| (mode === "compact" && isToolError(component))`
+			// to `revealed` to show full errors beneath the compact line.
 			component.hideComponent = !revealed;
 		} else if (isAssistant(child)) {
 			const component = child as AnyRecord;
@@ -439,7 +449,7 @@ function sync(tui: AnyRecord | undefined): void {
 		}
 	} else if (mode === "compact") {
 		for (let index = 0; index < children.length; index += 1) {
-			if (!isToolEntry(children[index]) || isToolError(children[index])) continue;
+			if (!isToolEntry(children[index])) continue;
 			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
 			index += 1;
 		}
