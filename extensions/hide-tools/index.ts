@@ -1,5 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 /**
  * POC: control how much of the transcript you see.
@@ -12,6 +14,10 @@ import { appendFileSync } from "node:fs";
  * Click a compact line or a summary line to peek: the real tool call is shown
  * below it, and clicking again collapses it. Works in fullscreen mode only,
  * because regular mode leaves the mouse to the terminal.
+ *
+ * Mode and peek are saved to `~/.pi/agent/space.dector-hide-tools.json` and
+ * reapplied on startup. `/px:hide-tools` also accepts explicit arguments; add
+ * `-s` to apply for this session without saving.
  *
  * Mechanism: capture the live TUI via `setWidget`, walk the layout tree to the
  * chat container, then per mode set `ToolExecutionComponent.hideComponent`,
@@ -84,6 +90,52 @@ function debug(message: string): void {
 		appendFileSync("/tmp/hide-tools-debug.log", `${new Date().toISOString()} ${message}\n`);
 	} catch {
 		/* ignore */
+	}
+}
+
+const CONFIG_FILE = "space.dector-hide-tools.json";
+
+const USAGE = [
+	"/px:hide-tools               cycle full / compact / hidden",
+	"/px:hide-tools <mode>        set full, compact or hidden",
+	"/px:hide-tools peek [on|off] toggle click-to-peek",
+	"/px:hide-tools status        show the current settings",
+	"",
+	"add -s anywhere to apply without saving, for this session only",
+].join("\n");
+
+function configPath(): string {
+	return process.env.PI_HIDE_TOOLS_CONFIG_PATH ?? join(homedir(), ".pi", "agent", CONFIG_FILE);
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/** Read the saved mode and peek flag. Missing file is not an error. */
+function loadConfig(): { mode?: HideMode; peek?: boolean; error?: string } {
+	const path = configPath();
+	try {
+		const raw = JSON.parse(readFileSync(path, "utf-8")) as { mode?: unknown; peek?: unknown };
+		return {
+			mode: MODES.includes(raw?.mode as HideMode) ? (raw.mode as HideMode) : undefined,
+			peek: typeof raw?.peek === "boolean" ? raw.peek : undefined,
+		};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return {};
+		return { error: `hide-tools: failed to load ${path}: ${errorMessage(error)}` };
+	}
+}
+
+function saveConfig(): { error?: string } {
+	const path = configPath();
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		const current = state();
+		writeFileSync(path, `${JSON.stringify({ version: 1, mode: current.mode, peek: current.peek }, null, 2)}\n`);
+		return {};
+	} catch (error) {
+		return { error: `hide-tools: failed to save ${path}: ${errorMessage(error)}` };
 	}
 }
 
@@ -413,7 +465,13 @@ function capture(ctx: ExtensionContext): AnyRecord | undefined {
 	return globalRecord()[TUI_KEY] as AnyRecord | undefined;
 }
 
-function applyMode(ctx: ExtensionContext, mode: HideMode): void {
+function persist(ctx: ExtensionContext, session: boolean): void {
+	if (session) return;
+	const { error } = saveConfig();
+	if (error && ctx.hasUI) ctx.ui.notify(error, "warning");
+}
+
+function applyMode(ctx: ExtensionContext, mode: HideMode, session = false): void {
 	const tui = capture(ctx);
 	const current = state();
 	current.mode = mode;
@@ -425,16 +483,82 @@ function applyMode(ctx: ExtensionContext, mode: HideMode): void {
 	}
 	tui?.requestRender?.(true);
 	if (ctx.hasUI) ctx.ui.notify(MODE_MESSAGES[mode], "info");
+	persist(ctx, session);
 }
 
-function cycleMode(ctx: ExtensionContext): void {
+function cycleMode(ctx: ExtensionContext, session = false): void {
 	const index = MODES.indexOf(currentMode());
 	const next = MODES[(index + 1) % MODES.length] ?? "full";
-	applyMode(ctx, next);
+	applyMode(ctx, next, session);
+}
+
+function setPeek(ctx: ExtensionContext, enabled: boolean, session = false): void {
+	const tui = capture(ctx);
+	state().peek = enabled;
+	try {
+		sync(tui);
+	} catch (error) {
+		debug(`setPeek sync error: ${error instanceof Error ? error.stack : String(error)}`);
+	}
+	tui?.requestRender?.(true);
+	if (ctx.hasUI) ctx.ui.notify(`hide-tools: click-to-peek ${enabled ? "on" : "off"}`, "info");
+	persist(ctx, session);
+}
+
+function showStatus(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	const current = state();
+	ctx.ui.notify(
+		`hide-tools: mode=${current.mode} peek=${current.peek ? "on" : "off"} · ${configPath()}`,
+		"info",
+	);
+}
+
+function handleCommand(args: string, ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") {
+		if (ctx.hasUI) ctx.ui.notify("hide-tools: interactive TUI only", "warning");
+		return;
+	}
+
+	const tokens = args.trim().split(/\s+/).filter((token) => token.length > 0);
+	const session = tokens.includes("-s") || tokens.includes("--session");
+	const rest = tokens.filter((token) => token !== "-s" && token !== "--session");
+	const [first, second] = rest;
+
+	if (first === undefined) {
+		cycleMode(ctx, session);
+		return;
+	}
+
+	if (MODES.includes(first as HideMode)) {
+		applyMode(ctx, first as HideMode, session);
+		return;
+	}
+
+	if (first === "peek") {
+		if (second === "on") setPeek(ctx, true, session);
+		else if (second === "off") setPeek(ctx, false, session);
+		else if (second === undefined || second === "toggle") setPeek(ctx, !state().peek, session);
+		else if (ctx.hasUI) ctx.ui.notify(`hide-tools: expected "on" or "off", got "${second}"`, "warning");
+		return;
+	}
+
+	if (first === "status") {
+		showStatus(ctx);
+		return;
+	}
+
+	if (ctx.hasUI) ctx.ui.notify(USAGE, "info");
 }
 
 export default function hideToolsExtension(pi: ExtensionAPI): void {
 	globalRecord()[SYNC_KEY] = (target: AnyRecord) => sync(target);
+
+	// Adopt the saved settings before the first frame is drawn.
+	const loaded = loadConfig();
+	if (loaded.mode !== undefined) state().mode = loaded.mode;
+	if (loaded.peek !== undefined) state().peek = loaded.peek;
+	if (loaded.error) debug(loaded.error);
 
 	pi.registerShortcut(TOGGLE_SHORTCUT, {
 		description: "Cycle transcript density (full / compact / hidden)",
@@ -445,13 +569,9 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("px:hide-tools", {
-		description: "Cycle transcript density (full / compact / hidden)",
-		handler: async (_args, ctx) => {
-			if (ctx.mode !== "tui") {
-				if (ctx.hasUI) ctx.ui.notify("hide-tools: interactive TUI only", "warning");
-				return;
-			}
-			cycleMode(ctx);
+		description: "Cycle or set transcript density; also toggles click-to-peek",
+		handler: async (args, ctx) => {
+			handleCommand(args ?? "", ctx);
 		},
 	});
 
