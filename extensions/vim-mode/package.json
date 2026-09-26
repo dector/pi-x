@@ -8,6 +8,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck index.ts"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck index.ts scroll.ts"
   }
 }

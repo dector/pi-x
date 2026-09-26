@@ -20,14 +20,17 @@ Stashed files (old `status-bar` path; recoverable via `git stash@{0}`):
 
 ## Implementation status
 
-- **Phase 1 (visual spike): implemented.**
-  - `extensions/vim-mode/` — insert default; `Esc`/`Ctrl+;` → normal; `i`/`a` → insert;
-    fullscreen detection via `isViewportTUI`; input-listener gate with
-    `ui_prompt_*` / `hasOverlay` / lock guards; publishes `px:status-bar:input-mode:*`.
-  - `extensions/neo-bar/` — `inputModeSet`/`inputModeClear` events; `FrameStatusEditor`
-    dims the frame, keeps labels purple, shows `NORMAL`, and hides the cursor in normal mode.
-  - Verified: both typecheck clean; `neo-bar` 201 tests pass.
-- **Not yet:** `j`/`k` scrolling (Phase 2). In normal mode `j`/`k` currently do nothing.
+- **Phases 1–4: implemented.** (The Phase 2–4 worker chain died after Phase 3; Phase 4
+  was finished by hand.)
+  - Phase 1 — insert default; `Esc`/`Ctrl+;` → normal; `i`/`a` → insert; fullscreen
+    detection via `isViewportTUI`; input-listener gate with `ui_prompt_*` / `hasOverlay` /
+    lock guards; publishes `px:status-bar:input-mode:*`. `neo-bar` dims the frame, keeps
+    labels purple, and hides the cursor (the `NORMAL` word is commented out for now).
+  - Phase 2 — `j`/`k` (1 line) and `J`/`K` (5 lines) scroll the transcript.
+  - Phase 3 — `[`/`]` step over every entry; `{`/`}` and `h`/`l` step only between
+    user/assistant messages.
+  - Phase 4 — `gg`/`0` top, `G`/`$` bottom, and counts (`3j`, `10k`, `2J`).
+  - Verified: `vim-mode` typecheck clean, 31 tests pass; `neo-bar` 201 tests pass.
 
 ---
 
