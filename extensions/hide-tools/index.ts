@@ -11,6 +11,11 @@ import { dirname, join } from "node:path";
  *   compact - one custom `▸ tool  args` line per tool call, thinking hidden
  *   hidden  - tool runs collapse to a centered `─── N tool calls hidden ───`
  *
+ * Ctrl+Alt+E does the same but never writes the config file: the change
+ * lives only in this session and is dropped when the session is replaced.
+ * (`app.editor.external` was moved to alt+shift+e in keybindings.json to
+ * free up ctrl+alt+e.)
+ *
  * Click a compact line or a summary line to peek: the real tool call is shown
  * below it, and clicking again collapses it. Works in fullscreen mode only,
  * because regular mode leaves the mouse to the terminal.
@@ -39,6 +44,7 @@ const LINE_FLAG = "__px_hide_tools_line";
 const WRAPPED_FLAG = "__px_hide_tools_wrapped";
 const WIDGET_KEY = "px:hide-tools-capture";
 const TOGGLE_SHORTCUT = "alt+e";
+const TOGGLE_SHORTCUT_SESSION = "ctrl+alt+e";
 
 type AnyRecord = Record<string, any>;
 
@@ -482,7 +488,8 @@ function applyMode(ctx: ExtensionContext, mode: HideMode, session = false): void
 		debug(`applyMode sync error: ${error instanceof Error ? error.stack : String(error)}`);
 	}
 	tui?.requestRender?.(true);
-	if (ctx.hasUI) ctx.ui.notify(MODE_MESSAGES[mode], "info");
+	const suffix = session ? " (session only)" : "";
+	if (ctx.hasUI) ctx.ui.notify(`${MODE_MESSAGES[mode]}${suffix}`, "info");
 	persist(ctx, session);
 }
 
@@ -568,6 +575,14 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerShortcut(TOGGLE_SHORTCUT_SESSION, {
+		description: "Cycle transcript density for this session only (not saved)",
+		handler: async (ctx) => {
+			if (ctx.mode !== "tui") return;
+			cycleMode(ctx, true);
+		},
+	});
+
 	pi.registerCommand("px:hide-tools", {
 		description: "Cycle or set transcript density; also toggles click-to-peek",
 		handler: async (args, ctx) => {
@@ -575,9 +590,13 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		// Keep the current mode and peeks across reload/resume.
+		// A session-only mode must not leak into a different session.
+		if (event.reason !== "startup" && event.reason !== "reload") {
+			state().mode = loadConfig().mode ?? "full";
+		}
+		// Keep the peek flags (and the mode on reload); re-resolve the chat.
 		state().chat = undefined;
 		capture(ctx);
 	});
