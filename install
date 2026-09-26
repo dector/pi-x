@@ -154,6 +154,7 @@ extensions=(
   "http"
   "interactive-bash"
   "pi-ui"
+  "hide-tools"
   "sqlite"
   "save"
   "prompt-stash"
