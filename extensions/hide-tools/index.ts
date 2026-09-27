@@ -8,8 +8,9 @@ import { dirname, join } from "node:path";
  *
  * Alt+E cycles the modes (same as `/px:hide-tools`):
  *   full    - pi's default: tools and thinking visible
- *   compact - one custom `▸ status tool  args` line per tool call, thinking hidden
- *   hidden  - tool runs collapse to a centered `─── N tool calls hidden ───`
+ *   compact         - one custom `▸ status tool  args` line per tool call, thinking hidden
+ *   compact-running - like compact, but running tools show their normal view
+ *   hidden          - tool runs collapse to a centered `─── N tool calls hidden ───`
  *
  * Ctrl+Alt+E does the same but never writes the config file: the change
  * lives only in this session and is dropped when the session is replaced.
@@ -48,14 +49,15 @@ const TOGGLE_SHORTCUT_SESSION = "ctrl+alt+e";
 
 type AnyRecord = Record<string, any>;
 
-type HideMode = "full" | "compact" | "hidden";
+type HideMode = "full" | "compact" | "compact-running" | "hidden";
 
 /** Cycle order used by Alt+E, starting from `full`. */
-const MODES: readonly HideMode[] = ["full", "compact", "hidden"];
+const MODES: readonly HideMode[] = ["full", "compact", "compact-running", "hidden"];
 
 const MODE_MESSAGES: Record<HideMode, string> = {
 	full: "hide-tools: full",
 	compact: "hide-tools: compact (one line per tool call)",
+	"compact-running": "hide-tools: compact (running tools shown in full)",
 	hidden: "hide-tools: hidden (tool calls and thinking)",
 };
 
@@ -102,8 +104,8 @@ function debug(message: string): void {
 const CONFIG_FILE = "space.dector-hide-tools.json";
 
 const USAGE = [
-	"/px:hide-tools               cycle full / compact / hidden",
-	"/px:hide-tools <mode>        set full, compact or hidden",
+	"/px:hide-tools               cycle full / compact / compact-running / hidden",
+	"/px:hide-tools <mode>        set full, compact, compact-running or hidden",
 	"/px:hide-tools peek [on|off] toggle click-to-peek",
 	"/px:hide-tools status        show the current settings",
 	"",
@@ -185,6 +187,11 @@ function isToolEntry(candidate: unknown): boolean {
 /** Pi stores the actual tool result here; hidden mode keeps failed tools visible. */
 function isToolError(candidate: unknown): boolean {
 	return isToolEntry(candidate) && (candidate as AnyRecord).result?.isError === true;
+}
+
+/** Partial results still belong to a running tool; only a final result collapses it. */
+function isRunningTool(component: AnyRecord): boolean {
+	return component.executionStarted === true && component.isPartial === true;
 }
 
 function isAssistant(candidate: unknown): boolean {
@@ -403,12 +410,12 @@ function sync(tui: AnyRecord | undefined): void {
 		if (isToolEntry(child)) {
 			const component = child as AnyRecord;
 			const id = toolId(component);
-			// `hidden` visibility is resolved per run below; this only handles
-			// `full` and per-tool reveals in `compact`.
+			// `hidden` visibility is resolved per run below.
 			const revealed =
 				toolsVisible ||
 				(mode === "hidden" && isToolError(component)) ||
-				(mode === "compact" && id !== undefined && current.revealedTools.has(id));
+				(mode === "compact-running" && isRunningTool(component)) ||
+				((mode === "compact" || mode === "compact-running") && id !== undefined && current.revealedTools.has(id));
 			// Future setting: add `|| (mode === "compact" && isToolError(component))`
 			// to `revealed` to show full errors beneath the compact line.
 			component.hideComponent = !revealed;
@@ -447,9 +454,10 @@ function sync(tui: AnyRecord | undefined): void {
 			}
 			index = end;
 		}
-	} else if (mode === "compact") {
+	} else if (mode === "compact" || mode === "compact-running") {
 		for (let index = 0; index < children.length; index += 1) {
 			if (!isToolEntry(children[index])) continue;
+			if (mode === "compact-running" && isRunningTool(children[index] as AnyRecord)) continue;
 			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
 			index += 1;
 		}
@@ -586,7 +594,7 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 	if (loaded.error) debug(loaded.error);
 
 	pi.registerShortcut(TOGGLE_SHORTCUT, {
-		description: "Cycle transcript density (full / compact / hidden)",
+		description: "Cycle transcript density (full / compact / compact-running / hidden)",
 		handler: async (ctx) => {
 			if (ctx.mode !== "tui") return;
 			cycleMode(ctx);
