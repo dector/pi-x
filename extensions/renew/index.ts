@@ -74,6 +74,8 @@ export default function renewExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("renew", { description: "Start a fresh session while retaining session settings", handler });
 	pi.registerCommand("newt", { description: "Alias for /renew", handler });
 	pi.registerCommand("newr", { description: "Alias for /renew", handler });
+	pi.registerCommand("nre", { description: "Alias for /renew", handler });
+	pi.registerCommand("nrew", { description: "Alias for /renew", handler });
 }
 
 export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: string): Promise<ProcStopAllResult | undefined> {

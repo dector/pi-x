@@ -95,7 +95,7 @@ test("missing replacement bridge warns and skips transfer", async () => {
 	expect(notices.some((message) => message.includes("replacement extension is unavailable"))).toBe(true);
 });
 
-test("/newt and /newr use the /renew handler, including flags", async () => {
+test("/renew aliases use the same handler, including flags", async () => {
 	const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
 	const notices: string[] = [];
 	let newSessions = 0;
@@ -108,18 +108,19 @@ test("/newt and /newr use the /renew handler, including flags", async () => {
 		on: () => {},
 	};
 	renewExtension(pi as unknown as ExtensionAPI);
-	expect(commands.get("newt")).toBe(commands.get("renew"));
-	expect(commands.get("newr")).toBe(commands.get("renew"));
+	for (const alias of ["newt", "newr", "nre", "nrew"]) {
+		expect(commands.get(alias)).toBe(commands.get("renew"));
+	}
 	const ctx = {
 		cwd: "/repo", sessionManager: { getSessionId: () => "old" },
 		ui: { notify: (message: string) => notices.push(message) },
 		newSession: async () => { newSessions++; return { cancelled: false }; },
 	};
-	for (const alias of ["newt", "newr"]) {
+	for (const alias of ["newt", "newr", "nre", "nrew"]) {
 		await commands.get(alias)?.("+agents", ctx as unknown as ExtensionCommandContext);
 	}
 	expect(newSessions).toBe(0);
-	expect(notices).toHaveLength(2);
+	expect(notices).toHaveLength(4);
 	expect(notices.every((notice) => notice.includes("+agents is unavailable"))).toBe(true);
 });
 
