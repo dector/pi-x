@@ -392,15 +392,19 @@ class NoteEditorDialog implements Component, Focusable {
  * - up/down or j/k selects a note
  * - shift+j / shift+k scrolls the content by 5 lines
  * - ctrl+c (or y) copies the raw note to the clipboard
+ * - shift+a (A) applies the selected note to an empty prompt
  * - esc closes
  */
-class NotesListDialog implements Component, Focusable {
+export class NotesListDialog implements Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly done: () => void;
 	private readonly cwd: string;
+	private readonly ctx: ExtensionContext;
 
 	private notes: NoteMeta[] = [];
+	private readonly appliedPaths = new Set<string>();
+	private applying = false;
 	private selected = 0;
 	private listOffset = 0;
 	private scroll = 0;
@@ -422,11 +426,16 @@ class NotesListDialog implements Component, Focusable {
 	private openingEditor = false;
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string) {
+	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string, ctx: ExtensionContext) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.cwd = cwd;
+		this.ctx = ctx;
+	}
+
+	private displayTitle(note: NoteMeta): string {
+		return `${this.appliedPaths.has(note.path) ? "[Applied] " : ""}${note.title || note.fileName}`;
 	}
 
 	get focused(): boolean {
@@ -537,6 +546,33 @@ class NotesListDialog implements Component, Focusable {
 			this.status = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
 		}
 		this.tui.requestRender();
+	}
+
+	private async applySelected(): Promise<void> {
+		const note = this.notes[this.selected];
+		if (!note || this.applying) return;
+		if (this.ctx.ui.getEditorText().length > 0) {
+			this.status = "Prompt input is not empty; note was not applied";
+			this.tui.requestRender();
+			return;
+		}
+		this.applying = true;
+		try {
+			const content = await readFile(note.path, "utf8");
+			// The prompt may have changed while the note was being read.
+			if (this.ctx.ui.getEditorText().length > 0) {
+				this.status = "Prompt input is not empty; note was not applied";
+			} else {
+				this.ctx.ui.setEditorText(content);
+				this.appliedPaths.add(note.path);
+				this.status = `Applied ${note.title || note.fileName} to prompt`;
+			}
+		} catch (error) {
+			this.status = `Apply failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			this.applying = false;
+			this.tui.requestRender();
+		}
 	}
 
 	private async deleteSelected(): Promise<void> {
@@ -713,6 +749,10 @@ class NotesListDialog implements Component, Focusable {
 			return;
 		}
 		if (this.notes.length === 0) return;
+		if (matchesKey(data, Key.shift("a")) || data === "A") {
+			void this.applySelected();
+			return;
+		}
 		if (matchesKey(data, Key.enter)) {
 			this.preview = true;
 			this.status = "";
@@ -763,7 +803,7 @@ class NotesListDialog implements Component, Focusable {
 		if (note) {
 			const selected = index === this.selected;
 			const prefix = selected ? "> " : "  ";
-			const title = truncateToWidth(note.title || note.fileName, Math.max(1, leftWidth - 2));
+			const title = truncateToWidth(this.displayTitle(note), Math.max(1, leftWidth - 2));
 			text = selected ? this.theme.fg("accent", `${prefix}${title}`) : `${prefix}${title}`;
 		}
 		const width = visibleWidth(text);
@@ -789,7 +829,7 @@ class NotesListDialog implements Component, Focusable {
 			this.previewRows = clamp(this.tui.terminal.rows - 8, 5, 40);
 			this.wrappedContent = this.wrapContent(renderWidth);
 			this.scroll = clamp(this.scroll, 0, Math.max(0, this.wrappedContent.length - this.previewRows));
-			const lines = [border, truncateToWidth(this.theme.fg("accent", this.theme.bold(note?.title || "(untitled)")), renderWidth), this.theme.fg("dim", "─".repeat(renderWidth))];
+			const lines = [border, truncateToWidth(this.theme.fg("accent", this.theme.bold(note ? this.displayTitle(note) : "(untitled)")), renderWidth), this.theme.fg("dim", "─".repeat(renderWidth))];
 			for (let row = 0; row < this.previewRows; row += 1) {
 				lines.push(truncateToWidth(this.wrappedContent[this.scroll + row] ?? "", renderWidth));
 			}
@@ -837,7 +877,7 @@ class NotesListDialog implements Component, Focusable {
 			const leftCell = this.renderLeftCell(this.listOffset + row, leftWidth);
 			let rightCell = "";
 			if (row === 0) {
-				rightCell = this.theme.fg("accent", this.theme.bold(current?.title || "(untitled)"));
+				rightCell = this.theme.fg("accent", this.theme.bold(current ? this.displayTitle(current) : "(untitled)"));
 			} else if (row === 1) {
 				rightCell = this.theme.fg("dim", current ? formatDisplayDate(current.mtimeMs) : "");
 			} else {
@@ -847,10 +887,11 @@ class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " n new note • enter preview • }/tab scope • ↑↓/j k select • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = " n new note • enter preview • }/tab scope • ↑↓/j k select • A apply • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
-			lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
+			const color = this.status.startsWith("Prompt input is not empty") || this.status.startsWith("Apply failed:") ? "warning" : "success";
+			lines.push(truncateToWidth(this.theme.fg(color, this.status), renderWidth));
 		}
 
 		return lines;
@@ -871,7 +912,7 @@ async function openNotesList(ctx: ExtensionContext): Promise<void> {
 		return;
 	}
 	await ctx.ui.custom<null>(async (tui, theme, _keybindings, done) => {
-		const dialog = new NotesListDialog(tui, theme, () => done(null), ctx.cwd);
+		const dialog = new NotesListDialog(tui, theme, () => done(null), ctx.cwd, ctx);
 		await dialog.load();
 		return dialog;
 	});
