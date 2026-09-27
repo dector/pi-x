@@ -47,6 +47,7 @@ function openDialog(initiallyLocked = false) {
 		onToggleAgentsRewire: () => { rewire = !rewire; renderFromEvent?.(); },
 		onOpenAgentsRewire: () => {},
 		onOpenAgentsManager: () => {},
+		onOpenModelPresets: () => {},
 		isAgentsRewireEnabled: () => rewire,
 	} satisfies Handlers;
 	const lifecycle = {
@@ -86,7 +87,7 @@ describe("quick actions", () => {
 
 	test("Enter on focus mode keeps the dialog open", async () => {
 		const ui = openDialog();
-		for (let i = 0; i < 10; i++) ui.dialog.handleInput("\x1b[B"); // Focus mode
+		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B"); // Focus mode
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.focus).toBe(true);
@@ -97,7 +98,7 @@ describe("quick actions", () => {
 
 	test("Enter on rewire keeps the dialog open and redraws on state change", async () => {
 		const ui = openDialog();
-		for (let i = 0; i < 5; i++) ui.dialog.handleInput("\x1b[B"); // Rewire agents
+		for (let i = 0; i < 6; i++) ui.dialog.handleInput("\x1b[B"); // Rewire agents
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.rewire).toBe(true);

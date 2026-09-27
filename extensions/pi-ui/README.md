@@ -36,6 +36,7 @@ Current dialog items:
   - `Ctrl+d - DANGER mode` (toggles `yolo+`)
   - `+ - toggle outer mode`
 - **Agents**
+  - `m - favorite models…` (saved model + thinking-level configurations)
   - `a - subagents…` (opens the `/px:agents` batch list)
   - `R - agents rewiring…` (opens the rewiring menu, including `Inherit model` and `Inherit All`)
   - `Ctrl+r - rewire agents` (toggle)
@@ -73,6 +74,7 @@ Behavior details:
   - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
   - `<-` / `Backspace` — returns to the main action dialog.
+- Pressing `m` opens favorite model configurations stored at `<agent-dir>/model-presets.json`. `n` creates a preset by selecting a model and supported effort (press `/` to search in either selection list); `/` searches model and effort (type to filter, Backspace edits, Esc clears search); `j/k` or arrows navigate; `Shift+j/k` moves the highlighted preset down/up in the saved order; `Enter` switches the active model and effort without closing; `d` requests confirmation before deletion; `Alt+Enter` sets the subagent rewire target without enabling rewiring or closing. The picker initially highlights the active main configuration, including a temporary row. `󰙴` marks the active main configuration; `󰒟` marks the configured rewire target (even when rewiring is off). Configurations absent from favorites are snapshotted as muted, temporary rows at the bottom for the lifetime of the picker; switching models updates the icons without replacing those rows. Temporary rows are not saved, deletable, or reorderable. `Esc` returns.
 - Pressing `Ctrl+r` runs **Rewire agents**, emits event `px:subagent:rewire:toggle`, and closes the dialog. Selecting it with `Enter` keeps the dialog open.
 - Pressing `R` runs **Agents rewiring…**, emits event `px:subagent:rewire:menu`, closes the dialog, and opens the rewiring menu.
 - Pressing `r` emits event `px:safe-mode:toggle-reader` and closes the dialog.

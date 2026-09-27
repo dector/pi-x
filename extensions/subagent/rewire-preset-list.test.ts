@@ -108,6 +108,34 @@ describe("RewirePresetListView", () => {
 		expect(empty.join("\n")).toContain("Press n to create one");
 	});
 
+	test("/ searches model and effort and applies the original preset index", () => {
+		const harness = makeView(withInheritRewirePreset(presets));
+		harness.view.handleInput("/");
+		for (const char of "GPT med") harness.view.handleInput(char);
+		const output = harness.view.render(80).join("\n");
+		expect(output).toContain("openai/gpt · medium");
+		expect(output).not.toContain("Inherit model");
+		expect(harness.view.selectedIndex).toBe(3);
+		harness.view.handleInput(ENTER);
+		expect(harness.results).toEqual([{ type: "select", index: 3 }]);
+	});
+
+	test("search suppresses n/d actions, handles no matches and Esc restores the cursor", () => {
+		const harness = makeView();
+		harness.view.handleInput(DOWN);
+		harness.view.handleInput("/");
+		harness.view.handleInput("n");
+		harness.view.handleInput("d");
+		expect(harness.view.selectedIndex).toBeUndefined();
+		expect(harness.view.render(40).join("\n")).toContain("No matching presets");
+		harness.view.handleInput(ENTER);
+		expect(harness.results).toEqual([]);
+		harness.view.handleInput(ESC);
+		expect(harness.view.selectedIndex).toBe(1);
+		harness.view.handleInput(ENTER);
+		expect(harness.results).toEqual([{ type: "select", index: 1 }]);
+	});
+
 	test("scrolls around the selected preset", () => {
 		const many = Array.from({ length: 6 }, (_value, index) => ({
 			model: `provider/model-${index}`,

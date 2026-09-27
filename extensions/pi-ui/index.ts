@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { openModelPresets } from "./model-presets.ts";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -1283,6 +1284,7 @@ export async function showHiDialog(
 		onToggleAgentsRewire: () => void;
 		onOpenAgentsRewire: () => void;
 		onOpenAgentsManager: () => void;
+		onOpenModelPresets: () => void;
 		isAgentsRewireEnabled: () => boolean;
 	},
 	dialogLifecycle: {
@@ -1327,6 +1329,7 @@ export async function showHiDialog(
 					onToggleAgentsRewire,
 					onOpenAgentsRewire,
 					onOpenAgentsManager,
+					onOpenModelPresets,
 					isAgentsRewireEnabled,
 				} = handlers;
 				let selectedIndex = 0;
@@ -1418,6 +1421,16 @@ export async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => setMenu("stash"),
+					},
+					{
+						hotkey: "m",
+						label: "Favorite models…",
+						group: "AGENTS",
+						showStatusBadge: false,
+						opensMenu: true,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onOpenModelPresets),
 					},
 					{
 						hotkey: "a",
@@ -2263,6 +2276,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					onOpenAgentsManager: () => {
 						pi.events.emit(SUBAGENT_MANAGER_MENU_EVENT, { ctx });
 					},
+					onOpenModelPresets: () => { void openModelPresets(pi, ctx); },
 					isAgentsRewireEnabled: () => agentsRewireEnabled,
 				},
 				{

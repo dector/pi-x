@@ -2067,6 +2067,37 @@ export default function (pi: ExtensionAPI) {
 			const ctx = eventContext(payload);
 			if (ctx) void openRewireMenu(ctx);
 		});
+		pi.events.on("px:subagent:rewire:state:request", (payload) => {
+			if (!payload || typeof payload !== "object") return;
+			const { ctx, reply } = payload as { ctx?: ExtensionContext; reply?: unknown };
+			if (!ctx || typeof reply !== "function" || ctx.sessionManager.getSessionId() !== sessionContext?.sessionManager.getSessionId()) return;
+			const inherited = isInheritedRewire(rewireConfig);
+			const model = inherited && ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : rewireConfig?.model;
+			const thinkingLevel = isInheritAllRewire(rewireConfig) ? pi.getThinkingLevel() : rewireConfig?.thinkingLevel;
+			(reply as (state: { model: string; thinkingLevel: ThinkingLevel; enabled: boolean } | undefined) => void)(
+				model && thinkingLevel && rewireConfig ? { model, thinkingLevel, enabled: rewireConfig.enabled } : undefined,
+			);
+		});
+		pi.events.on("px:subagent:rewire:target", (payload) => {
+			const ctx = eventContext(payload);
+			if (!ctx || !payload || typeof payload !== "object") return;
+			const { model, thinkingLevel, onApplied } = payload as { model?: unknown; thinkingLevel?: unknown; onApplied?: unknown };
+			if (typeof model !== "string" || typeof thinkingLevel !== "string") return;
+			const target = ctx.modelRegistry.getAvailable().find((candidate) => `${candidate.provider}/${candidate.id}` === model);
+			if (!target || !availableThinkingLevels(target).includes(thinkingLevel as ThinkingLevel)) {
+				ctx.ui.notify("Rewire target is unavailable.", "warning");
+				return;
+			}
+			setRewireConfig(ctx, {
+				...(rewireConfig ?? { enabled: false }),
+				inherit: false,
+				inheritAll: false,
+				model,
+				thinkingLevel: thinkingLevel as ThinkingLevel,
+			});
+			ctx.ui.notify(`Rewire target set to ${model} · ${thinkingLevel} (rewiring ${rewireConfig?.enabled ? "on" : "off"}).`, "info");
+			if (typeof onApplied === "function") (onApplied as (enabled: boolean) => void)(rewireConfig!.enabled);
+		});
 
 		pi.registerCommand("px:agents:rewire", {
 			description: "Override the model and effort for every subagent, or inherit the active model",

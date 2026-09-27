@@ -2,7 +2,7 @@ import { matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-
 import { formatRewirePreset, isInheritRewirePreset, type RewirePreset } from "./rewire-presets.ts";
 
 export const REWIRE_PRESET_LIST_TITLE = "Rewire presets";
-export const REWIRE_PRESET_LIST_HELP = "↑↓ move • enter apply • n new • d delete • esc back";
+export const REWIRE_PRESET_LIST_HELP = "/ search • ↑↓ move • enter apply • n new • d delete • esc back";
 export const DEFAULT_REWIRE_PRESET_LIST_VISIBLE = 12;
 
 export type RewirePresetListResult =
@@ -38,13 +38,24 @@ export interface RewirePresetListViewOptions {
 export class RewirePresetListView implements Component {
 	private readonly options: RewirePresetListViewOptions;
 	private selected = 0;
+	private searching = false;
+	private query = "";
+	private previousSelected = 0;
+
+	private matchingIndices(): number[] {
+		const terms = this.query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+		return this.options.presets.map((_preset, index) => index).filter((index) => {
+			const text = formatRewirePreset(this.options.presets[index]!).toLowerCase();
+			return terms.every((term) => text.includes(term));
+		});
+	}
 
 	constructor(options: RewirePresetListViewOptions) {
 		this.options = options;
 	}
 
 	get selectedIndex(): number | undefined {
-		return this.options.presets.length > 0 ? this.selected : undefined;
+		return this.matchingIndices()[this.selected];
 	}
 
 	invalidate(): void {
@@ -53,24 +64,41 @@ export class RewirePresetListView implements Component {
 
 	handleInput(data: string): void {
 		const keybindings = this.options.keybindings;
-		if (keybindings.matches(data, "tui.select.up")) {
+		if (keybindings.matches(data, "tui.select.cancel")) {
+			if (!this.searching) return this.options.done({ type: "cancel" });
+			this.searching = false;
+			this.query = "";
+			this.selected = this.previousSelected;
+			this.options.requestRender();
+		} else if (!this.searching && data === "/") {
+			this.searching = true;
+			this.previousSelected = this.selected;
+			this.selected = 0;
+			this.options.requestRender();
+		} else if (this.searching && matchesKey(data, "backspace")) {
+			this.query = Array.from(this.query).slice(0, -1).join("");
+			this.selected = 0;
+			this.options.requestRender();
+		} else if (keybindings.matches(data, "tui.select.up")) {
 			this.move(-1);
 		} else if (keybindings.matches(data, "tui.select.down")) {
 			this.move(1);
 		} else if (keybindings.matches(data, "tui.select.confirm")) {
 			const index = this.selectedIndex;
 			if (index !== undefined) this.options.done({ type: "select", index });
-		} else if (keybindings.matches(data, "tui.select.cancel")) {
-			this.options.done({ type: "cancel" });
-		} else if (matchesKey(data, "n")) {
+		} else if (!this.searching && matchesKey(data, "n")) {
 			this.options.done({ type: "create" });
-		} else if (matchesKey(data, "d")) {
+		} else if (!this.searching && matchesKey(data, "d")) {
 			const index = this.selectedIndex;
 			const preset = index === undefined ? undefined : this.options.presets[index];
 			// Inherit is a built-in, always-first preset and cannot be removed.
 			if (index !== undefined && preset && !isInheritRewirePreset(preset)) {
 				this.options.done({ type: "delete", index });
 			}
+		} else if (this.searching && /^[^\x00-\x1f\x7f]+$/.test(data)) {
+			this.query += data;
+			this.selected = 0;
+			this.options.requestRender();
 		}
 	}
 
@@ -79,43 +107,40 @@ export class RewirePresetListView implements Component {
 		const theme = this.options.theme;
 		const border = truncateToWidth(theme.fg("dim", "─".repeat(w)), w);
 		const lines = [border, "", truncateToWidth(` ${theme.fg("accent", theme.bold(REWIRE_PRESET_LIST_TITLE))}`, w), ""];
-
-		if (this.options.presets.length === 0) {
-			lines.push(truncateToWidth(` ${theme.fg("muted", "No presets. Press n to create one.")}`, w));
+		if (this.searching) lines.push(truncateToWidth(` / ${this.query}`, w));
+		const indices = this.matchingIndices();
+		if (indices.length === 0) {
+			lines.push(truncateToWidth(` ${theme.fg("muted", this.searching ? "No matching presets." : "No presets. Press n to create one.")}`, w));
 		} else {
-			const { start, end } = this.visibleRange();
-			for (let index = start; index < end; index++) {
-				const preset = this.options.presets[index];
-				if (!preset) continue;
-				const selected = index === this.selected;
+			const { start, end } = this.visibleRange(indices.length);
+			for (let position = start; position < end; position++) {
+				const preset = this.options.presets[indices[position]!]!;
+				const selected = position === this.selected;
 				const baseLabel = formatRewirePreset(preset);
 				const label = isInheritRewirePreset(preset) ? `${baseLabel} (built-in)` : baseLabel;
 				const text = `${selected ? " → " : "   "}${label}`;
 				lines.push(truncateToWidth(selected ? theme.fg("accent", text) : text, w));
 			}
-			if (start > 0 || end < this.options.presets.length) {
-				lines.push(truncateToWidth(theme.fg("dim", `   (${this.selected + 1}/${this.options.presets.length})`), w));
+			if (start > 0 || end < indices.length) {
+				lines.push(truncateToWidth(theme.fg("dim", `   (${this.selected + 1}/${indices.length})`), w));
 			}
 		}
 
-		lines.push("", truncateToWidth(` ${theme.fg("dim", REWIRE_PRESET_LIST_HELP)}`, w), "", border);
+		lines.push("", truncateToWidth(` ${theme.fg("dim", this.searching ? "Type to filter • ↑↓ move • enter apply • backspace edit • esc clear" : REWIRE_PRESET_LIST_HELP)}`, w), "", border);
 		return lines;
 	}
 
 	private move(delta: number): void {
-		const count = this.options.presets.length;
+		const count = this.matchingIndices().length;
 		if (count === 0) return;
 		this.selected = (this.selected + delta + count) % count;
 		this.options.requestRender();
 	}
 
-	private visibleRange(): { start: number; end: number } {
+	private visibleRange(count: number): { start: number; end: number } {
 		const maxVisible = Math.max(1, this.options.maxVisible ?? DEFAULT_REWIRE_PRESET_LIST_VISIBLE);
-		if (this.options.presets.length <= maxVisible) return { start: 0, end: this.options.presets.length };
-		const start = Math.max(
-			0,
-			Math.min(this.selected - Math.floor(maxVisible / 2), this.options.presets.length - maxVisible),
-		);
+		if (count <= maxVisible) return { start: 0, end: count };
+		const start = Math.max(0, Math.min(this.selected - Math.floor(maxVisible / 2), count - maxVisible));
 		return { start, end: start + maxVisible };
 	}
 }
