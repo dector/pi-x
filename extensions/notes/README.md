@@ -46,7 +46,7 @@ scope is independent of editor text and does not make the note appear unsaved.
 | `up` / `down` or `j` / `k` | Select a note in the left list. |
 | `shift+j` / `shift+k` | Scroll the note content by 5 lines. |
 | `ctrl+c` or `y` | Copy the selected note (raw Markdown) to the clipboard. |
-| `shift+a` (`A`) | Put the selected note into the prompt if the prompt is empty. Otherwise, show a warning and leave the prompt unchanged. Applied notes show `[Applied]` before their title in this open list. |
+| `shift+a` (`A`) | Close the list and put the selected note into the prompt if the prompt is empty. Otherwise, show a warning and leave the prompt unchanged. Applied notes show `[Applied]` before their title when the list is reopened. |
 | `g` | Ask for `y`/`n` confirmation, then move a current-project note to Global or a Global note to the current project. Notes from other projects cannot be moved while viewing all projects. |
 | `d` | Ask for `y`/`n` confirmation, then move the selected note to recoverable storage. |
 | `u` | Undo the most recent deletion made in this open list. |

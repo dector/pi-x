@@ -28,6 +28,10 @@ const NOTES_LIST_EVENT = "px:notes:list";
 const TITLE_MAX = 80;
 const CLEAR_WINDOW_MS = 500;
 const SCROLL_STEP = 5;
+// Keep UI markers when the list is reopened in this extension runtime.
+const appliedPaths = new Set<string>();
+
+type AppliedNote = { path: string; content: string };
 
 type NoteMeta = {
 	path: string;
@@ -398,12 +402,11 @@ class NoteEditorDialog implements Component, Focusable {
 export class NotesListDialog implements Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
-	private readonly done: () => void;
+	private readonly done: (result: AppliedNote | null) => void;
 	private readonly cwd: string;
 	private readonly ctx: ExtensionContext;
 
 	private notes: NoteMeta[] = [];
-	private readonly appliedPaths = new Set<string>();
 	private applying = false;
 	private selected = 0;
 	private listOffset = 0;
@@ -426,7 +429,7 @@ export class NotesListDialog implements Component, Focusable {
 	private openingEditor = false;
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string, ctx: ExtensionContext) {
+	constructor(tui: TUI, theme: Theme, done: (result: AppliedNote | null) => void, cwd: string, ctx: ExtensionContext) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
@@ -435,7 +438,7 @@ export class NotesListDialog implements Component, Focusable {
 	}
 
 	private displayTitle(note: NoteMeta): string {
-		return `${this.appliedPaths.has(note.path) ? "[Applied] " : ""}${note.title || note.fileName}`;
+		return `${appliedPaths.has(note.path) ? "[Applied] " : ""}${note.title || note.fileName}`;
 	}
 
 	get focused(): boolean {
@@ -563,9 +566,8 @@ export class NotesListDialog implements Component, Focusable {
 			if (this.ctx.ui.getEditorText().length > 0) {
 				this.status = "Prompt input is not empty; note was not applied";
 			} else {
-				this.ctx.ui.setEditorText(content);
-				this.appliedPaths.add(note.path);
-				this.status = `Applied ${note.title || note.fileName} to prompt`;
+				// The main editor is not active until the custom dialog completes.
+				this.done({ path: note.path, content });
 			}
 		} catch (error) {
 			this.status = `Apply failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -700,7 +702,7 @@ export class NotesListDialog implements Component, Focusable {
 		}
 		if (this.mutating) return;
 		if (matchesKey(data, Key.escape)) {
-			this.done();
+			this.done(null);
 			return;
 		}
 		if (data === "n" || data === "N") {
@@ -906,16 +908,24 @@ async function openNoteEditor(ctx: ExtensionContext): Promise<void> {
 	await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new NoteEditorDialog(tui, theme, done, ctx.cwd));
 }
 
-async function openNotesList(ctx: ExtensionContext): Promise<void> {
+export async function openNotesList(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("notes: the list dialog requires an interactive session", "warning");
 		return;
 	}
-	await ctx.ui.custom<null>(async (tui, theme, _keybindings, done) => {
-		const dialog = new NotesListDialog(tui, theme, () => done(null), ctx.cwd, ctx);
+	const result = await ctx.ui.custom<AppliedNote | null>(async (tui, theme, _keybindings, done) => {
+		const dialog = new NotesListDialog(tui, theme, done, ctx.cwd, ctx);
 		await dialog.load();
 		return dialog;
 	});
+	if (!result) return;
+	// Check again after the dialog closes, before touching the main editor.
+	if (ctx.ui.getEditorText().length > 0) {
+		ctx.ui.notify("Prompt input is not empty; note was not applied", "warning");
+		return;
+	}
+	ctx.ui.setEditorText(result.content);
+	appliedPaths.add(result.path);
 }
 
 export default function notesExtension(pi: ExtensionAPI): void {
