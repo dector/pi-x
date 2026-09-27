@@ -85,8 +85,9 @@ function formatDisplayDate(mtimeMs: number): string {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-async function createNoteFile(content: string, cwd: string): Promise<string> {
-	const dir = await ensureNotesDir();
+export async function createNoteFile(content: string, cwd: string | undefined, directory?: string): Promise<string> {
+	const dir = directory ?? await ensureNotesDir();
+	await mkdir(dir, { recursive: true });
 	const base = `${formatFileTimestamp(new Date())}-${slugify(deriveTitle(content))}`;
 	for (let index = 1; ; index += 1) {
 		const suffix = index === 1 ? "" : `-${index}`;
@@ -98,7 +99,7 @@ async function createNoteFile(content: string, cwd: string): Promise<string> {
 			throw error;
 		}
 		try {
-			await writeProjectMetadata(dir, basename(candidate), cwd);
+			if (cwd !== undefined) await writeProjectMetadata(dir, basename(candidate), cwd);
 			return candidate;
 		} catch (error) {
 			try {
@@ -156,6 +157,7 @@ function isShiftLetter(data: string, letter: "j" | "k"): boolean {
 /**
  * `/px:notes` dialog: multi-line note editor.
  * - ctrl+s saves (creates, then updates the same note while open)
+ * - ctrl+g toggles Global/current-project scope
  * - ctrl+x twice within 500ms clears the editor
  * - esc closes, asking for confirmation when there are unsaved changes
  */
@@ -168,6 +170,12 @@ class NoteEditorDialog implements Component, Focusable {
 
 	private savedPath: string | null = null;
 	private savedText = "";
+	private scope: "current" | "global" = "current";
+	private savedScope: "current" | "global" = "current";
+	private scopeRevision = 0;
+	private scopeUpdates: Promise<void> = Promise.resolve();
+	private pendingScopeChanges = 0;
+	private saveQueued = false;
 	private clearArmedAt: number | null = null;
 	private confirmingDiscard = false;
 	private saving = false;
@@ -213,6 +221,15 @@ class NoteEditorDialog implements Component, Focusable {
 			return;
 		}
 
+		if (matchesKey(data, Key.ctrl("g"))) {
+			this.scope = this.scope === "current" ? "global" : "current";
+			const revision = ++this.scopeRevision;
+			this.status = `Scope set to ${this.scope === "global" ? "Global" : "current project"}`;
+			if (this.savedPath) void this.updateSavedScope(revision);
+			this.tui.requestRender();
+			return;
+		}
+
 		if (matchesKey(data, Key.ctrl("s"))) {
 			void this.save();
 			return;
@@ -233,6 +250,11 @@ class NoteEditorDialog implements Component, Focusable {
 		}
 
 		if (matchesKey(data, Key.escape)) {
+			if (this.saving || this.pendingScopeChanges > 0) {
+				this.status = this.saving ? "Saving… wait before closing" : "Changing scope… wait before closing";
+				this.tui.requestRender();
+				return;
+			}
 			if (this.isDirty()) {
 				this.confirmingDiscard = true;
 				this.status = this.savedPath ? "Discard changes? y/n" : "Discard unsaved note? y/n";
@@ -258,8 +280,42 @@ class NoteEditorDialog implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
+	private async updateSavedScope(revision: number): Promise<void> {
+		const path = this.savedPath;
+		if (!path) return;
+		this.pendingScopeChanges += 1;
+		this.scopeUpdates = this.scopeUpdates.then(async () => {
+			while (this.savedPath === path && this.savedScope !== this.scope) {
+				const target = this.scope;
+				try {
+					await moveNoteScope(notesDir(), basename(path), target === "current" ? this.cwd : undefined);
+					this.savedScope = target;
+				} catch (error) {
+					if (revision === this.scopeRevision && this.scope === target) {
+						this.scope = this.savedScope;
+						this.scopeRevision += 1;
+					}
+					this.status = `Scope change failed: ${error instanceof Error ? error.message : String(error)}`;
+					return;
+				}
+			}
+			if (revision === this.scopeRevision) this.status = `Scope: ${this.scope === "global" ? "Global" : "current project"}`;
+		}).catch((error) => {
+			this.status = `Scope change failed: ${error instanceof Error ? error.message : String(error)}`;
+		}).finally(() => this.tui.requestRender());
+		try {
+			await this.scopeUpdates;
+		} finally {
+			this.pendingScopeChanges -= 1;
+			this.tui.requestRender();
+		}
+	}
+
 	private async save(): Promise<void> {
-		if (this.saving) return;
+		if (this.saving) {
+			this.saveQueued = true;
+			return;
+		}
 		const text = this.editor.getText();
 		if (!text.trim()) {
 			this.status = "Nothing to save";
@@ -273,16 +329,25 @@ class NoteEditorDialog implements Component, Focusable {
 				await writeFile(this.savedPath, ensureTrailingNewline(text), "utf8");
 				this.savedText = text;
 				this.status = `Updated ${basename(this.savedPath)}`;
+				await this.updateSavedScope(this.scopeRevision);
 			} else {
-				this.savedPath = await createNoteFile(text, this.cwd);
+				const initialScope = this.scope;
+				const path = await createNoteFile(text, initialScope === "current" ? this.cwd : undefined);
+				this.savedPath = path;
+				this.savedScope = initialScope;
 				this.savedText = text;
-				this.status = `Saved ${basename(this.savedPath)}`;
+				this.status = `Saved ${basename(path)}`;
+				await this.updateSavedScope(this.scopeRevision);
 			}
 		} catch (error) {
 			this.status = `Save failed: ${error instanceof Error ? error.message : String(error)}`;
 		} finally {
 			this.saving = false;
 			this.tui.requestRender();
+			if (this.saveQueued) {
+				this.saveQueued = false;
+				void this.save();
+			}
 		}
 	}
 
@@ -291,17 +356,18 @@ class NoteEditorDialog implements Component, Focusable {
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
 		const title = this.theme.fg("accent", this.theme.bold(" Notes "));
 		const unsaved = this.isDirty() ? this.theme.fg("dim", " (unsaved)") : "";
+		const scope = this.theme.fg("muted", ` [${this.scope === "global" ? "Global" : "Current project"}]`);
 
 		const lines: string[] = [
 			border,
-			truncateToWidth(`${title}${unsaved}`, renderWidth),
+			truncateToWidth(`${title}${scope}${unsaved}`, renderWidth),
 		];
 
 		for (const line of this.editor.render(renderWidth)) {
 			lines.push(truncateToWidth(line, renderWidth));
 		}
 
-		lines.push(truncateToWidth(this.theme.fg("dim", this.status), renderWidth));
+		lines.push(truncateToWidth(this.theme.fg("dim", `ctrl+g scope • ${this.status}`), renderWidth));
 		lines.push(border);
 		return lines;
 	}
@@ -719,7 +785,7 @@ async function openNotesList(ctx: ExtensionContext): Promise<void> {
 
 export default function notesExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("px:notes", {
-		description: "Compose a note; ctrl+s saves, esc closes",
+		description: "Compose a note; ctrl+s saves, ctrl+g toggles scope, esc closes",
 		handler: async (_args, ctx) => {
 			await openNoteEditor(ctx);
 		},

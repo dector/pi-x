@@ -27,12 +27,14 @@ Both events carry `{ ctx }` in their payload, matching the convention used by
 | Key | Action |
 | --- | --- |
 | `ctrl+s` | Save. The first save creates a note; later saves in the same dialog update it. |
+| `ctrl+g` | Toggle between Current project and Global scope. The current scope is always shown in the editor. Before the first save, this chooses the new note's scope; afterward, it updates the saved note's metadata immediately without changing its Markdown. |
 | `ctrl+x` `ctrl+x` | Clear the editor. The second press must come within 500 ms of the first. |
 | `enter` | Insert a newline (this editor does not submit). |
 | `esc` | Close. If there are unsaved changes, asks for `y`/`n` confirmation first. |
 
 The dialog stays open after saving, so you can keep editing and save again to
-update the same file.
+update the same file. Global notes have no project metadata sidecar. Changing
+scope is independent of editor text and does not make the note appear unsaved.
 
 ## `/px:notes:list` dialog
 

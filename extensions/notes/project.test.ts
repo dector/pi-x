@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { createNoteFile } from "./index";
 import { metadataPath, moveNoteScope, noteMatchesProject, noteMatchesScope, readProjectMetadata, writeProjectMetadata } from "./project";
 
 test("metadata round-trips exact cwd without changing Markdown", async () => {
@@ -27,6 +28,18 @@ test("scope views separate current, global (including legacy), and all notes", (
 	expect(noteMatchesScope("/work/b", "/work/a", "global")).toBe(false);
 	for (const cwd of [undefined, "/work/a", "/work/b"]) expect(noteMatchesScope(cwd, "/work/a", "all")).toBe(true);
 	expect(noteMatchesProject(undefined, "/work/a", true)).toBe(true);
+});
+
+test("global note creation leaves out the project metadata sidecar", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-notes-global-"));
+	try {
+		const markdown = "# Global note\nBody";
+		const path = await createNoteFile(markdown, undefined, dir);
+		expect(await readFile(path, "utf8")).toBe(`${markdown}\n`);
+		expect(await readProjectMetadata(metadataPath(dir, basename(path)))).toBeUndefined();
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
 });
 
 test("scope moves only update sidecar metadata and preserve Markdown", async () => {
