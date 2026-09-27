@@ -1,6 +1,6 @@
 # renew
 
-`/renew` (also available as `/newt`) starts a new, unnamed session with no conversation history. It retains
+`/renew` (also available as `/newt` and `/newr`) starts a new, unnamed session with no conversation history. It retains
 the active model and thinking level, safe mode and outer access, session-approved
 exact bash commands, network policy, review level, and subagent rewire/delegation
 depth through owner-scoped handoff events. The owners apply state after the new
@@ -27,6 +27,7 @@ without changing the session. Detach and finish active agents first, then
 /renew              fresh session, keep managed processes
 /renew -proc        fresh session and stop managed processes
 /newt              alias for /renew (supports the same flags)
+/newr              alias for /renew (supports the same flags)
 ```
 
 ## Dependencies
