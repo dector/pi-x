@@ -24,6 +24,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Session rewiring**: `/px:agents:rewire` can silently replace every subagent profile's model and effort for the current session without editing agent files
 - **Active widget**: While children run, a non-interactive two-line list above the input editor shows each active subagent's state, elapsed time, turns, model/effort, usage, readable id, and task preview
 - **Opt-in Herdr backend**: Pass `herdr: {}` to run a dispatch in a reusable Herdr pane owned by the parent session, with failed-pane retention by default, explicit `retain: "always"`, and `Jump to Herdr pane` from `/px:agents` (see [Herdr backend](#herdr-backend-opt-in))
+- **Worker shortcuts**: `/work <task>` starts the `worker` agent asynchronously; `/works <task>` waits for its result. Both use the same dispatch policy and working directory as the `subagent` tool.
 - **Run log**: `/px:agent:log` shows each run's original task prompt and final output, including detached runs after resume
 
 ## Structure

@@ -28,7 +28,7 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Editor, Markdown, Spacer, Text, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import {
 	buildAgentLogPicker,
 	findPersistedAgentLogEntry,
@@ -88,6 +88,7 @@ import {
 	buildDispatchExceptionResult,
 	runPreparedDispatch,
 	SubagentAbortError,
+	type OnUpdateCallback,
 } from "./dispatch.ts";
 import { DispatchLifecycleManager } from "./lifecycle.ts";
 import {
@@ -2604,23 +2605,7 @@ export default function (pi: ExtensionAPI) {
 	);
 
 	if (!isSubagentChild || canDelegate(delegationDepth)) {
-		pi.registerTool({
-			name: "subagent",
-		label: "Subagent",
-		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
-			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn; a blocking dispatch can also be moved to the background mid-turn from /px:agents ("Detach"), after which its result arrives automatically as one completion. Detached children may modify the shared working tree, so re-read affected files before editing them.',
-			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
-		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
-		'Restricted agent names (per the user config) require a timed parent approval for each dispatch and are denied when no UI is available.',
-			`Available agents: ${agentListText}.`,
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
-		].join(" "),
-		parameters: SubagentParams,
-
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async function executeSubagent(params: Static<typeof SubagentParams>, signal: AbortSignal | undefined, onUpdate: OnUpdateCallback | undefined, ctx: ExtensionContext) {
 			// Control calls never prepare a dispatch: they act on runs that already
 			// exist, so they stay available even while the session is shutting down
 			// (which is exactly when a parent may want to stop a runaway child).
@@ -2783,6 +2768,58 @@ export default function (pi: ExtensionAPI) {
 			} finally {
 				inFlightDispatches.delete(execution);
 			}
+		}
+
+		const runWorkerCommand = async (args: string, ctx: ExtensionContext, execution: "async" | "blocking") => {
+			const task = args.trim();
+			if (!task) {
+				ctx.ui.notify(`Usage: /${execution === "async" ? "work" : "works"} <task>`, "warning");
+				return;
+			}
+			try {
+				const result = await executeSubagent({ agent: "worker", task, execution }, undefined, undefined, ctx);
+				const content = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+				if (execution === "async" && result.details?.dispatchStatus === "started") {
+					ctx.ui.notify(content, "info");
+					return;
+				}
+				// Blocking commands have no tool result in the transcript; deliver their
+				// terminal result through the same completion renderer as detached work.
+				pi.sendMessage(
+					{ customType: SUBAGENT_COMPLETION_CUSTOM_TYPE, content, display: true, details: result.details },
+					{ deliverAs: "followUp", triggerTurn: true },
+				);
+			} catch (error) {
+				ctx.ui.notify(`Worker dispatch failed: ${String(error)}`, "error");
+			}
+		};
+		pi.registerCommand("work", {
+			description: "Run a worker in the background: /work <task>",
+			handler: (args, ctx) => runWorkerCommand(args, ctx, "async"),
+		});
+		pi.registerCommand("works", {
+			description: "Run a worker and wait for its result: /works <task>",
+			handler: (args, ctx) => runWorkerCommand(args, ctx, "blocking"),
+		});
+
+		pi.registerTool({
+			name: "subagent",
+		label: "Subagent",
+		description: [
+			"Delegate tasks to specialized subagents with isolated context.",
+			"Modes: single (agent + task), parallel (tasks array), chain (sequential; {previous} in a step task is replaced with the previous step's final output).",
+			'Execution: omitted or "async" (default) runs detached in the background and returns a dispatch id immediately; the aggregate result is injected automatically when it settles, so do not poll for it. Use execution: "blocking" to stream progress and wait for the final result in this turn; a blocking dispatch can also be moved to the background mid-turn from /px:agents ("Detach"), after which its result arrives automatically as one completion. Detached children may modify the shared working tree, so re-read affected files before editing them.',
+			'Control a running subagent without starting new work: set action to "stop" (abort; repeat to force termination) or "steer" (deliver guidance) and address it with dispatchId (all active runs of one dispatch) or runId (one child). "steer" requires message, and a control call rejects dispatch fields. A stopped dispatch still emits its normal aggregate completion, marked aborted.',
+		'Optional herdr object runs the dispatch in a pane of a parent-owned Herdr tab behind an authenticated bridge: herdr: {} uses retain "failed"; herdr: { retain: "always" } keeps successful panes too. Omit to use the default direct process. Herdr is never used as an automatic fallback, and it is rejected on control calls.',
+		'Restricted agent names (per the user config) require a timed parent approval for each dispatch and are denied when no UI is available.',
+			`Available agents: ${agentListText}.`,
+			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
+			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+		].join(" "),
+		parameters: SubagentParams,
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			return executeSubagent(params, signal, onUpdate, ctx);
 		},
 
 		renderCall(args, theme, _context) {
