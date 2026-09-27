@@ -161,6 +161,7 @@ extensions=(
   "notes"
   "pi-nvim"
   "focus-mode"
+  "vim-mode"
   "herdr-agent-state"
 )
 
