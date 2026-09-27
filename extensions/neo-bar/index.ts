@@ -103,6 +103,7 @@ const CONTEXT_WATCHER_IDS = {
 } as const;
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
+const PROMPT_STASH_ID = "prompt-stash";
 // Git dirty totals are collected internally (git-stats.ts) and rendered on the
 // editor frame's top-right corner in `new` mode. In `legacy` mode they keep the
 // first-line right section, ordered like a producer at this priority.
@@ -297,6 +298,8 @@ interface FrameStatusEditorOptions {
 	bottomLeftNetwork?: FrameStatusProvider;
 	/** Effective subagent depth policy, rendered immediately after the network token. */
 	bottomLeftSubagent?: FrameStatusProvider;
+	/** Prompt-stash count, rendered immediately after the subagent indicator. */
+	bottomLeftStash?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
 	/** Recommended review level, rendered after the top-left model effort. */
@@ -442,6 +445,7 @@ export class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
 	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
+	private readonly bottomLeftStashProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topLeftReviewProvider?: FrameStatusProvider;
 	private readonly topRightGitStats?: () => GitStats | undefined;
@@ -480,6 +484,7 @@ export class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftStatusProvider = options.bottomLeftStatus;
 		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
 		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
+		this.bottomLeftStashProvider = options.bottomLeftStash;
 		this.topLeftProvider = options.topLeft;
 		this.topLeftReviewProvider = options.topLeftReview;
 		this.topRightGitStats = options.topRightGitStats;
@@ -835,12 +840,13 @@ export class FrameStatusEditor extends CustomEditor {
 		const statusLabel = this.bottomLeftStatusProvider?.();
 		const networkLabel = this.bottomLeftNetworkProvider?.();
 		const subagentLabel = this.bottomLeftSubagentProvider?.();
+		const stashLabel = this.bottomLeftStashProvider?.();
 		// Full border context is usage + cost; the usage meter always stays on the border.
 		const combinedContext =
 			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
 				? `${usageLabel}${contextParts?.separator ?? " · "}${costLabel}`
 				: usageLabel || costLabel;
-		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
+		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel, stashLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		// The unsent-message size uses the paste-expanded text, which is what pi
 		// actually sends (submit expands paste markers, then trims).
@@ -864,6 +870,7 @@ export class FrameStatusEditor extends CustomEditor {
 			statusLabel,
 			networkLabel,
 			subagentLabel,
+			stashLabel,
 		);
 		if (this.relocatedLabels) {
 			this.relocatedLabels.contextLabel = costRelocated ? costLabel : undefined;
@@ -899,12 +906,14 @@ export class FrameStatusEditor extends CustomEditor {
 		statusLabel?: string,
 		networkLabel?: string,
 		subagentLabel?: string,
+		stashLabel?: string,
 	): string {
 		return composeBorderBottomLeft({
 			contextLabel,
 			statusLabel,
 			networkLabel,
 			subagentLabel,
+			stashLabel,
 			borderColor: (text) => this.borderColor(text),
 			accentColor: this.subduedColor,
 		});
@@ -2193,6 +2202,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			},
 			bottomLeftSubagent: () =>
 				subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, activeContext().ui.theme),
+			bottomLeftStash: () => contentById.get(PROMPT_STASH_ID),
 			topLeft: () =>
 				buildBorderModelLabel(
 					activeContext(),

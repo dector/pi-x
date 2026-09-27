@@ -175,8 +175,8 @@ labels are rendered in the frame corners:
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border; in `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
-- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage/cost.
-  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
+- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, optional prompt-stash count, and context usage/cost.
+  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> · 󰅍 <stashes> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The stash indicator appears only when stashes exist. The
     network-to-context bridge is tapered on both label sides, so the line reads
     as one heavy stroke that thins out where it meets either label. The safe-mode
     and network parts are omitted when their producer/core is absent.

@@ -291,6 +291,16 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		expect(out).toBe("«━╾ »‹󰚩 ✓›« »");
 	});
 
+	test("renders prompt stashes after the subagent indicator", () => {
+		const out = composeBorderBottomLeft({
+			subagentLabel: "󰚩 ✓",
+			stashLabel: "\u001b[90m󰅍 2\u001b[0m",
+			borderColor: border,
+			accentColor: accent,
+		});
+		expect(out).toBe("«━╾ »‹󰚩 ✓›« · »\u001b[90m󰅍 2\u001b[0m« »");
+	});
+
 	test("keeps a producer-colored subagent depth ahead of the accent", () => {
 		const out = composeBorderBottomLeft({
 			subagentLabel: "\u001b[38;5;220m󰚩 2\u001b[0m",

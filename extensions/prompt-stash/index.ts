@@ -7,6 +7,9 @@ const STASH_EVENT = "px:prompt-stash:stash";
 const POP_EVENT = "px:prompt-stash:pop";
 const LIST_EVENT = "px:prompt-stash:list";
 const CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
+const STATUS_BAR_SET_EVENT = "px:status-bar:set";
+const STATUS_BAR_CLEAR_EVENT = "px:status-bar:clear";
+const STATUS_BAR_ID = "prompt-stash";
 
 type PromptStashEvent =
 	| { action: "stash"; stash: PromptStashItem }
@@ -108,6 +111,18 @@ function newestFirst(stashes: PromptStashItem[]): PromptStashItem[] {
 export default function promptStashExtension(pi: ExtensionAPI): void {
 	let stashes: PromptStashItem[] = [];
 
+	const publishStatus = (ctx: ExtensionContext): void => {
+		if (stashes.length === 0) {
+			pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
+			return;
+		}
+		const content = ctx.ui.theme.fg("muted", `󰅍 ${stashes.length}`);
+		pi.events.emit(STATUS_BAR_SET_EVENT, {
+			id: STATUS_BAR_ID,
+			content,
+		});
+	};
+
 	const rebuildStashes = (ctx: ExtensionContext): void => {
 		const rebuilt: PromptStashItem[] = [];
 		const branch = ctx.sessionManager.getBranch() as CustomEntry[];
@@ -127,6 +142,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		}
 
 		stashes = rebuilt;
+		publishStatus(ctx);
 	};
 
 	const stashCurrentEditor = async (ctx: ExtensionContext): Promise<PromptStashItem | undefined> => {
@@ -139,15 +155,17 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		const stash = createStash(text);
 		stashes.push(stash);
 		appendEvent(pi, { action: "stash", stash });
+		publishStatus(ctx);
 		ctx.ui.setEditorText("");
 		notify(ctx, `prompt-stash: stashed ${formatCount(stash.charCount)} (${formatPreview(stash.text)})`, "info");
 		return stash;
 	};
 
-	const removeStash = (stash: PromptStashItem): void => {
+	const removeStash = (ctx: ExtensionContext, stash: PromptStashItem): void => {
 		const index = stashes.findIndex((item) => item.id === stash.id);
 		if (index !== -1) stashes.splice(index, 1);
 		appendEvent(pi, { action: "pop", id: stash.id });
+		publishStatus(ctx);
 	};
 
 	const restoreStash = async (ctx: ExtensionContext, stash: PromptStashItem): Promise<void> => {
@@ -169,11 +187,12 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 				const currentStash = createStash(current);
 				stashes.push(currentStash);
 				appendEvent(pi, { action: "stash", stash: currentStash });
+				publishStatus(ctx);
 			}
 		}
 
 		ctx.ui.setEditorText(stash.text);
-		removeStash(stash);
+		removeStash(ctx, stash);
 		notify(ctx, `prompt-stash: restored ${formatCount(stash.charCount)} (${formatPreview(stash.text)})`, "info");
 	};
 
@@ -192,6 +211,10 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		rebuildStashes(ctx);
+	});
+
+	pi.on("session_shutdown", () => {
+		pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
 	});
 
 	pi.registerCommand("px:prompt-stash.stash", {
@@ -251,6 +274,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		const clearedIds = stashes.map((stash) => stash.id);
 		appendEvent(pi, { action: "clear-all", clearedIds });
 		stashes = [];
+		publishStatus(ctx);
 		notify(ctx, `prompt-stash: cleared ${count} stash${count === 1 ? "" : "es"}`, "info");
 	};
 

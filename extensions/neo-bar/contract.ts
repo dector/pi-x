@@ -117,7 +117,7 @@ export const NEO_BAR_JOIN_SEPARATOR = " · " as const;
 // M1 default layout (frozen contract)
 // Note: context-watcher-* IDs are now produced internally by neo-bar.
 export const DEFAULT_NEO_BAR_LAYOUT: NeoBarLayout = {
-	left: ["safe-mode", "switch-thinking"],
+	left: ["safe-mode", "switch-thinking", "prompt-stash"],
 	center: [],
 	right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"],
 };
