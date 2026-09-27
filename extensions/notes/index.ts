@@ -1,6 +1,7 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { restoreNote, softDeleteNote, type DeletedNote } from "./trash";
+import { metadataPath, noteMatchesProject, readProjectMetadata, writeProjectMetadata } from "./project";
 import {
 	copyToClipboard,
 	getAgentDir,
@@ -33,6 +34,8 @@ type NoteMeta = {
 	fileName: string;
 	title: string;
 	mtimeMs: number;
+	cwd?: string;
+	metadataPath: string;
 };
 
 function notesDir(): string {
@@ -82,17 +85,28 @@ function formatDisplayDate(mtimeMs: number): string {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-async function createNoteFile(content: string): Promise<string> {
+async function createNoteFile(content: string, cwd: string): Promise<string> {
 	const dir = await ensureNotesDir();
 	const base = `${formatFileTimestamp(new Date())}-${slugify(deriveTitle(content))}`;
 	for (let index = 1; ; index += 1) {
 		const suffix = index === 1 ? "" : `-${index}`;
 		const candidate = join(dir, `${base}${suffix}.md`);
 		try {
-			await stat(candidate);
-		} catch {
-			await writeFile(candidate, ensureTrailingNewline(content), "utf8");
+			await writeFile(candidate, ensureTrailingNewline(content), { encoding: "utf8", flag: "wx" });
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") continue;
+			throw error;
+		}
+		try {
+			await writeProjectMetadata(dir, basename(candidate), cwd);
 			return candidate;
+		} catch (error) {
+			try {
+				await unlink(candidate);
+			} catch (cleanupError) {
+				throw new AggregateError([error, cleanupError], "Could not save project metadata or remove incomplete note");
+			}
+			throw error;
 		}
 	}
 }
@@ -106,9 +120,13 @@ async function loadNotes(): Promise<NoteMeta[]> {
 		if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
 		const path = join(dir, entry.name);
 		try {
-			const [info, content] = await Promise.all([stat(path), readFile(path, "utf8")]);
+			const [info, content, metadata] = await Promise.all([
+				stat(path),
+				readFile(path, "utf8"),
+				readProjectMetadata(metadataPath(dir, entry.name)),
+			]);
 			const title = deriveTitle(content) || entry.name.replace(/\.md$/, "");
-			notes.push({ path, fileName: entry.name, title, mtimeMs: info.mtimeMs });
+			notes.push({ path, fileName: entry.name, title, mtimeMs: info.mtimeMs, cwd: metadata?.cwd, metadataPath: metadataPath(dir, entry.name) });
 		} catch {
 			// Skip unreadable notes.
 		}
@@ -146,6 +164,7 @@ class NoteEditorDialog implements Component, Focusable {
 	private readonly theme: Theme;
 	private readonly editor: Editor;
 	private readonly done: (result: null) => void;
+	private readonly cwd: string;
 
 	private savedPath: string | null = null;
 	private savedText = "";
@@ -155,10 +174,11 @@ class NoteEditorDialog implements Component, Focusable {
 	private status = "ctrl+s save • ctrl+x ctrl+x clear • esc close";
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: (result: null) => void) {
+	constructor(tui: TUI, theme: Theme, done: (result: null) => void, cwd: string) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
+		this.cwd = cwd;
 		this.editor = new Editor(tui, createEditorTheme(theme));
 	}
 
@@ -254,7 +274,7 @@ class NoteEditorDialog implements Component, Focusable {
 				this.savedText = text;
 				this.status = `Updated ${basename(this.savedPath)}`;
 			} else {
-				this.savedPath = await createNoteFile(text);
+				this.savedPath = await createNoteFile(text, this.cwd);
 				this.savedText = text;
 				this.status = `Saved ${basename(this.savedPath)}`;
 			}
@@ -298,6 +318,7 @@ class NotesListDialog implements Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly done: () => void;
+	private readonly cwd: string;
 
 	private notes: NoteMeta[] = [];
 	private selected = 0;
@@ -311,12 +332,14 @@ class NotesListDialog implements Component, Focusable {
 	private pendingDelete: NoteMeta | null = null;
 	private deletedNotes: DeletedNote[] = [];
 	private mutating = false;
+	private allProjects = false;
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: () => void) {
+	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
+		this.cwd = cwd;
 	}
 
 	get focused(): boolean {
@@ -331,7 +354,7 @@ class NotesListDialog implements Component, Focusable {
 
 	async load(): Promise<void> {
 		try {
-			this.notes = await loadNotes();
+			this.notes = (await loadNotes()).filter((note) => noteMatchesProject(note.cwd, this.cwd, this.allProjects));
 			this.selected = 0;
 			this.listOffset = 0;
 			await this.loadSelectedContent();
@@ -427,10 +450,14 @@ class NotesListDialog implements Component, Focusable {
 		try {
 			await restoreNote(deleted);
 			this.deletedNotes.pop();
-			this.notes.push(deleted.note);
-			this.notes.sort((a, b) => b.mtimeMs - a.mtimeMs);
-			this.selected = this.notes.findIndex((note) => note.path === deleted.note.path);
-			this.status = `Restored ${deleted.note.title || deleted.note.fileName}`;
+			if (noteMatchesProject(deleted.note.cwd, this.cwd, this.allProjects)) {
+				this.notes.push(deleted.note);
+				this.notes.sort((a, b) => b.mtimeMs - a.mtimeMs);
+				this.selected = this.notes.findIndex((note) => note.path === deleted.note.path);
+				this.status = `Restored ${deleted.note.title || deleted.note.fileName}`;
+			} else {
+				this.status = "Restored note outside this project view";
+			}
 			await this.loadSelectedContent();
 		} catch (error) {
 			this.status = `Undo failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -453,6 +480,12 @@ class NotesListDialog implements Component, Focusable {
 		if (this.mutating) return;
 		if (matchesKey(data, Key.escape)) {
 			this.done();
+			return;
+		}
+		if (matchesKey(data, Key.tab)) {
+			this.allProjects = !this.allProjects;
+			this.status = this.allProjects ? "Showing all projects" : "Showing current project";
+			void this.load();
 			return;
 		}
 		if (data === "u" || data === "U") {
@@ -520,7 +553,7 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	private renderHeader(width: number): string {
-		const count = `Notes (${this.notes.length})`;
+		const count = `Notes • ${this.allProjects ? "All projects" : "Current project"} (${this.notes.length})`;
 		const hint = "/px:notes:list";
 		const gap = Math.max(1, width - visibleWidth(count) - visibleWidth(hint) - 1);
 		return truncateToWidth(this.theme.fg("accent", this.theme.bold(count)) + " ".repeat(gap) + this.theme.fg("dim", hint), width);
@@ -536,7 +569,7 @@ class NotesListDialog implements Component, Focusable {
 				this.renderHeader(renderWidth),
 				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Use /px:notes to create one."), renderWidth),
 				border,
-				truncateToWidth(this.theme.fg("dim", " u undo • esc close"), renderWidth),
+				truncateToWidth(this.theme.fg("dim", " tab scope • u undo • esc close"), renderWidth),
 			];
 			if (this.status) lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
 			return lines;
@@ -575,7 +608,7 @@ class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " ↑↓/j k select • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = " tab scope • ↑↓/j k select • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
 			lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
@@ -590,7 +623,7 @@ async function openNoteEditor(ctx: ExtensionContext): Promise<void> {
 		ctx.ui.notify("notes: the editor dialog requires an interactive session", "warning");
 		return;
 	}
-	await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new NoteEditorDialog(tui, theme, done));
+	await ctx.ui.custom<null>((tui, theme, _keybindings, done) => new NoteEditorDialog(tui, theme, done, ctx.cwd));
 }
 
 async function openNotesList(ctx: ExtensionContext): Promise<void> {
@@ -599,7 +632,7 @@ async function openNotesList(ctx: ExtensionContext): Promise<void> {
 		return;
 	}
 	await ctx.ui.custom<null>(async (tui, theme, _keybindings, done) => {
-		const dialog = new NotesListDialog(tui, theme, () => done(null));
+		const dialog = new NotesListDialog(tui, theme, () => done(null), ctx.cwd);
 		await dialog.load();
 		return dialog;
 	});
