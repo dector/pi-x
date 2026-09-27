@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { restoreNote, softDeleteNote, type DeletedNote } from "./trash";
-import { metadataPath, noteMatchesProject, readProjectMetadata, writeProjectMetadata } from "./project";
+import { metadataPath, moveNoteScope, noteMatchesScope, readProjectMetadata, writeProjectMetadata } from "./project";
 import {
 	copyToClipboard,
 	getAgentDir,
@@ -330,9 +330,12 @@ class NotesListDialog implements Component, Focusable {
 	private status = "";
 	private loadToken = 0;
 	private pendingDelete: NoteMeta | null = null;
+	private pendingMove: NoteMeta | null = null;
 	private deletedNotes: DeletedNote[] = [];
 	private mutating = false;
-	private allProjects = false;
+	private scope: "current" | "global" | "all" = "current";
+	private listLoadToken = 0;
+	private scopeLoading = false;
 	private _focused = false;
 
 	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string) {
@@ -353,17 +356,30 @@ class NotesListDialog implements Component, Focusable {
 	invalidate(): void {}
 
 	async load(): Promise<void> {
+		const token = ++this.listLoadToken;
+		const selectedPath = this.notes[this.selected]?.path;
+		this.scopeLoading = true;
+		this.tui.requestRender();
 		try {
-			this.notes = (await loadNotes()).filter((note) => noteMatchesProject(note.cwd, this.cwd, this.allProjects));
-			this.selected = 0;
-			this.listOffset = 0;
+			const notes = (await loadNotes()).filter((note) => noteMatchesScope(note.cwd, this.cwd, this.scope));
+			if (token !== this.listLoadToken) return;
+			this.notes = notes;
+			const retainedIndex = selectedPath ? notes.findIndex((note) => note.path === selectedPath) : -1;
+			this.selected = retainedIndex >= 0 ? retainedIndex : 0;
+			this.listOffset = Math.min(this.listOffset, this.selected);
 			await this.loadSelectedContent();
 		} catch (error) {
+			if (token !== this.listLoadToken) return;
 			this.notes = [];
+			this.selected = 0;
 			this.rightLines = ["Failed to load notes."];
 			this.status = `Load failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			if (token === this.listLoadToken) {
+				this.scopeLoading = false;
+				this.tui.requestRender();
+			}
 		}
-		this.tui.requestRender();
 	}
 
 	private async loadSelectedContent(): Promise<void> {
@@ -426,12 +442,46 @@ class NotesListDialog implements Component, Focusable {
 			const index = this.notes.findIndex((item) => item.path === note.path);
 			if (index >= 0) {
 				this.notes.splice(index, 1);
-				this.selected = Math.min(index, this.notes.length - 1);
+				this.selected = this.notes.length ? Math.min(index, this.notes.length - 1) : 0;
+				this.listOffset = Math.min(this.listOffset, this.selected);
 			}
 			this.status = `Deleted ${note.title || note.fileName} • press u to undo`;
 			await this.loadSelectedContent();
 		} catch (error) {
 			this.status = `Delete failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			this.mutating = false;
+			this.tui.requestRender();
+		}
+	}
+
+	private async moveSelected(): Promise<void> {
+		const note = this.pendingMove;
+		this.pendingMove = null;
+		if (!note || this.mutating) return;
+		if (note.cwd !== undefined && note.cwd !== this.cwd) {
+			this.status = "Cannot move another project's note";
+			this.tui.requestRender();
+			return;
+		}
+		const targetCwd = note.cwd === undefined ? this.cwd : undefined;
+		this.mutating = true;
+		try {
+			await moveNoteScope(notesDir(), note.fileName, targetCwd);
+			note.cwd = targetCwd;
+			if (!noteMatchesScope(note.cwd, this.cwd, this.scope)) {
+				const index = this.notes.findIndex((item) => item.path === note.path);
+				if (index >= 0) {
+					this.notes.splice(index, 1);
+					this.selected = this.notes.length ? Math.min(index, this.notes.length - 1) : 0;
+					this.listOffset = Math.min(this.listOffset, this.selected);
+				}
+			}
+			this.status = `${note.title || note.fileName} moved to ${targetCwd === undefined ? "Global" : "current project"}`;
+			await this.loadSelectedContent();
+		} catch (error) {
+			this.status = `Move failed: ${error instanceof Error ? error.message : String(error)}`;
+			await this.loadSelectedContent();
 		} finally {
 			this.mutating = false;
 			this.tui.requestRender();
@@ -450,7 +500,7 @@ class NotesListDialog implements Component, Focusable {
 		try {
 			await restoreNote(deleted);
 			this.deletedNotes.pop();
-			if (noteMatchesProject(deleted.note.cwd, this.cwd, this.allProjects)) {
+			if (noteMatchesScope(deleted.note.cwd, this.cwd, this.scope)) {
 				this.notes.push(deleted.note);
 				this.notes.sort((a, b) => b.mtimeMs - a.mtimeMs);
 				this.selected = this.notes.findIndex((note) => note.path === deleted.note.path);
@@ -468,6 +518,15 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
+		if (this.pendingMove) {
+			if (data === "y" || data === "Y") void this.moveSelected();
+			else if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
+				this.pendingMove = null;
+				this.status = "Move cancelled";
+				this.tui.requestRender();
+			}
+			return;
+		}
 		if (this.pendingDelete) {
 			if (data === "y" || data === "Y") void this.deleteSelected();
 			else if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
@@ -483,13 +542,28 @@ class NotesListDialog implements Component, Focusable {
 			return;
 		}
 		if (matchesKey(data, Key.tab)) {
-			this.allProjects = !this.allProjects;
-			this.status = this.allProjects ? "Showing all projects" : "Showing current project";
+			this.scope = this.scope === "current" ? "global" : this.scope === "global" ? "all" : "current";
+			this.status = `Showing ${this.scope === "all" ? "all projects" : this.scope === "global" ? "Global" : "current project"}`;
 			void this.load();
 			return;
 		}
+		// The previous scope's notes remain cached until the new load completes.
+		if (this.scopeLoading) return;
 		if (data === "u" || data === "U") {
 			void this.undoDelete();
+			return;
+		}
+		if (data === "g" || data === "G") {
+			const note = this.notes[this.selected];
+			if (note) {
+				if (note.cwd !== undefined && note.cwd !== this.cwd) {
+					this.status = "Cannot move another project's note";
+				} else {
+					this.pendingMove = note;
+					this.status = `Move ${note.title || note.fileName} to ${note.cwd === undefined ? "current project" : "Global"}? y/n`;
+				}
+				this.tui.requestRender();
+			}
 			return;
 		}
 		if (data === "d" || data === "D") {
@@ -553,7 +627,8 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	private renderHeader(width: number): string {
-		const count = `Notes • ${this.allProjects ? "All projects" : "Current project"} (${this.notes.length})`;
+		const label = this.scope === "all" ? "All projects" : this.scope === "global" ? "Global" : "Current project";
+		const count = `Notes • ${label} (${this.notes.length})`;
 		const hint = "/px:notes:list";
 		const gap = Math.max(1, width - visibleWidth(count) - visibleWidth(hint) - 1);
 		return truncateToWidth(this.theme.fg("accent", this.theme.bold(count)) + " ".repeat(gap) + this.theme.fg("dim", hint), width);
@@ -563,13 +638,17 @@ class NotesListDialog implements Component, Focusable {
 		const renderWidth = Math.max(1, width);
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
 
+		if (this.scopeLoading) {
+			return [border, this.renderHeader(renderWidth), truncateToWidth(this.theme.fg("muted", " Loading notes…"), renderWidth), border];
+		}
+
 		if (this.notes.length === 0) {
 			const lines = [
 				border,
 				this.renderHeader(renderWidth),
 				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Use /px:notes to create one."), renderWidth),
 				border,
-				truncateToWidth(this.theme.fg("dim", " tab scope • u undo • esc close"), renderWidth),
+				truncateToWidth(this.theme.fg("dim", " tab scope • g move • u undo • esc close"), renderWidth),
 			];
 			if (this.status) lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
 			return lines;
@@ -608,7 +687,7 @@ class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " tab scope • ↑↓/j k select • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = " tab scope • ↑↓/j k select • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
 			lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));

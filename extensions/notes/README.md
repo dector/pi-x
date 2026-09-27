@@ -38,20 +38,23 @@ update the same file.
 
 | Key | Action |
 | --- | --- |
-| `tab` | Switch between current-project and all-projects views. |
+| `tab` | Cycle current project → Global → all projects → current project. |
 | `up` / `down` or `j` / `k` | Select a note in the left list. |
 | `shift+j` / `shift+k` | Scroll the note content by 5 lines. |
 | `ctrl+c` or `y` | Copy the selected note (raw Markdown) to the clipboard. |
+| `g` | Ask for `y`/`n` confirmation, then move a current-project note to Global or a Global note to the current project. Notes from other projects cannot be moved while viewing all projects. |
 | `d` | Ask for `y`/`n` confirmation, then move the selected note to recoverable storage. |
 | `u` | Undo the most recent deletion made in this open list. |
 | `esc` | Close. |
 
 The list shows notes newest-first by modification time. It opens in the current
 project view, matching the exact `ctx.cwd` folder recorded when each note is
-first saved. Press `tab` to switch between current-project and all-projects
-views. The all-projects view includes notes from every project and legacy notes
-without recorded project metadata; legacy notes do not appear in the current
-project view. Both views exclude soft-deleted notes.
+first saved. Press `tab` to cycle through current-project, Global, and
+all-projects views. Global contains notes with no cwd metadata, including legacy
+notes; moving a note between Global and the current project changes only its
+hidden metadata sidecar, never its Markdown. In all-projects view, `g` only
+moves Global notes or notes belonging to the current project. All views exclude
+soft-deleted notes.
 
 Project metadata is stored in hidden sidecar files under
 `~/.pi/agent/notes/.metadata/`; note files remain plain Markdown with no
