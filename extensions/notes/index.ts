@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { restoreNote, softDeleteNote, type DeletedNote } from "./trash";
 import {
 	copyToClipboard,
 	getAgentDir,
@@ -307,6 +308,9 @@ class NotesListDialog implements Component, Focusable {
 	private contentRows = 6;
 	private status = "";
 	private loadToken = 0;
+	private pendingDelete: NoteMeta | null = null;
+	private deletedNotes: DeletedNote[] = [];
+	private mutating = false;
 	private _focused = false;
 
 	constructor(tui: TUI, theme: Theme, done: () => void) {
@@ -326,10 +330,16 @@ class NotesListDialog implements Component, Focusable {
 	invalidate(): void {}
 
 	async load(): Promise<void> {
-		this.notes = await loadNotes();
-		this.selected = 0;
-		this.listOffset = 0;
-		await this.loadSelectedContent();
+		try {
+			this.notes = await loadNotes();
+			this.selected = 0;
+			this.listOffset = 0;
+			await this.loadSelectedContent();
+		} catch (error) {
+			this.notes = [];
+			this.rightLines = ["Failed to load notes."];
+			this.status = `Load failed: ${error instanceof Error ? error.message : String(error)}`;
+		}
 		this.tui.requestRender();
 	}
 
@@ -369,19 +379,93 @@ class NotesListDialog implements Component, Focusable {
 	private async copySelected(): Promise<void> {
 		const note = this.notes[this.selected];
 		if (!note) return;
+		const token = this.loadToken;
 		try {
 			const content = await readFile(note.path, "utf8");
 			await copyToClipboard(content);
+			if (token !== this.loadToken || this.notes[this.selected]?.path !== note.path) return;
 			this.status = `Copied ${note.title || note.fileName}`;
 		} catch (error) {
+			if (token !== this.loadToken || this.notes[this.selected]?.path !== note.path) return;
 			this.status = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
 		}
 		this.tui.requestRender();
 	}
 
+	private async deleteSelected(): Promise<void> {
+		const note = this.pendingDelete;
+		this.pendingDelete = null;
+		if (!note || this.mutating) return;
+		this.mutating = true;
+		try {
+			const deleted = await softDeleteNote(notesDir(), note);
+			this.deletedNotes.push(deleted);
+			const index = this.notes.findIndex((item) => item.path === note.path);
+			if (index >= 0) {
+				this.notes.splice(index, 1);
+				this.selected = Math.min(index, this.notes.length - 1);
+			}
+			this.status = `Deleted ${note.title || note.fileName} • press u to undo`;
+			await this.loadSelectedContent();
+		} catch (error) {
+			this.status = `Delete failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			this.mutating = false;
+			this.tui.requestRender();
+		}
+	}
+
+	private async undoDelete(): Promise<void> {
+		if (this.mutating) return;
+		const deleted = this.deletedNotes[this.deletedNotes.length - 1];
+		if (!deleted) {
+			this.status = "Nothing to undo";
+			this.tui.requestRender();
+			return;
+		}
+		this.mutating = true;
+		try {
+			await restoreNote(deleted);
+			this.deletedNotes.pop();
+			this.notes.push(deleted.note);
+			this.notes.sort((a, b) => b.mtimeMs - a.mtimeMs);
+			this.selected = this.notes.findIndex((note) => note.path === deleted.note.path);
+			this.status = `Restored ${deleted.note.title || deleted.note.fileName}`;
+			await this.loadSelectedContent();
+		} catch (error) {
+			this.status = `Undo failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			this.mutating = false;
+			this.tui.requestRender();
+		}
+	}
+
 	handleInput(data: string): void {
+		if (this.pendingDelete) {
+			if (data === "y" || data === "Y") void this.deleteSelected();
+			else if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
+				this.pendingDelete = null;
+				this.status = "Deletion cancelled";
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.mutating) return;
 		if (matchesKey(data, Key.escape)) {
 			this.done();
+			return;
+		}
+		if (data === "u" || data === "U") {
+			void this.undoDelete();
+			return;
+		}
+		if (data === "d" || data === "D") {
+			const note = this.notes[this.selected];
+			if (note) {
+				this.pendingDelete = note;
+				this.status = `Delete ${note.title || note.fileName}? y/n`;
+				this.tui.requestRender();
+			}
 			return;
 		}
 		if (this.notes.length === 0) return;
@@ -447,13 +531,15 @@ class NotesListDialog implements Component, Focusable {
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
 
 		if (this.notes.length === 0) {
-			return [
+			const lines = [
 				border,
 				this.renderHeader(renderWidth),
-				truncateToWidth(this.theme.fg("muted", " No notes yet. Use /px:notes to create one."), renderWidth),
+				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Use /px:notes to create one."), renderWidth),
 				border,
-				truncateToWidth(this.theme.fg("dim", " esc close"), renderWidth),
+				truncateToWidth(this.theme.fg("dim", " u undo • esc close"), renderWidth),
 			];
+			if (this.status) lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
+			return lines;
 		}
 
 		this.contentRows = clamp(Math.floor(this.tui.terminal.rows * 0.4), 5, 18);
@@ -489,7 +575,7 @@ class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " ↑↓/j k select • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = " ↑↓/j k select • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
 			lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
