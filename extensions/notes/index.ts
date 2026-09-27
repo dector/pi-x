@@ -172,6 +172,7 @@ class NoteEditorDialog implements Component, Focusable {
 	private savedText = "";
 	private scope: "current" | "global" = "current";
 	private savedScope: "current" | "global" = "current";
+	private readonly otherProject: boolean;
 	private scopeRevision = 0;
 	private scopeUpdates: Promise<void> = Promise.resolve();
 	private pendingScopeChanges = 0;
@@ -182,12 +183,20 @@ class NoteEditorDialog implements Component, Focusable {
 	private status = "ctrl+s save • ctrl+x ctrl+x clear • esc close";
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: (result: null) => void, cwd: string) {
+	constructor(tui: TUI, theme: Theme, done: (result: null) => void, cwd: string, existing?: { note: NoteMeta; text: string }) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.cwd = cwd;
+		this.otherProject = existing?.note.cwd !== undefined && existing.note.cwd !== cwd;
 		this.editor = new Editor(tui, createEditorTheme(theme));
+		if (existing) {
+			this.savedPath = existing.note.path;
+			this.savedText = existing.text;
+			this.scope = existing.note.cwd === undefined ? "global" : "current";
+			this.savedScope = this.scope;
+			this.editor.setText(existing.text);
+		}
 	}
 
 	get focused(): boolean {
@@ -222,6 +231,11 @@ class NoteEditorDialog implements Component, Focusable {
 		}
 
 		if (matchesKey(data, Key.ctrl("g"))) {
+			if (this.otherProject) {
+				this.status = "Cannot change another project's scope";
+				this.tui.requestRender();
+				return;
+			}
 			this.scope = this.scope === "current" ? "global" : "current";
 			const revision = ++this.scopeRevision;
 			this.status = `Scope set to ${this.scope === "global" ? "Global" : "current project"}`;
@@ -356,7 +370,7 @@ class NoteEditorDialog implements Component, Focusable {
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
 		const title = this.theme.fg("accent", this.theme.bold(" Notes "));
 		const unsaved = this.isDirty() ? this.theme.fg("dim", " (unsaved)") : "";
-		const scope = this.theme.fg("muted", ` [${this.scope === "global" ? "Global" : "Current project"}]`);
+		const scope = this.theme.fg("muted", ` [${this.otherProject ? "Other project" : this.scope === "global" ? "Global" : "Current project"}]`);
 
 		const lines: string[] = [
 			border,
@@ -402,6 +416,10 @@ class NotesListDialog implements Component, Focusable {
 	private scope: "current" | "global" | "all" = "current";
 	private listLoadToken = 0;
 	private scopeLoading = false;
+	private preview = false;
+	private previewRows = 6;
+	private editor: NoteEditorDialog | null = null;
+	private openingEditor = false;
 	private _focused = false;
 
 	constructor(tui: TUI, theme: Theme, done: () => void, cwd: string) {
@@ -417,9 +435,12 @@ class NotesListDialog implements Component, Focusable {
 
 	set focused(value: boolean) {
 		this._focused = value;
+		if (this.editor) this.editor.focused = value;
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.editor?.invalidate();
+	}
 
 	async load(): Promise<void> {
 		const token = ++this.listLoadToken;
@@ -430,6 +451,7 @@ class NotesListDialog implements Component, Focusable {
 			const notes = (await loadNotes()).filter((note) => noteMatchesScope(note.cwd, this.cwd, this.scope));
 			if (token !== this.listLoadToken) return;
 			this.notes = notes;
+			if (this.preview && selectedPath && !notes.some((note) => note.path === selectedPath)) this.preview = false;
 			const retainedIndex = selectedPath ? notes.findIndex((note) => note.path === selectedPath) : -1;
 			this.selected = retainedIndex >= 0 ? retainedIndex : 0;
 			this.listOffset = Math.min(this.listOffset, this.selected);
@@ -453,7 +475,7 @@ class NotesListDialog implements Component, Focusable {
 		this.scroll = 0;
 		const note = this.notes[this.selected];
 		if (!note) {
-			this.rightLines = ["No notes yet. Use /px:notes to create one."];
+			this.rightLines = ["No notes yet. Press n to create one."];
 			return;
 		}
 
@@ -475,10 +497,30 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	private scrollBy(delta: number): void {
-		const visibleContentRows = Math.max(1, this.contentRows - 2);
+		const visibleContentRows = Math.max(1, this.preview ? this.previewRows : this.contentRows - 2);
 		const maxScroll = Math.max(0, this.wrappedContent.length - visibleContentRows);
 		this.scroll = clamp(this.scroll + delta, 0, maxScroll);
 		this.tui.requestRender();
+	}
+
+	private async editPreview(): Promise<void> {
+		const note = this.notes[this.selected];
+		if (!note || this.openingEditor) return;
+		this.openingEditor = true;
+		try {
+			const text = await readFile(note.path, "utf8");
+			if (!this.preview || this.notes[this.selected]?.path !== note.path) return;
+			this.editor = new NoteEditorDialog(this.tui, this.theme, () => {
+				this.editor = null;
+				void this.load();
+			}, this.cwd, { note, text });
+			this.editor.focused = this.focused;
+		} catch (error) {
+			this.status = `Open failed: ${error instanceof Error ? error.message : String(error)}`;
+		} finally {
+			this.openingEditor = false;
+			this.tui.requestRender();
+		}
 	}
 
 	private async copySelected(): Promise<void> {
@@ -584,6 +626,24 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
+		if (this.editor) {
+			this.editor.handleInput(data);
+			return;
+		}
+		if (this.preview) {
+			if (matchesKey(data, Key.escape)) {
+				this.preview = false;
+				this.status = "";
+				this.tui.requestRender();
+			} else if (data === "e" || data === "E") {
+				void this.editPreview();
+			} else if (isShiftLetter(data, "j") || matchesKey(data, Key.down) || data === "j") {
+				this.scrollBy(SCROLL_STEP);
+			} else if (isShiftLetter(data, "k") || matchesKey(data, Key.up) || data === "k") {
+				this.scrollBy(-SCROLL_STEP);
+			}
+			return;
+		}
 		if (this.pendingMove) {
 			if (data === "y" || data === "Y") void this.moveSelected();
 			else if (data === "n" || data === "N" || matchesKey(data, Key.escape)) {
@@ -607,8 +667,19 @@ class NotesListDialog implements Component, Focusable {
 			this.done();
 			return;
 		}
-		if (matchesKey(data, Key.tab)) {
-			this.scope = this.scope === "current" ? "global" : this.scope === "global" ? "all" : "current";
+		if (data === "n" || data === "N") {
+			this.editor = new NoteEditorDialog(this.tui, this.theme, () => {
+				this.editor = null;
+				void this.load();
+			}, this.cwd);
+			this.editor.focused = this.focused;
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, Key.tab) || data === "}" || data === "{") {
+			this.scope = data === "{"
+				? this.scope === "current" ? "all" : this.scope === "all" ? "global" : "current"
+				: this.scope === "current" ? "global" : this.scope === "global" ? "all" : "current";
 			this.status = `Showing ${this.scope === "all" ? "all projects" : this.scope === "global" ? "Global" : "current project"}`;
 			void this.load();
 			return;
@@ -642,6 +713,14 @@ class NotesListDialog implements Component, Focusable {
 			return;
 		}
 		if (this.notes.length === 0) return;
+		if (matchesKey(data, Key.enter)) {
+			this.preview = true;
+			this.status = "";
+			this.scroll = 0;
+			void this.loadSelectedContent().then(() => this.tui.requestRender());
+			this.tui.requestRender();
+			return;
+		}
 
 		if (isShiftLetter(data, "j")) {
 			this.scrollBy(SCROLL_STEP);
@@ -701,8 +780,23 @@ class NotesListDialog implements Component, Focusable {
 	}
 
 	render(width: number): string[] {
+		if (this.editor) return this.editor.render(width);
 		const renderWidth = Math.max(1, width);
 		const border = this.theme.fg("accent", "─".repeat(renderWidth));
+
+		if (this.preview) {
+			const note = this.notes[this.selected];
+			this.previewRows = clamp(this.tui.terminal.rows - 8, 5, 40);
+			this.wrappedContent = this.wrapContent(renderWidth);
+			this.scroll = clamp(this.scroll, 0, Math.max(0, this.wrappedContent.length - this.previewRows));
+			const lines = [border, truncateToWidth(this.theme.fg("accent", this.theme.bold(note?.title || "(untitled)")), renderWidth), this.theme.fg("dim", "─".repeat(renderWidth))];
+			for (let row = 0; row < this.previewRows; row += 1) {
+				lines.push(truncateToWidth(this.wrappedContent[this.scroll + row] ?? "", renderWidth));
+			}
+			lines.push(border, truncateToWidth(this.theme.fg("dim", " e edit • ↑↓/j k scroll • esc back"), renderWidth));
+			if (this.status) lines.push(truncateToWidth(this.theme.fg("warning", this.status), renderWidth));
+			return lines;
+		}
 
 		if (this.scopeLoading) {
 			return [border, this.renderHeader(renderWidth), truncateToWidth(this.theme.fg("muted", " Loading notes…"), renderWidth), border];
@@ -712,9 +806,9 @@ class NotesListDialog implements Component, Focusable {
 			const lines = [
 				border,
 				this.renderHeader(renderWidth),
-				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Use /px:notes to create one."), renderWidth),
+				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Press n to create one."), renderWidth),
 				border,
-				truncateToWidth(this.theme.fg("dim", " tab scope • g move • u undo • esc close"), renderWidth),
+				truncateToWidth(this.theme.fg("dim", " n new note • }/tab scope • g move • u undo • esc close"), renderWidth),
 			];
 			if (this.status) lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
 			return lines;
@@ -753,7 +847,7 @@ class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " tab scope • ↑↓/j k select • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = " n new note • enter preview • }/tab scope • ↑↓/j k select • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
 			lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));

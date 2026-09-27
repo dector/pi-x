@@ -40,7 +40,9 @@ scope is independent of editor text and does not make the note appear unsaved.
 
 | Key | Action |
 | --- | --- |
-| `tab` | Cycle current project → Global → all projects → current project. |
+| `n` | Open a new note editor. Closing the editor returns to the list, including when the list was empty. |
+| `enter` | Preview the selected note. In the preview, press `e` to edit it or `esc` to return to the list. |
+| `}` or `tab` | Cycle current project → Global → all projects → current project. |
 | `up` / `down` or `j` / `k` | Select a note in the left list. |
 | `shift+j` / `shift+k` | Scroll the note content by 5 lines. |
 | `ctrl+c` or `y` | Copy the selected note (raw Markdown) to the clipboard. |
@@ -51,7 +53,7 @@ scope is independent of editor text and does not make the note appear unsaved.
 
 The list shows notes newest-first by modification time. It opens in the current
 project view, matching the exact `ctx.cwd` folder recorded when each note is
-first saved. Press `tab` to cycle through current-project, Global, and
+first saved. Press `}` or `tab` to cycle through current-project, Global, and
 all-projects views. Global contains notes with no cwd metadata, including legacy
 notes; moving a note between Global and the current project changes only its
 hidden metadata sidecar, never its Markdown. In all-projects view, `g` only
@@ -67,7 +69,9 @@ and metadata remains recoverable if undo fails.
 
 The left column shows
 the first non-empty line of each note (truncated to 80 characters); the right
-column shows the full content of the selected note.
+column shows the content of the selected note. The full-width preview can be
+scrolled with `up`/`down` or `j`/`k`. Editing an existing note saves back to the
+same file.
 
 ## Notes
 
