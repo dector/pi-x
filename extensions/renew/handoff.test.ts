@@ -95,6 +95,30 @@ test("missing replacement bridge warns and skips transfer", async () => {
 	expect(notices.some((message) => message.includes("replacement extension is unavailable"))).toBe(true);
 });
 
+test("/nnew uses the /renew handler, including flags", async () => {
+	const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
+	const notices: string[] = [];
+	let newSessions = 0;
+	const pi = {
+		events: bus(),
+		getThinkingLevel: () => "off",
+		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
+			commands.set(name, options.handler);
+		},
+		on: () => {},
+	};
+	renewExtension(pi as unknown as ExtensionAPI);
+	expect(commands.get("nnew")).toBe(commands.get("renew"));
+	const ctx = {
+		cwd: "/repo", sessionManager: { getSessionId: () => "old" },
+		ui: { notify: (message: string) => notices.push(message) },
+		newSession: async () => { newSessions++; return { cancelled: false }; },
+	};
+	await commands.get("nnew")?.("+agents", ctx as unknown as ExtensionCommandContext);
+	expect(newSessions).toBe(0);
+	expect(notices[0]).toContain("+agents is unavailable");
+});
+
 test("/renew +agents is refused without starting a new session", async () => {
 	let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let newSessions = 0;

@@ -56,24 +56,23 @@ export default function renewExtension(pi: ExtensionAPI): void {
 		if (activeBridge()?.pi === pi) delete (globalThis as { __piXRenewBridge?: RenewBridge }).__piXRenewBridge;
 	});
 
-	pi.registerCommand("renew", {
-		description: "Start a fresh session while retaining session settings",
-		handler: async (args, ctx) => {
-			const parsed = parseRenewArguments(args);
-			if (!parsed.ok) {
-				ctx.ui.notify(parsed.message.trim(), "warning");
-				return;
-			}
-			if (parsed.options.keepAgents) {
-				ctx.ui.notify(
-					"/renew +agents is unavailable: Pi replaces the extension runtime and event bus on /new, so running agents cannot be handed off without dropping or leaking completions. No session was changed.",
-					"warning",
-				);
-				return;
-			}
-			await renewSession(pi, ctx, parsed.options.stopProc);
-		},
-	});
+	const handler = async (args: string, ctx: ExtensionCommandContext) => {
+		const parsed = parseRenewArguments(args);
+		if (!parsed.ok) {
+			ctx.ui.notify(parsed.message.trim(), "warning");
+			return;
+		}
+		if (parsed.options.keepAgents) {
+			ctx.ui.notify(
+				"/renew +agents is unavailable: Pi replaces the extension runtime and event bus on /new, so running agents cannot be handed off without dropping or leaking completions. No session was changed.",
+				"warning",
+			);
+			return;
+		}
+		await renewSession(pi, ctx, parsed.options.stopProc);
+	};
+	pi.registerCommand("renew", { description: "Start a fresh session while retaining session settings", handler });
+	pi.registerCommand("nnew", { description: "Alias for /renew", handler });
 }
 
 export async function stopManagedProcesses(pi: ExtensionAPI, targetSessionId: string): Promise<ProcStopAllResult | undefined> {
