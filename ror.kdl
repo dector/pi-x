@@ -3,3 +3,13 @@ default task="dev"
 task dev {
   cmd "./pitest --include-all"
 }
+
+task dev:proxy {
+  env LOG_PROXY="1" LOG_PROXY_INIT="0"
+  cmd "./pitest --include-all"
+}
+
+task dev:proxy:init {
+  env LOG_PROXY="1" LOG_PROXY_INIT="1"
+  cmd "./pitest --include-all"
+}

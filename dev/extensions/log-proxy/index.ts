@@ -2,13 +2,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { TrafficProxy } from "./proxy.ts";
 
-/** Loaded only by ./pitest. Route Codex through this local proxy even while logging is off. */
+/** Loaded only by ./pitest. Route Codex through this local proxy when explicitly enabled. */
 export default function logProxy(pi: ExtensionAPI): void {
+	if (process.env.LOG_PROXY !== "1") return;
+
 	const port = Number(process.env.LOG_PROXY_PORT ?? "17381");
 	if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid LOG_PROXY_PORT");
 	const proxy = new TrafficProxy({
 		port,
-		logging: process.env.LOG_PROXY === "1",
+		logging: process.env.LOG_PROXY_INIT === "1",
 		logDir: join(import.meta.dirname, "logs"),
 	});
 
