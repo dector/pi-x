@@ -361,6 +361,7 @@ function sortRecords(a: ProcRecord, b: ProcRecord): number {
 function widgetEntries(): ProcessesWidgetEntry[] {
 	return globalState.records.map((record) => ({
 		name: record.name,
+		command: record.command,
 		state: record.state,
 		pid: record.pid,
 		startedAt: record.startedAt,

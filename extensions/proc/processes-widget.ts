@@ -21,8 +21,8 @@ export const PROCESSES_WIDGET_ID = "px-processes-active";
 
 /**
  * Pi renders at most 10 widget lines, so the formatter keeps the content within
- * this limit and emits its own `… N more` line instead. Each process occupies
- * one line; the first line is the summary header.
+ * this limit and emits its own `… N more` line instead. Running processes use
+ * a second command line; the first line is the summary header.
  */
 export const PROCESSES_WIDGET_MAX_LINES = 10;
 
@@ -62,6 +62,7 @@ export type ProcessState = "running" | "stopping" | "exited";
 /** Minimal process shape the formatter needs. */
 export interface ProcessesWidgetEntry {
 	name: string;
+	command?: string;
 	state: ProcessState;
 	pid?: number;
 	startedAt: number;
@@ -192,12 +193,12 @@ function summaryText(counts: { running: number; stopping: number; exited: number
 	return parts.length > 0 ? parts.join(", ") : "0 running";
 }
 
-function formatEntryLine(
+function formatEntryLines(
 	entry: ProcessesWidgetEntry,
 	now: number,
 	styles: ProcessesWidgetStyles,
 	nameWidth: number,
-): string {
+): string[] {
 	const tone = processStateTone(entry);
 	const icon = entry.state === "running"
 		? PROCESS_STATUS_ICONS.running
@@ -213,7 +214,9 @@ function formatEntryLine(
 	if (entry.state === "exited") details.push(exitLabel(entry));
 	if (entry.unread > 0) details.push(`+${entry.unread}`);
 	const suffix = details.length > 0 ? `  ${details.join("  ")}` : "";
-	return ` ${styles[tone](icon)} ${name}  ${pid}  ${styles.muted(entry.state)}  ${formatElapsed(durationMs)}${suffix}`;
+	const line = ` ${styles[tone](icon)} ${name}  ${pid}  ${styles.muted(entry.state)}  ${formatElapsed(durationMs)}${suffix}`;
+	if (entry.state !== "running" || !entry.command) return [line];
+	return [line, styles.dim(`   │ ${truncate(entry.command, PROCESSES_WIDGET_MAX_LINE_LENGTH - 5)}`)];
 }
 
 /**
@@ -237,10 +240,11 @@ export function formatProcessesWidget(
 
 	let shown = 0;
 	for (const entry of visible) {
+		const block = formatEntryLines(entry, now, styles, nameWidth);
 		const mustReserveOverflowLine = shown + 1 < visible.length;
 		const available = PROCESSES_WIDGET_MAX_LINES - lines.length - (mustReserveOverflowLine ? 1 : 0);
-		if (available < 1) break;
-		lines.push(formatEntryLine(entry, now, styles, nameWidth));
+		if (block.length > available) break;
+		lines.push(...block);
 		shown += 1;
 	}
 	const hidden = visible.length - shown;

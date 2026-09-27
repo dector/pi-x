@@ -128,9 +128,9 @@ test("state tone matches the retired neo-bar colors", () => {
 	expect(processStateTone(makeEntry({ state: "exited", exitCode: 0, exitSignal: "SIGKILL" }))).toBe("error");
 });
 
-test("expanded widget renders a header and one line per process", () => {
+test("expanded widget renders a header, process details, and running command", () => {
 	const lines = formatProcessesWidget([
-		makeEntry({ name: "vite", state: "running", pid: 1234, startedAt: NOW - 12_000 }),
+		makeEntry({ name: "vite", command: "npm run dev", state: "running", pid: 1234, startedAt: NOW - 12_000 }),
 		makeEntry({ name: "npm", state: "exited", pid: 1222, startedAt: NOW - 30_000, endedAt: NOW - 8_000, exitCode: 0 }),
 	], NOW);
 	expect(lines).toBeDefined();
@@ -139,9 +139,19 @@ test("expanded widget renders a header and one line per process", () => {
 	expect(lines?.[1]).toContain("pid 1234");
 	expect(lines?.[1]).toContain("running");
 	expect(lines?.[1]).toContain("12s");
-	expect(lines?.[2]).toContain("npm");
-	expect(lines?.[2]).toContain("exited");
-	expect(lines?.[2]).toContain("code 0");
+	expect(lines?.[2]).toContain("npm run dev");
+	expect(lines?.[3]).toContain("npm");
+	expect(lines?.[3]).toContain("exited");
+	expect(lines?.[3]).toContain("code 0");
+});
+
+test("running command is shown on a second row and clipped to terminal width", () => {
+	const lines = formatProcessesWidget([makeEntry({ command: "npm run dev -- --host localhost" })], NOW);
+	expect(lines?.[2]).toContain("npm run dev -- --host localhost");
+	const rendered = renderProcessesWidgetContent(lines ?? [], 20);
+	expect(rendered).toHaveLength(3);
+	expect(visibleWidth(rendered[2] ?? "")).toBe(20);
+	expect(rendered[2]).toContain("…");
 });
 
 test("unread count is shown as a detail", () => {
