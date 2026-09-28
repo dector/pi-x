@@ -25,6 +25,9 @@ import {
 const NOTES_DIR_NAME = "notes";
 const NOTES_OPEN_EVENT = "px:notes:open";
 const NOTES_LIST_EVENT = "px:notes:list";
+const STATUS_BAR_ID = "notes";
+const STATUS_BAR_SET_EVENT = "px:status-bar:set";
+const STATUS_BAR_CLEAR_EVENT = "px:status-bar:clear";
 const TITLE_MAX = 80;
 const CLEAR_WINDOW_MS = 500;
 const SCROLL_STEP = 5;
@@ -929,17 +932,46 @@ export async function openNotesList(ctx: ExtensionContext): Promise<void> {
 }
 
 export default function notesExtension(pi: ExtensionAPI): void {
+	const publishStatus = async (ctx: ExtensionContext): Promise<void> => {
+		try {
+			const notes = await loadNotes();
+			// Count notes available here, not notes owned by other projects.
+			const count = notes.filter((note) => note.cwd === undefined || note.cwd === ctx.cwd).length;
+			if (count === 0) {
+				pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
+			} else {
+				pi.events.emit(STATUS_BAR_SET_EVENT, {
+					id: STATUS_BAR_ID,
+					content: `\x1b[2m${ctx.ui.theme.fg("thinkingOff", `󰈙 ${count}`)}\x1b[22m`,
+				});
+			}
+		} catch {
+			pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
+		}
+	};
+
+	pi.on("session_start", async (_event, ctx) => {
+		await publishStatus(ctx);
+	});
 	pi.registerCommand("px:notes", {
 		description: "Compose a note; ctrl+s saves, ctrl+g toggles scope, esc closes",
 		handler: async (_args, ctx) => {
-			await openNoteEditor(ctx);
+			try {
+				await openNoteEditor(ctx);
+			} finally {
+				await publishStatus(ctx);
+			}
 		},
 	});
 
 	pi.registerCommand("px:notes:list", {
 		description: "Browse saved notes; ctrl+c copies the selected note",
 		handler: async (_args, ctx) => {
-			await openNotesList(ctx);
+			try {
+				await openNotesList(ctx);
+			} finally {
+				await publishStatus(ctx);
+			}
 		},
 	});
 
@@ -951,7 +983,11 @@ export default function notesExtension(pi: ExtensionAPI): void {
 		if (!payload || typeof payload !== "object") return;
 		const maybeCtx = (payload as { ctx?: ExtensionContext }).ctx;
 		if (!maybeCtx) return;
-		await fn(maybeCtx);
+		try {
+			await fn(maybeCtx);
+		} finally {
+			await publishStatus(maybeCtx);
+		}
 	};
 
 	pi.events.on(NOTES_OPEN_EVENT, (payload) => void withCtx(payload, openNoteEditor));

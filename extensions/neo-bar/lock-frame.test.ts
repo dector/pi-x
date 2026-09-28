@@ -20,6 +20,8 @@ function makeEditor(mode: "new" | "legacy" = "new", decorationColors = false) {
 		bottomLeftStatus: () => "SAFE-MODE",
 		lockedStripeColor: decorationColors ? (text) => `\u001b[2m${text}\u001b[0m` : undefined,
 		lockedRuleColor: decorationColors ? (text) => `\u001b[90m${text}\u001b[0m` : undefined,
+		bottomRightStash: () => "󱊖 2",
+		bottomRightNotes: () => "󰈙 3",
 		bottomRight: (text) => text ? `DRAFT ${text}` : undefined,
 		relocatedLabels,
 	});
@@ -37,7 +39,8 @@ describe("locked editor frame", () => {
 		expect(lines[0]).toContain(`󰐖 ${GIT_STATS.filesAdded}`);
 		expect(lines.at(-1)).toContain("USAGE");
 		expect(lines.at(-1)).toContain("COST");
-		expect(lines.at(-1)).toContain("DRAFT unsent");
+		expect(lines.at(-1)).toContain("DRAFT unsent · 󰈙 3 · 󱊖 2");
+		expect(lines.at(-1)?.indexOf("USAGE")).toBeLessThan(lines.at(-1)!.indexOf("DRAFT unsent"));
 		expect(lines.at(-1)).toStartWith("╰");
 		expect(lines.at(-1)).toEndWith("╯");
 		expect(lines.slice(1, -1).join(" ")).toContain("LOCKED");
@@ -53,6 +56,17 @@ describe("locked editor frame", () => {
 		expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true);
 		editor.setLocked(false);
 		expect(editor.getText()).toBe("unsent");
+	});
+
+	test("keeps counts with an empty draft and drops counts first on a narrow border", () => {
+		const { editor } = makeEditor();
+		editor.setLocked(true);
+		expect(editor.render(80).at(-1)).toContain("󰈙 3 · 󱊖 2");
+		editor.setText("unsent");
+		const narrow = editor.render(55).at(-1)!;
+		expect(narrow).toContain("DRAFT unsent");
+		expect(narrow).not.toContain("󱊖 2");
+		expect(visibleWidth(narrow)).toBe(55);
 	});
 
 	test("dims the stripes and grays the rules without dimming the lock label", () => {

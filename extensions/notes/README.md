@@ -4,7 +4,9 @@ Save free-form notes globally and browse them from a two-pane dialog.
 
 Notes are plain Markdown files stored under `~/.pi/agent/notes/` (one file per
 note), so they survive across projects and sessions and can be edited with any
-editor.
+editor. When notes are available, neo-bar shows a muted-purple `󰈙 <count>` in the
+bottom-right editor border between the draft token and stash counters. It counts global and
+current-project notes, and refreshes after closing a notes dialog.
 
 ## Commands
 

@@ -116,7 +116,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 			pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
 			return;
 		}
-		const content = ctx.ui.theme.fg("muted", `󰅍 ${stashes.length}`);
+		const content = `\x1b[38;2;210;153;34m󱊖 ${stashes.length}\x1b[39m`;
 		pi.events.emit(STATUS_BAR_SET_EVENT, {
 			id: STATUS_BAR_ID,
 			content,

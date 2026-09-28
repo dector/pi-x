@@ -104,6 +104,7 @@ const CONTEXT_WATCHER_IDS = {
 const ATTENSION_CORE_ID = "attension-core";
 const SAFE_MODE_ID = "safe-mode";
 const PROMPT_STASH_ID = "prompt-stash";
+const NOTES_ID = "notes";
 // Git dirty totals are collected internally (git-stats.ts) and rendered on the
 // editor frame's top-right corner in `new` mode. In `legacy` mode they keep the
 // first-line right section, ordered like a producer at this priority.
@@ -298,14 +299,15 @@ interface FrameStatusEditorOptions {
 	bottomLeftNetwork?: FrameStatusProvider;
 	/** Effective subagent depth policy, rendered immediately after the network token. */
 	bottomLeftSubagent?: FrameStatusProvider;
-	/** Prompt-stash count, rendered immediately after the subagent indicator. */
-	bottomLeftStash?: FrameStatusProvider;
 	/** Top-left corner label (active provider/model plus effort), with the working highlight while streaming. */
 	topLeft?: FrameStatusProvider;
 	/** Recommended review level, rendered after the top-left model effort. */
 	topLeftReview?: FrameStatusProvider;
 	/** Dirty counters rendered as the top-right corner label. */
 	topRightGitStats?: () => GitStats | undefined;
+	/** Counts shown after the unsent-message token size in the bottom-right corner. */
+	bottomRightStash?: FrameStatusProvider;
+	bottomRightNotes?: FrameStatusProvider;
 	/** Bottom-right corner label (unsent message token size). Receives the current editor text. */
 	bottomRight?: (text: string) => string | undefined;
 	/** Sink for labels relocated off the border on narrow frames (status line 2). */
@@ -445,7 +447,8 @@ export class FrameStatusEditor extends CustomEditor {
 	private readonly bottomLeftStatusProvider?: FrameStatusProvider;
 	private readonly bottomLeftNetworkProvider?: FrameStatusProvider;
 	private readonly bottomLeftSubagentProvider?: FrameStatusProvider;
-	private readonly bottomLeftStashProvider?: FrameStatusProvider;
+	private readonly bottomRightStashProvider?: FrameStatusProvider;
+	private readonly bottomRightNotesProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topLeftReviewProvider?: FrameStatusProvider;
 	private readonly topRightGitStats?: () => GitStats | undefined;
@@ -484,7 +487,8 @@ export class FrameStatusEditor extends CustomEditor {
 		this.bottomLeftStatusProvider = options.bottomLeftStatus;
 		this.bottomLeftNetworkProvider = options.bottomLeftNetwork;
 		this.bottomLeftSubagentProvider = options.bottomLeftSubagent;
-		this.bottomLeftStashProvider = options.bottomLeftStash;
+		this.bottomRightStashProvider = options.bottomRightStash;
+		this.bottomRightNotesProvider = options.bottomRightNotes;
 		this.topLeftProvider = options.topLeft;
 		this.topLeftReviewProvider = options.topLeftReview;
 		this.topRightGitStats = options.topRightGitStats;
@@ -840,26 +844,37 @@ export class FrameStatusEditor extends CustomEditor {
 		const statusLabel = this.bottomLeftStatusProvider?.();
 		const networkLabel = this.bottomLeftNetworkProvider?.();
 		const subagentLabel = this.bottomLeftSubagentProvider?.();
-		const stashLabel = this.bottomLeftStashProvider?.();
+		const stashLabel = this.bottomRightStashProvider?.();
+		const notesLabel = this.bottomRightNotesProvider?.();
 		// Full border context is usage + cost; the usage meter always stays on the border.
 		const combinedContext =
 			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
 				? `${usageLabel}${contextParts?.separator ?? " · "}${costLabel}`
 				: usageLabel || costLabel;
-		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel, stashLabel);
+		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		// The unsent-message size uses the paste-expanded text, which is what pi
 		// actually sends (submit expands paste markers, then trims).
 		const messageLabel = this.bottomRightProvider?.(this.getExpandedText());
-		const messageSegment = hasVisibleText(messageLabel)
-			? `${this.borderColor(FRAME_LABEL_OPEN)}${sanitizeStatusText(messageLabel)}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`
-			: "";
+		const rightLabels = [messageLabel, notesLabel, stashLabel].map((label) =>
+			hasVisibleText(label) ? sanitizeStatusText(label) : undefined,
+		);
+		const makeRightSegment = (labels: (string | undefined)[]): string => {
+			const content = labels.filter((label): label is string => label !== undefined).join(this.borderColor(" · "));
+			return content ? `${this.borderColor(FRAME_LABEL_OPEN)}${content}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}` : "";
+		};
 		// Mode word disabled for now; the dim frame + hidden cursor carry the signal.
 		// Keep for later:
 		// const modeSegment = this.isInputInactive()
 		// 	? `${this.labelColor(FRAME_LABEL_OPEN)}${this.labelColor("NORMAL")}${this.labelColor(FRAME_LABEL_CLOSE)}`
 		// 	: "";
-		const rightSegment = `${scrollSegment}${messageSegment}`;
+		const rightSegments = [
+			[...rightLabels],
+			[rightLabels[0], rightLabels[1]],
+			[rightLabels[0]],
+			[],
+		].map((labels) => `${scrollSegment}${makeRightSegment(labels)}`);
+		const rightSegment = rightSegments[0];
 		const borderColor = (text: string) => this.borderColor(text);
 
 		// On a narrow frame the cost no longer fits. Keep the usage meter on the border
@@ -870,24 +885,24 @@ export class FrameStatusEditor extends CustomEditor {
 			statusLabel,
 			networkLabel,
 			subagentLabel,
-			stashLabel,
 		);
 		if (this.relocatedLabels) {
 			this.relocatedLabels.contextLabel = costRelocated ? costLabel : undefined;
 		}
 
 		if (!leftSegment) {
-			return renderBorderLine(width, "", rightSegment, borderColor);
+			const fitting = rightSegments.find((candidate) => visibleWidth(candidate) < width);
+			return renderBorderLine(width, "", fitting ?? "", borderColor);
 		}
 
-		if (visibleWidth(leftSegment) + visibleWidth(rightSegment) < width) {
-			return renderBorderLine(width, leftSegment, rightSegment, borderColor);
+		for (const candidate of rightSegments) {
+			if (visibleWidth(leftSegment) + visibleWidth(candidate) < width) {
+				return renderBorderLine(width, leftSegment, candidate, borderColor);
+			}
 		}
-		if (visibleWidth(leftSegment) < width) {
-			return renderBorderLine(width, leftSegment, "", borderColor);
-		}
-		if (rightSegment && visibleWidth(rightSegment) < width) {
-			return renderBorderLine(width, "", rightSegment, borderColor);
+		const fittingRight = rightSegments.find((candidate) => visibleWidth(candidate) < width);
+		if (fittingRight) {
+			return renderBorderLine(width, "", fittingRight, borderColor);
 		}
 
 		return renderBorderLine(width, "", "", borderColor);
@@ -906,14 +921,12 @@ export class FrameStatusEditor extends CustomEditor {
 		statusLabel?: string,
 		networkLabel?: string,
 		subagentLabel?: string,
-		stashLabel?: string,
 	): string {
 		return composeBorderBottomLeft({
 			contextLabel,
 			statusLabel,
 			networkLabel,
 			subagentLabel,
-			stashLabel,
 			borderColor: (text) => this.borderColor(text),
 			accentColor: this.subduedColor,
 		});
@@ -1143,7 +1156,7 @@ export function collectImageTokens(text: string, cwd: string): number {
 	return total;
 }
 
-// Unsent-message token size for the border's bottom-right corner, e.g. `󰍡 1.2k`.
+// Unsent-message token size for the border's bottom-right corner, e.g. `󰦨 1.2k`.
 // Returns undefined for an empty editor so the corner stays clear. Text uses
 // pi's conservative chars/4 estimate on the paste-expanded input; `imageTokens`
 // adds the DeepSeek image estimate for any pasted image paths.
@@ -1154,7 +1167,7 @@ export function buildMessageSizeLabel(
 ): string | undefined {
 	const tokens = estimateMessageTokens(text) + Math.max(0, Math.floor(imageTokens));
 	if (tokens <= 0) return undefined;
-	return theme.fg("text", `${BORDER_MESSAGE_ICON}${formatTokens(tokens)}`);
+	return `\x1b[2m${theme.fg("thinkingOff", `${BORDER_MESSAGE_ICON}${formatTokens(tokens)}`)}\x1b[22m`;
 }
 
 interface FirstLineEntry {
@@ -2202,7 +2215,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			},
 			bottomLeftSubagent: () =>
 				subagentDepth === undefined ? undefined : renderSubagentDepthLabel(subagentDepth, activeContext().ui.theme),
-			bottomLeftStash: () => contentById.get(PROMPT_STASH_ID),
+			bottomRightStash: () => contentById.get(PROMPT_STASH_ID),
+			bottomRightNotes: () => contentById.get(NOTES_ID),
 			topLeft: () =>
 				buildBorderModelLabel(
 					activeContext(),

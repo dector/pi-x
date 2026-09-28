@@ -213,7 +213,7 @@ export function decorateBorderTotalUsage(label: string): string {
 
 // Border-only unsent-message icon (Nerd Font). Keeps a trailing space so the
 // glyph reads as a prefix, matching the other border indicators.
-export const BORDER_MESSAGE_ICON = "󰍡 ";
+export const BORDER_MESSAGE_ICON = "󰦨 ";
 
 // Pi estimates tokens with a conservative chars/4 heuristic (`estimateTokens`).
 // The interactive editor carries text only (a pasted image is inserted as its
@@ -319,7 +319,6 @@ export interface BorderBottomLeftArgs {
 	statusLabel?: string;
 	networkLabel?: string;
 	subagentLabel?: string;
-	stashLabel?: string;
 	borderColor: (text: string) => string;
 	/** Subdued color for default-color indicators; defaults to `borderColor`. */
 	accentColor?: (text: string) => string;
@@ -352,8 +351,7 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const subagentLabel = hasVisibleText(args.subagentLabel)
 		? decorateBorderSubagentLabel(args.subagentLabel, accentColor)
 		: undefined;
-	const stashLabel = hasVisibleText(args.stashLabel) ? sanitizeStatusText(args.stashLabel) : undefined;
-	const statusGroup = joinStatusPolicyGroup(safeModeLabel, networkLabel, subagentLabel, stashLabel, args.borderColor);
+	const statusGroup = joinStatusPolicyGroup(safeModeLabel, networkLabel, subagentLabel, args.borderColor);
 	if (!hasContext && !statusGroup) return "";
 
 	const open = args.borderColor(FRAME_LEFT_CORNER_OPEN);
@@ -376,11 +374,10 @@ function joinStatusPolicyGroup(
 	safeMode: string | undefined,
 	network: string | undefined,
 	subagent: string | undefined,
-	stash: string | undefined,
 	separator: (text: string) => string,
 ): string | undefined {
 	let group: string | undefined;
-	for (const item of [safeMode, network, subagent, stash]) {
+	for (const item of [safeMode, network, subagent]) {
 		if (!item) continue;
 		group = group ? `${group}${separator(" · ")}${item}` : item;
 	}
@@ -397,7 +394,6 @@ export function composeSafeModeNetworkGroup(args: {
 		hasVisibleText(args.safeMode) ? sanitizeStatusText(args.safeMode) : undefined,
 		hasVisibleText(args.network) ? sanitizeStatusText(args.network) : undefined,
 		hasVisibleText(args.subagent) ? sanitizeStatusText(args.subagent) : undefined,
-		undefined,
 		() => args.separator,
 	);
 }

@@ -140,7 +140,7 @@ labels are rendered in the frame corners:
 ```
 ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
-╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╾ 󰍡 1.2k ╼━╯
+╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╾ 󰦨 1.2k ╼━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -175,8 +175,8 @@ labels are rendered in the frame corners:
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border; in `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
-- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, optional prompt-stash count, and context usage/cost.
-  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> · 󰅍 <stashes> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The stash indicator appears only when stashes exist. The
+- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage/cost.
+  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
     network-to-context bridge is tapered on both label sides, so the line reads
     as one heavy stroke that thins out where it meets either label. The safe-mode
     and network parts are omitted when their producer/core is absent.
@@ -247,15 +247,17 @@ labels are rendered in the frame corners:
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
     `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
-- **bottom-right** — unsent message token size in the normal text color,
-  prefixed with the message icon `󰍡 ` (`󰍡 1.2k`). Text uses pi's conservative
+- **bottom-right** — the muted-purple unsent-message token size (`󰦨 1.2k`), followed
+  by optional muted-purple available-notes (`󰈙 <count>`, current project plus global)
+  and orange prompt-stash (`󱊖 <count>`) counts. Text uses pi's conservative
   chars/4 heuristic on the paste-expanded editor text, so it reflects what will
   actually be sent. Pasted image paths are detected, their pixel size is read from
   the file header (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's
   published vision calculator (upscale below ~544×544, downscale to ~1300×1300,
   1024-token cap). That is a first estimate only: other providers tokenize images
-  differently, and the path text is counted too. Hidden while the editor is empty;
-  dropped before the bottom-left labels when the frame is too narrow.
+  differently, and the path text is counted too. The token size is hidden while
+  the editor is empty; the counters are hidden when empty. On narrow frames,
+  stashes then notes are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits on the right of the

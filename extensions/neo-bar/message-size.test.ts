@@ -6,7 +6,7 @@ const theme = {
 	fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
 } as unknown as Parameters<typeof buildMessageSizeLabel>[1];
 
-const label = (text: string) => `<text>${BORDER_MESSAGE_ICON}${text}</text>`;
+const label = (text: string) => `\x1b[2m<thinkingOff>${BORDER_MESSAGE_ICON}${text}</thinkingOff>\x1b[22m`;
 
 describe("estimateMessageTokens", () => {
 	test("uses pi's conservative chars/4 heuristic", () => {
@@ -25,12 +25,16 @@ describe("estimateMessageTokens", () => {
 });
 
 describe("buildMessageSizeLabel", () => {
+	test("uses the text icon", () => {
+		expect(BORDER_MESSAGE_ICON).toBe("󰦨 ");
+	});
+
 	test("returns undefined for an empty message so the corner stays clear", () => {
 		expect(buildMessageSizeLabel("", theme)).toBeUndefined();
 		expect(buildMessageSizeLabel("   \n", theme)).toBeUndefined();
 	});
 
-	test("renders the size in the normal text color", () => {
+	test("renders the size in muted purple", () => {
 		expect(buildMessageSizeLabel("abcd", theme)).toBe(label("1"));
 	});
 
