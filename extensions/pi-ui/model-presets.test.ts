@@ -56,6 +56,30 @@ describe("model presets", () => {
 		});
 	});
 
+	test("Alt+Shift+m cycles main favorites backwards, skipping unavailable entries and wrapping", async () => {
+		await withTempAgentDir(async () => {
+			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
+			let model = { provider: "provider", id: "other", reasoning: true };
+			let thinking = "low";
+			const ctx = {
+				get model() { return model; },
+				modelRegistry: { getAvailable: () => [{ provider: "provider", id: "luna", reasoning: true }, { provider: "provider", id: "sol", reasoning: true }] },
+				ui: { notify() {} },
+			} as any;
+			const pi = {
+				getThinkingLevel: () => thinking,
+				setThinkingLevel: (level: string) => { thinking = level; },
+				setModel: async (next: typeof model) => { model = next; return true; },
+			} as any;
+			await cycleModelPresets(pi, ctx, -1);
+			expect([model.id, thinking]).toEqual(["sol", "medium"]);
+			await cycleModelPresets(pi, ctx, -1);
+			expect([model.id, thinking]).toEqual(["luna", "high"]);
+			await cycleModelPresets(pi, ctx, -1);
+			expect([model.id, thinking]).toEqual(["sol", "medium"]);
+		});
+	});
+
 	test("cycling reports empty and unavailable favorites without changing models", async () => {
 		await withTempAgentDir(async () => {
 			const notices: string[] = [];
@@ -67,7 +91,7 @@ describe("model presets", () => {
 			expect(notices).toEqual(["No favorite models. Add one with Ctrl+, then m.", "No favorite models are available."]);
 		});
 	});
-	test("Alt+Shift+m cycles rewire targets without changing main model or enabling rewiring", async () => {
+	test("Ctrl+Alt+m cycles rewire targets without changing main model or enabling rewiring", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let target: (typeof presets)[number] | undefined;

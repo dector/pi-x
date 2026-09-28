@@ -199,29 +199,30 @@ export async function selectPresetOption(ctx: ExtensionContext, title: string, o
 	});
 }
 
-function nextAvailablePreset(ctx: ExtensionContext, presets: ModelPreset[], current?: ModelPreset): ModelPreset | undefined {
+function nextAvailablePreset(ctx: ExtensionContext, presets: ModelPreset[], current?: ModelPreset, direction: 1 | -1 = 1): ModelPreset | undefined {
 	const currentIndex = presets.findIndex((preset) => preset.model === current?.model && preset.thinkingLevel === current.thinkingLevel);
 	const available = ctx.modelRegistry.getAvailable();
 	for (let step = 1; step <= presets.length; step++) {
-		const preset = presets[(currentIndex + step) % presets.length]!;
+		const index = currentIndex === -1 ? (direction === 1 ? step - 1 : presets.length - step) : (currentIndex + direction * step + presets.length) % presets.length;
+		const preset = presets[index]!;
 		const model = available.find((item) => `${item.provider}/${item.id}` === preset.model);
 		if (model && availableThinkingLevels(model).includes(preset.thinkingLevel)) return preset;
 	}
 }
 
-function cycleFavorites(ctx: ExtensionContext, current?: ModelPreset): ModelPreset | undefined {
+function cycleFavorites(ctx: ExtensionContext, current?: ModelPreset, direction: 1 | -1 = 1): ModelPreset | undefined {
 	let presets: ModelPreset[];
 	try { presets = loadModelPresets(); }
 	catch (error) { ctx.ui.notify(`Cannot read model presets: ${String(error)}`, "error"); return; }
 	if (!presets.length) { ctx.ui.notify("No favorite models. Add one with Ctrl+, then m.", "warning"); return; }
-	const next = nextAvailablePreset(ctx, presets, current);
+	const next = nextAvailablePreset(ctx, presets, current, direction);
 	if (!next) ctx.ui.notify("No favorite models are available.", "warning");
 	return next;
 }
 
-export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext, direction: 1 | -1 = 1): Promise<void> {
 	const current = ctx.model && { model: `${ctx.model.provider}/${ctx.model.id}`, thinkingLevel: pi.getThinkingLevel() };
-	const preset = cycleFavorites(ctx, current);
+	const preset = cycleFavorites(ctx, current, direction);
 	if (!preset) return;
 	const model = ctx.modelRegistry.getAvailable().find((item) => `${item.provider}/${item.id}` === preset.model)!;
 	try {
