@@ -199,6 +199,29 @@ export async function selectPresetOption(ctx: ExtensionContext, title: string, o
 	});
 }
 
+export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	let presets: ModelPreset[];
+	try { presets = loadModelPresets(); }
+	catch (error) { ctx.ui.notify(`Cannot read model presets: ${String(error)}`, "error"); return; }
+	if (!presets.length) { ctx.ui.notify("No favorite models. Add one with Ctrl+, then m.", "warning"); return; }
+
+	const current = ctx.model && `${ctx.model.provider}/${ctx.model.id}`;
+	const currentIndex = presets.findIndex((preset) => preset.model === current && preset.thinkingLevel === pi.getThinkingLevel());
+	const available = ctx.modelRegistry.getAvailable();
+	for (let step = 1; step <= presets.length; step++) {
+		const preset = presets[(currentIndex + step) % presets.length]!;
+		const model = available.find((item) => `${item.provider}/${item.id}` === preset.model);
+		if (!model || !availableThinkingLevels(model).includes(preset.thinkingLevel)) continue;
+		try {
+			if (!(await pi.setModel(model))) { ctx.ui.notify(`Could not select ${preset.model}`, "error"); return; }
+			pi.setThinkingLevel(preset.thinkingLevel);
+			ctx.ui.notify(`Favorite model: ${label(preset)}`, "info");
+		} catch (error) { ctx.ui.notify(`Could not select ${label(preset)}: ${String(error)}`, "error"); }
+		return;
+	}
+	ctx.ui.notify("No favorite models are available.", "warning");
+}
+
 export async function openModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	if (ctx.mode !== "tui") return;
 	let selectedIndex: number | undefined;

@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { openModelPresets } from "./model-presets.ts";
+import { cycleModelPresets, openModelPresets } from "./model-presets.ts";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -28,6 +28,7 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
+const CYCLE_FAVORITE_MODEL_SHORTCUT = Key.alt("m");
 const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
 type LockableTui = {
 	addInputListener: (listener: (data: string) => { consume: boolean } | undefined) => () => void;
@@ -2214,6 +2215,11 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 				`pi-ui nav: ${positions.length} visible of ${all.length} entries · top ${Math.round(scrollView.scrollTop)}${selection}`,
 			);
 		},
+	});
+
+	pi.registerShortcut(CYCLE_FAVORITE_MODEL_SHORTCUT, {
+		description: "Cycle favorite model configurations (model and thinking level)",
+		handler: async (ctx) => { await cycleModelPresets(pi, ctx); },
 	});
 
 	pi.registerShortcut(ACTION_DIALOG_TOGGLE_SHORTCUT, {

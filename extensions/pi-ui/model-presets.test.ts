@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { loadModelPresets, saveModelPresets, showModelPresetList, selectPresetOption, moveModelPreset, openModelPresets } from "./model-presets.ts";
+import { loadModelPresets, saveModelPresets, showModelPresetList, selectPresetOption, moveModelPreset, openModelPresets, cycleModelPresets } from "./model-presets.ts";
 
 const presets = [
 	{ model: "provider/luna", thinkingLevel: "high" as const },
@@ -30,6 +30,43 @@ const withTempAgentDir = async (run: () => Promise<void>) => {
 };
 
 describe("model presets", () => {
+	test("Alt+m cycles favorite model and thinking level, skipping unavailable entries and wrapping", async () => {
+		await withTempAgentDir(async () => {
+			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
+			let model = { provider: "provider", id: "other", reasoning: true };
+			let thinking = "low";
+			const notices: string[] = [];
+			const ctx = {
+				get model() { return model; },
+				modelRegistry: { getAvailable: () => [{ provider: "provider", id: "luna", reasoning: true }, { provider: "provider", id: "sol", reasoning: true }] },
+				ui: { notify: (message: string) => { notices.push(message); } },
+			} as any;
+			const pi = {
+				getThinkingLevel: () => thinking,
+				setThinkingLevel: (level: string) => { thinking = level; },
+				setModel: async (next: typeof model) => { model = next; return true; },
+			} as any;
+			await cycleModelPresets(pi, ctx);
+			expect([model.id, thinking]).toEqual(["luna", "high"]);
+			await cycleModelPresets(pi, ctx);
+			expect([model.id, thinking]).toEqual(["sol", "medium"]);
+			await cycleModelPresets(pi, ctx);
+			expect([model.id, thinking]).toEqual(["luna", "high"]);
+			expect(notices).toHaveLength(3);
+		});
+	});
+
+	test("cycling reports empty and unavailable favorites without changing models", async () => {
+		await withTempAgentDir(async () => {
+			const notices: string[] = [];
+			const ctx = { model: undefined, modelRegistry: { getAvailable: () => [] }, ui: { notify: (message: string) => { notices.push(message); } } } as any;
+			const pi = { getThinkingLevel: () => "off", setModel: async () => { throw new Error("should not switch"); } } as any;
+			await cycleModelPresets(pi, ctx);
+			saveModelPresets(presets);
+			await cycleModelPresets(pi, ctx);
+			expect(notices).toEqual(["No favorite models. Add one with Ctrl+, then m.", "No favorite models are available."]);
+		});
+	});
 	test("round trips and rejects invalid files", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-model-presets-"));
 		const file = path.join(dir, "nested", "presets.json");
