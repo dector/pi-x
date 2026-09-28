@@ -162,8 +162,27 @@ extensions=(
   "pi-nvim"
   "focus-mode"
   "vim-mode"
+  "model-presets"
   "herdr-agent-state"
 )
+
+# Report source extensions omitted by the whitelist, not extensions skipped
+# explicitly with --skip-herdr or missing whitelist entries.
+excluded_extensions=()
+for ext_dir in "$SRC_ROOT"/*/; do
+  ext="${ext_dir%/}"
+  ext="${ext##*/}"
+  whitelisted=0
+  for allowed in "${extensions[@]}"; do
+    if [[ "$ext" == "$allowed" ]]; then
+      whitelisted=1
+      break
+    fi
+  done
+  if [[ $whitelisted -eq 0 ]]; then
+    excluded_extensions+=("$ext")
+  fi
+done
 
 if [[ $SKIP_HERDR -eq 1 ]]; then
   extensions_without_herdr=()
@@ -281,3 +300,7 @@ else
 fi
 
 echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."
+if [[ ${#excluded_extensions[@]} -gt 0 ]]; then
+  echo "Extensions not installed (not in whitelist):"
+  printf '  - %s\n' "${excluded_extensions[@]}"
+fi
