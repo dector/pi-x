@@ -1,6 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import hideToolsExtension from "./index.ts";
 
+// Existing tests assume a running tool expands immediately.
+process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "0";
+
 class ToolExecutionComponent {
 	hideComponent = false;
 	isPartial = false;
@@ -21,7 +24,10 @@ const tuiKey = "__px_hide_tools_tui_v1";
 const themeKey = "__px_hide_tools_theme_v1";
 
 afterEach(() => {
+	const existing = (globalThis as any)[stateKey];
+	for (const timer of existing?.runningTimers?.values() ?? []) clearTimeout(timer);
 	for (const key of [stateKey, syncKey, tuiKey, themeKey]) delete (globalThis as any)[key];
+	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "0";
 });
 
 test("compact collapses failed tools; hidden still shows failed tools in full", async () => {
@@ -129,6 +135,58 @@ test("compact-running shows only executing tools in full until their final resul
 
 	await command("-s", ctx); // Cycle to hidden.
 	expect(lines()).toHaveLength(0);
+});
+
+test("compact-running keeps a fast tool collapsed until it crosses the delay", async () => {
+	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "2000";
+	const running = new ToolExecutionComponent("running");
+	const chat = { children: [running] as any[] };
+	const tui: any = {
+		layoutRoot: { children: [chat] },
+		doRender() {},
+		requestRender() { this.doRender(); },
+	};
+	let command!: (args: string, ctx: any) => Promise<void>;
+	const ui = {
+		theme: { fg: (_color: string, text: string) => text },
+		setWidget: (_key: string, factory: (tui: any, theme: any) => unknown) => factory(tui, ui.theme),
+		notify() {},
+	};
+	const ctx = { mode: "tui", hasUI: true, ui };
+	hideToolsExtension({
+		registerShortcut() {},
+		registerCommand: (_name: string, options: any) => { command = options.handler; },
+		on() {},
+	} as any);
+	await command("compact -s", ctx);
+	await command("-s", ctx); // Cycle to compact-running.
+	running.executionStarted = true;
+	running.isPartial = true;
+	tui.doRender();
+	const lines = () => chat.children.filter((child) => child.__px_hide_tools_line === "compact");
+	// Still within the delay: the tool stays behind its compact line.
+	expect(running.hideComponent).toBe(true);
+	expect(lines()).toHaveLength(1);
+
+	// Simulate crossing the delay without sleeping.
+	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "0";
+	tui.doRender();
+	expect(running.hideComponent).toBe(false);
+	expect(lines()).toHaveLength(0);
+
+	// A fast tool that lands within the delay never expands.
+	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "2000";
+	const fast = new ToolExecutionComponent("fast");
+	chat.children.push(fast);
+	tui.doRender(); // Fast tool sits collapsed.
+	expect(fast.hideComponent).toBe(true);
+	fast.executionStarted = true;
+	fast.isPartial = true;
+	fast.result = { isError: false };
+	fast.isPartial = false;
+	tui.doRender(); // It already finished: no full view ever shown.
+	expect(fast.hideComponent).toBe(true);
+	expect(lines()).toHaveLength(2);
 });
 
 test("compact status changes from dot to check or x as results arrive", async () => {

@@ -10,6 +10,8 @@ import { dirname, join } from "node:path";
  *   full    - pi's default: tools and thinking visible
  *   compact         - one custom `▸ status tool  args` line per tool call, thinking hidden
  *   compact-running - like compact, but running tools show their normal view
+ *                     once they have been running for RUNNING_REVEAL_DELAY_MS
+ *                     (fast tools stay collapsed so their view does not flash)
  *   hidden          - tool runs collapse to a centered `─── N tool calls hidden ───`
  *
  * Ctrl+Alt+E does the same but never writes the config file: the change
@@ -47,6 +49,9 @@ const WIDGET_KEY = "px:hide-tools-capture";
 const TOGGLE_SHORTCUT = "alt+e";
 const TOGGLE_SHORTCUT_SESSION = "ctrl+alt+e";
 
+/** In compact-running, expand a tool only once it has run this long. */
+const RUNNING_REVEAL_DELAY_MS = 2_000;
+
 type AnyRecord = Record<string, any>;
 
 type HideMode = "full" | "compact" | "compact-running" | "hidden";
@@ -78,6 +83,10 @@ interface HideToolsState {
 	/** Click-to-peek is enabled. */
 	peek: boolean;
 	chat?: AnyRecord;
+	/** Tool call ids we first saw running, mapped to the time we saw them. */
+	runningSince: Map<string, number>;
+	/** Pending re-render timers that fire when a running tool crosses the reveal delay. */
+	runningTimers: Map<string, ReturnType<typeof setTimeout>>;
 	/** Tool call ids whose compact line is expanded. */
 	revealedTools: Set<string>;
 	/** Run keys (`toolCallId` of the first tool) whose run is expanded in hidden mode. */
@@ -154,6 +163,8 @@ function state(): HideToolsState {
 		existing = {
 			mode: "full",
 			peek: true,
+			runningSince: new Map(),
+			runningTimers: new Map(),
 			revealedTools: new Set(),
 			revealedRuns: new Set(),
 			hiddenRenders: new WeakMap(),
@@ -161,6 +172,8 @@ function state(): HideToolsState {
 		};
 		global[STATE_KEY] = existing;
 	}
+	existing.runningSince ??= new Map();
+	existing.runningTimers ??= new Map();
 	existing.revealedTools ??= new Set();
 	existing.revealedRuns ??= new Set();
 	if (existing.peek === undefined) existing.peek = true;
@@ -192,6 +205,50 @@ function isToolError(candidate: unknown): boolean {
 /** Partial results still belong to a running tool; only a final result collapses it. */
 function isRunningTool(component: AnyRecord): boolean {
 	return component.executionStarted === true && component.isPartial === true;
+}
+
+/** Delay before compact-running expands a running tool. 0 makes it instant. */
+function runningRevealDelayMs(): number {
+	const raw = Number(process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS);
+	return Number.isFinite(raw) && raw >= 0 ? raw : RUNNING_REVEAL_DELAY_MS;
+}
+
+/** True when a running tool has run long enough to deserve its full view. */
+function isRunningLongEnough(component: AnyRecord): boolean {
+	if (!isRunningTool(component)) return false;
+	const id = toolId(component);
+	if (id === undefined) return true;
+	const since = state().runningSince.get(id);
+	return since !== undefined && Date.now() - since >= runningRevealDelayMs();
+}
+
+/**
+ * Remember when each tool started running and schedule one re-render for the
+ * moment it crosses the delay, so it expands without waiting for other output.
+ */
+function trackRunningTool(component: AnyRecord, tui: AnyRecord | undefined): void {
+	const current = state();
+	const id = toolId(component);
+	if (id === undefined) return;
+	if (!isRunningTool(component)) {
+		current.runningSince.delete(id);
+		const timer = current.runningTimers.get(id);
+		if (timer) {
+			clearTimeout(timer);
+			current.runningTimers.delete(id);
+		}
+		return;
+	}
+	if (current.runningSince.has(id)) return;
+	current.runningSince.set(id, Date.now());
+	const delay = runningRevealDelayMs();
+	if (delay <= 0) return;
+	const timer = setTimeout(() => {
+		current.runningTimers.delete(id);
+		tui?.requestRender?.(true);
+	}, delay + 20);
+	(timer as unknown as { unref?: () => void }).unref?.();
+	current.runningTimers.set(id, timer);
 }
 
 function isAssistant(candidate: unknown): boolean {
@@ -410,11 +467,12 @@ function sync(tui: AnyRecord | undefined): void {
 		if (isToolEntry(child)) {
 			const component = child as AnyRecord;
 			const id = toolId(component);
+			trackRunningTool(component, tui);
 			// `hidden` visibility is resolved per run below.
 			const revealed =
 				toolsVisible ||
 				(mode === "hidden" && isToolError(component)) ||
-				(mode === "compact-running" && isRunningTool(component)) ||
+				(mode === "compact-running" && isRunningLongEnough(component)) ||
 				((mode === "compact" || mode === "compact-running") && id !== undefined && current.revealedTools.has(id));
 			// Future setting: add `|| (mode === "compact" && isToolError(component))`
 			// to `revealed` to show full errors beneath the compact line.
@@ -457,7 +515,7 @@ function sync(tui: AnyRecord | undefined): void {
 	} else if (mode === "compact" || mode === "compact-running") {
 		for (let index = 0; index < children.length; index += 1) {
 			if (!isToolEntry(children[index])) continue;
-			if (mode === "compact-running" && isRunningTool(children[index] as AnyRecord)) continue;
+			if (mode === "compact-running" && isRunningLongEnough(children[index] as AnyRecord)) continue;
 			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
 			index += 1;
 		}
@@ -622,6 +680,11 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "startup" && event.reason !== "reload") {
 			state().mode = loadConfig().mode ?? "full";
 		}
+		// Drop running-tool timers from the previous transcript.
+		const current = state();
+		for (const timer of current.runningTimers.values()) clearTimeout(timer);
+		current.runningTimers.clear();
+		current.runningSince.clear();
 		// Keep the peek flags (and the mode on reload); re-resolve the chat.
 		state().chat = undefined;
 		capture(ctx);
