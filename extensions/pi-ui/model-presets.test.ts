@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { loadModelPresets, saveModelPresets, showModelPresetList, selectPresetOption, moveModelPreset, openModelPresets, cycleModelPresets } from "./model-presets.ts";
+import { loadModelPresets, saveModelPresets, showModelPresetList, selectPresetOption, moveModelPreset, openModelPresets, cycleModelPresets, cycleRewireModelPresets } from "./model-presets.ts";
 
 const presets = [
 	{ model: "provider/luna", thinkingLevel: "high" as const },
@@ -67,6 +67,45 @@ describe("model presets", () => {
 			expect(notices).toEqual(["No favorite models. Add one with Ctrl+, then m.", "No favorite models are available."]);
 		});
 	});
+	test("Alt+Shift+m cycles rewire targets without changing main model or enabling rewiring", async () => {
+		await withTempAgentDir(async () => {
+			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
+			let target: (typeof presets)[number] | undefined;
+			const applied: string[] = [];
+			const notices: string[] = [];
+			const ctx = {
+				model: { provider: "provider", id: "other" },
+				modelRegistry: { getAvailable: () => [{ provider: "provider", id: "luna", reasoning: true }, { provider: "provider", id: "sol", reasoning: true }] },
+				ui: { notify: (message: string) => { notices.push(message); } },
+			} as any;
+			const pi = {
+				getThinkingLevel: () => "low",
+				setModel: () => { throw new Error("must not switch main model"); },
+				events: { emit: (name: string, payload: any) => {
+					if (name.endsWith(":state:request")) payload.reply(target);
+					if (name.endsWith(":target")) { target = { model: payload.model, thinkingLevel: payload.thinkingLevel }; applied.push(payload.model); payload.onApplied(false); }
+				} },
+			} as any;
+			cycleRewireModelPresets(pi, ctx);
+			cycleRewireModelPresets(pi, ctx);
+			cycleRewireModelPresets(pi, ctx);
+			expect(applied).toEqual(["provider/luna", "provider/sol", "provider/luna"]);
+			expect(target).toEqual(presets[0]);
+			expect(notices).toEqual([]);
+			expect(ctx.model.id).toBe("other");
+		});
+	});
+
+	test("rewire cycling warns when the subagent listener is missing", async () => {
+		await withTempAgentDir(async () => {
+			saveModelPresets(presets);
+			const notices: string[] = [];
+			const ctx = { modelRegistry: { getAvailable: () => [{ provider: "provider", id: "luna", reasoning: true }] }, ui: { notify: (message: string) => { notices.push(message); } } } as any;
+			cycleRewireModelPresets({ events: { emit() {} } } as any, ctx);
+			expect(notices).toEqual(["Could not set rewire target. Is the subagent extension loaded?"]);
+		});
+	});
+
 	test("round trips and rejects invalid files", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-model-presets-"));
 		const file = path.join(dir, "nested", "presets.json");

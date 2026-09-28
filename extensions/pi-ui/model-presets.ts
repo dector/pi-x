@@ -199,27 +199,46 @@ export async function selectPresetOption(ctx: ExtensionContext, title: string, o
 	});
 }
 
-export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	let presets: ModelPreset[];
-	try { presets = loadModelPresets(); }
-	catch (error) { ctx.ui.notify(`Cannot read model presets: ${String(error)}`, "error"); return; }
-	if (!presets.length) { ctx.ui.notify("No favorite models. Add one with Ctrl+, then m.", "warning"); return; }
-
-	const current = ctx.model && `${ctx.model.provider}/${ctx.model.id}`;
-	const currentIndex = presets.findIndex((preset) => preset.model === current && preset.thinkingLevel === pi.getThinkingLevel());
+function nextAvailablePreset(ctx: ExtensionContext, presets: ModelPreset[], current?: ModelPreset): ModelPreset | undefined {
+	const currentIndex = presets.findIndex((preset) => preset.model === current?.model && preset.thinkingLevel === current.thinkingLevel);
 	const available = ctx.modelRegistry.getAvailable();
 	for (let step = 1; step <= presets.length; step++) {
 		const preset = presets[(currentIndex + step) % presets.length]!;
 		const model = available.find((item) => `${item.provider}/${item.id}` === preset.model);
-		if (!model || !availableThinkingLevels(model).includes(preset.thinkingLevel)) continue;
-		try {
-			if (!(await pi.setModel(model))) { ctx.ui.notify(`Could not select ${preset.model}`, "error"); return; }
-			pi.setThinkingLevel(preset.thinkingLevel);
-			ctx.ui.notify(`Favorite model: ${label(preset)}`, "info");
-		} catch (error) { ctx.ui.notify(`Could not select ${label(preset)}: ${String(error)}`, "error"); }
-		return;
+		if (model && availableThinkingLevels(model).includes(preset.thinkingLevel)) return preset;
 	}
-	ctx.ui.notify("No favorite models are available.", "warning");
+}
+
+function cycleFavorites(ctx: ExtensionContext, current?: ModelPreset): ModelPreset | undefined {
+	let presets: ModelPreset[];
+	try { presets = loadModelPresets(); }
+	catch (error) { ctx.ui.notify(`Cannot read model presets: ${String(error)}`, "error"); return; }
+	if (!presets.length) { ctx.ui.notify("No favorite models. Add one with Ctrl+, then m.", "warning"); return; }
+	const next = nextAvailablePreset(ctx, presets, current);
+	if (!next) ctx.ui.notify("No favorite models are available.", "warning");
+	return next;
+}
+
+export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const current = ctx.model && { model: `${ctx.model.provider}/${ctx.model.id}`, thinkingLevel: pi.getThinkingLevel() };
+	const preset = cycleFavorites(ctx, current);
+	if (!preset) return;
+	const model = ctx.modelRegistry.getAvailable().find((item) => `${item.provider}/${item.id}` === preset.model)!;
+	try {
+		if (!(await pi.setModel(model))) { ctx.ui.notify(`Could not select ${preset.model}`, "error"); return; }
+		pi.setThinkingLevel(preset.thinkingLevel);
+		ctx.ui.notify(`Favorite model: ${label(preset)}`, "info");
+	} catch (error) { ctx.ui.notify(`Could not select ${label(preset)}: ${String(error)}`, "error"); }
+}
+
+export function cycleRewireModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	let current: ModelPreset | undefined;
+	pi.events.emit("px:subagent:rewire:state:request", { ctx, reply: (state: ModelPreset | undefined) => { current = state; } });
+	const preset = cycleFavorites(ctx, current);
+	if (!preset) return;
+	let applied = false;
+	pi.events.emit("px:subagent:rewire:target", { ctx, ...preset, onApplied: () => { applied = true; } });
+	if (!applied) ctx.ui.notify("Could not set rewire target. Is the subagent extension loaded?", "warning");
 }
 
 export async function openModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
