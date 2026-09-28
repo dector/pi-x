@@ -143,9 +143,9 @@ describe("top-left model/review composition", () => {
 describe("chooseTopBorderSegments", () => {
 	const fullModel = `${FRAME_LEFT_CORNER_OPEN}󰙴 cdx/5.6-sol · med${FRAME_LABEL_CLOSE}`;
 	const compactModel = `${FRAME_LEFT_CORNER_OPEN}󰙴 cdx/5.6-sol · 🡺${FRAME_LABEL_CLOSE}`;
-	const fullGit = `${FRAME_LABEL_OPEN}󰐖 1 󰍵 0 󰦓 1 · 󰐖 93 󰍵 0${FRAME_RIGHT_CORNER_CLOSE}`;
-	const compactGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰦓1·󰐖93󰍵0${FRAME_RIGHT_CORNER_CLOSE}`;
-	const filesGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰦓1${FRAME_RIGHT_CORNER_CLOSE}`;
+	const fullGit = `${FRAME_LABEL_OPEN}󰐖 1 󰍵 0 󰎃 1 · 󰐖 93 󰍵 0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const compactGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰎃1·󰐖93󰍵0${FRAME_RIGHT_CORNER_CLOSE}`;
+	const filesGit = `${FRAME_LABEL_OPEN}󰐖1󰍵0󰎃1${FRAME_RIGHT_CORNER_CLOSE}`;
 	const choose = (width: number) =>
 		chooseTopBorderSegments({
 			width,

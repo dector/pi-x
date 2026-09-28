@@ -138,7 +138,7 @@ The input frame is drawn with side borders and corner characters, and compact
 labels are rendered in the frame corners:
 
 ```
-╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
+╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
 ╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╾ 󰦨 1.2k ╼━╯
 ```
@@ -164,14 +164,14 @@ labels are rendered in the frame corners:
 - **top-right** — git dirty totals collected internally by `neo-bar`
   (`git-stats.ts`), rendered as two icon groups, files first then changed lines,
   separated by ` · `:
-  `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
+  `󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ━━`. Rendered only when the repo is dirty. The
   counters are collected as numbers and rendered directly: the `+`/`-`/`M` prefixes
-  become Nerd Font icons (additions `󰐖`, removals `󰍵`, modified `󰦓`); the files group
+  become Nerd Font icons (additions `󰐖`, removals `󰍵`, modified `󰎃`); the files group
   also carries the modified-file count. Zero values render in the subdued accent
   (a darkened shade of the thinking color `thinkingOff`), while non-zero values use
   the shared git palette. On narrow frames the compact split form drops
-  the spaces (`󰐖1󰍵2󰦓4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
-  files group (`󰐖1󰍵2󰦓4`). The model label remains visible whenever it fits. Labels
+  the spaces (`󰐖1󰍵2󰎃4·󰐖150󰍵200`), then the changed-line group is dropped, keeping the
+  files group (`󰐖1󰍵2󰎃4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border; in `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.

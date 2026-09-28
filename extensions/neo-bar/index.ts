@@ -436,7 +436,7 @@ export function stripEditorCursor(lines: readonly string[]): string[] {
  * (`┃ <input> ┃`):
  *
  * ```
- * ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200 ╼━╮
+ * ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ╼━╮
  * ┃ ... input ...                                  ┃
  * ╰━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
  * ```

@@ -49,7 +49,7 @@ export const BORDER_SUBAGENT_ICON = "󰚩 ";
 export const BORDER_GIT_MARKER_ICONS = {
 	additions: "󰐖",
 	removals: "󰍵",
-	modified: "󰦓",
+	modified: "󰎃",
 } as const;
 
 /** Leading ANSI SGR sequences of a label, i.e. its producer style prefix. */
@@ -233,7 +233,7 @@ export function estimateMessageTokens(text: string): number {
 /**
  * Drop the decorative spaces from a border label so it fits narrow frames.
  * Only ASCII spaces are touched; ANSI color codes never contain one, so the
- * colored segments survive: `󰐖 1 󰍵 2 󰦓 4 · 󰐖 150 󰍵 200` -> `󰐖1󰍵2󰦓4·󰐖150󰍵200`.
+ * colored segments survive: `󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200` -> `󰐖1󰍵2󰎃4·󰐖150󰍵200`.
  */
 export function compactFrameLabel(label: string): string {
 	return label.replace(/ /g, "");
