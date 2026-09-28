@@ -1,12 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { BORDER_MESSAGE_ICON, estimateMessageTokens } from "./compose.ts";
+import { GIT_STATS_COLORS } from "./git-stats.ts";
 import { buildMessageSizeLabel } from "./index.ts";
 
-const theme = {
-	fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
-} as unknown as Parameters<typeof buildMessageSizeLabel>[1];
-
-const label = (text: string) => `\x1b[2m<thinkingOff>${BORDER_MESSAGE_ICON}${text}</thinkingOff>\x1b[22m`;
+const label = (text: string) => `${GIT_STATS_COLORS.removed}${BORDER_MESSAGE_ICON}${text}\x1b[39m`;
 
 describe("estimateMessageTokens", () => {
 	test("uses pi's conservative chars/4 heuristic", () => {
@@ -29,25 +26,20 @@ describe("buildMessageSizeLabel", () => {
 		expect(BORDER_MESSAGE_ICON).toBe("󰦨 ");
 	});
 
-	test("returns undefined for an empty message so the corner stays clear", () => {
-		expect(buildMessageSizeLabel("", theme)).toBeUndefined();
-		expect(buildMessageSizeLabel("   \n", theme)).toBeUndefined();
+	test("hides drafts below 1k tokens, including empty drafts", () => {
+		expect(buildMessageSizeLabel("")).toBeUndefined();
+		expect(buildMessageSizeLabel("   \n")).toBeUndefined();
+		expect(buildMessageSizeLabel("a".repeat(3996))).toBeUndefined();
+		expect(buildMessageSizeLabel("abcd", -5)).toBeUndefined();
 	});
 
-	test("renders the size in muted purple", () => {
-		expect(buildMessageSizeLabel("abcd", theme)).toBe(label("1"));
+	test("shows drafts at 1k tokens and above in git red", () => {
+		expect(buildMessageSizeLabel("a".repeat(4000))).toBe(label("1.0k"));
+		expect(buildMessageSizeLabel("a".repeat(4800))).toBe(label("1.2k"));
 	});
 
-	test("formats large sizes compactly", () => {
-		expect(buildMessageSizeLabel("a".repeat(4800), theme)).toBe(label("1.2k"));
-	});
-
-	test("adds the image token estimate on top of the text", () => {
-		expect(buildMessageSizeLabel("abcd", theme, 994)).toBe(label("995"));
-		expect(buildMessageSizeLabel("abcd", theme, -5)).toBe(label("1"));
-	});
-
-	test("shows only the image tokens when the text is empty", () => {
-		expect(buildMessageSizeLabel("", theme, 994)).toBe(label("994"));
+	test("shows pasted images even below the text threshold", () => {
+		expect(buildMessageSizeLabel("abcd", 50)).toBe(label("51"));
+		expect(buildMessageSizeLabel("", 994)).toBe(label("994"));
 	});
 });

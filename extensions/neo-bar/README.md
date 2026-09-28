@@ -247,7 +247,7 @@ labels are rendered in the frame corners:
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
     `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
-- **bottom-right** — the muted-purple unsent-message token size (`󰦨 1.2k`), followed
+- **bottom-right** — the git-red unsent-message token size (`󰦨 1.2k`), followed
   by optional muted-purple available-notes (`󰈙 <count>`, current project plus global)
   and orange prompt-stash (`󱊖 <count>`) counts. Text uses pi's conservative
   chars/4 heuristic on the paste-expanded editor text, so it reflects what will
@@ -255,8 +255,9 @@ labels are rendered in the frame corners:
   the file header (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's
   published vision calculator (upscale below ~544×544, downscale to ~1300×1300,
   1024-token cap). That is a first estimate only: other providers tokenize images
-  differently, and the path text is counted too. The token size is hidden while
-  the editor is empty; the counters are hidden when empty. On narrow frames,
+  differently, and the path text is counted too. The token size appears only
+  at 1k tokens or above, or when a pasted image contributes tokens; the counters
+  are hidden when empty. On narrow frames,
   stashes then notes are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.

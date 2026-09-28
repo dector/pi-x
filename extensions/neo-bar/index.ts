@@ -75,6 +75,7 @@ import {
 	collectGitSnapshot,
 	dirtyStats,
 	formatGitStatsText,
+	GIT_STATS_COLORS,
 	type GitStats,
 	GitStatsWatcher,
 	renderGitStatsLabel,
@@ -1157,17 +1158,15 @@ export function collectImageTokens(text: string, cwd: string): number {
 }
 
 // Unsent-message token size for the border's bottom-right corner, e.g. `󰦨 1.2k`.
-// Returns undefined for an empty editor so the corner stays clear. Text uses
+// Shown only for large drafts (>= 1k tokens) or pasted images. Text uses
 // pi's conservative chars/4 estimate on the paste-expanded input; `imageTokens`
 // adds the DeepSeek image estimate for any pasted image paths.
-export function buildMessageSizeLabel(
-	text: string,
-	theme: { fg: (token: ThemeColor, text: string) => string },
-	imageTokens = 0,
-): string | undefined {
-	const tokens = estimateMessageTokens(text) + Math.max(0, Math.floor(imageTokens));
-	if (tokens <= 0) return undefined;
-	return `\x1b[2m${theme.fg("thinkingOff", `${BORDER_MESSAGE_ICON}${formatTokens(tokens)}`)}\x1b[22m`;
+const LARGE_DRAFT_TOKENS = 1000;
+export function buildMessageSizeLabel(text: string, imageTokens = 0): string | undefined {
+	const imageEstimate = Math.max(0, Math.floor(imageTokens));
+	const tokens = estimateMessageTokens(text) + imageEstimate;
+	if (tokens < LARGE_DRAFT_TOKENS && imageEstimate === 0) return undefined;
+	return `${GIT_STATS_COLORS.removed}${BORDER_MESSAGE_ICON}${formatTokens(tokens)}\x1b[39m`;
 }
 
 interface FirstLineEntry {
@@ -2228,7 +2227,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
 			topRightGitStats: () => gitStats,
 			bottomRight: (text) =>
-				buildMessageSizeLabel(text, activeContext().ui.theme, collectImageTokens(text, activeContext().cwd)),
+				buildMessageSizeLabel(text, collectImageTokens(text, activeContext().cwd)),
 			relocatedLabels: relocatedBorderLabels,
 			getWorkingAnimation: () => workingAnimation,
 			interruptConfirmation: new InterruptConfirmationGuard({

@@ -206,7 +206,7 @@ horizontal editor padding (`paddingX: 1`), and renders:
   `󰅟 !` for allow-all. Subagent depth follows network: muted `󰚩 ×` when disabled,
   the subdued accent `󰚩 ✓` for top-level only, and warning-colored `󰚩 N` for
   recursive delegation.
-- bottom-right: the muted-purple unsent-message token size (`󰦨 1.2k`) comes first,
+- bottom-right: the git-red unsent-message token size (`󰦨 1.2k`) comes first,
   followed by muted-purple available-notes (`󰈙 <count>`) and orange stash (`󱊖 <count>`)
   indicators when nonzero. Text uses pi's conservative chars/4
   heuristic on the paste-expanded editor text, so it matches what will be sent.
@@ -214,8 +214,9 @@ horizontal editor padding (`paddingX: 1`), and renders:
   (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's published
   vision calculator (upscale below ~544×544, downscale to ~1300×1300, 1024-token
   cap); this is a first estimate, since other providers tokenize images
-  differently. The token label is hidden while the editor is empty. Narrow
-  frames drop stashes, then notes, before the token label.
+  differently. The token label appears only at 1k tokens or above, or when a
+  pasted image contributes tokens. Narrow frames drop stashes, then notes,
+  before the token label.
 
 Border labels use spaces instead of angle tacks (`╭━╾ left ╼━╮`).
 The frame line is heavy, but every point where it touches a label tapers to a
