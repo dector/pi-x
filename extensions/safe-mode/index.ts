@@ -1268,13 +1268,6 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 	});
 
 
-	pi.registerShortcut(Key.ctrlShiftAlt("m"), {
-		description: "Toggle safe mode outer access",
-		handler: async (ctx) => {
-			setOuterAccess(!outerAccess, ctx);
-		},
-	});
-
 	const unsubscribeRenewRequest = pi.events.on("px:renew:settings:request", (payload) => {
 		if (!payload || typeof payload !== "object" || !activeContext) return;
 		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };

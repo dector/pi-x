@@ -232,10 +232,10 @@ export async function cycleModelPresets(pi: ExtensionAPI, ctx: ExtensionContext,
 	} catch (error) { ctx.ui.notify(`Could not select ${label(preset)}: ${String(error)}`, "error"); }
 }
 
-export function cycleRewireModelPresets(pi: ExtensionAPI, ctx: ExtensionContext): void {
+export function cycleRewireModelPresets(pi: ExtensionAPI, ctx: ExtensionContext, direction: 1 | -1 = 1): void {
 	let current: ModelPreset | undefined;
 	pi.events.emit("px:subagent:rewire:state:request", { ctx, reply: (state: ModelPreset | undefined) => { current = state; } });
-	const preset = cycleFavorites(ctx, current);
+	const preset = cycleFavorites(ctx, current, direction);
 	if (!preset) return;
 	let applied = false;
 	pi.events.emit("px:subagent:rewire:target", { ctx, ...preset, onApplied: () => { applied = true; } });

@@ -120,6 +120,27 @@ describe("model presets", () => {
 		});
 	});
 
+	test("Ctrl+Alt+Shift+m cycles rewire targets backwards, skipping unavailable favorites", async () => {
+		await withTempAgentDir(async () => {
+			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
+			let target: (typeof presets)[number] | undefined;
+			const ctx = {
+				modelRegistry: { getAvailable: () => [{ provider: "provider", id: "luna", reasoning: true }, { provider: "provider", id: "sol", reasoning: true }] },
+				ui: { notify() {} },
+			} as any;
+			const pi = { events: { emit: (name: string, payload: any) => {
+				if (name.endsWith(":state:request")) payload.reply(target);
+				if (name.endsWith(":target")) { target = { model: payload.model, thinkingLevel: payload.thinkingLevel }; payload.onApplied(false); }
+			} } } as any;
+			cycleRewireModelPresets(pi, ctx, -1);
+			expect(target).toEqual(presets[1]);
+			cycleRewireModelPresets(pi, ctx, -1);
+			expect(target).toEqual(presets[0]);
+			cycleRewireModelPresets(pi, ctx, -1);
+			expect(target).toEqual(presets[1]);
+		});
+	});
+
 	test("rewire cycling warns when the subagent listener is missing", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets(presets);

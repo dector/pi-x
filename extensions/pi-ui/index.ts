@@ -31,6 +31,7 @@ const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
 const CYCLE_FAVORITE_MODEL_SHORTCUT = Key.alt("m");
 const CYCLE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.altShift("m");
 const CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT = Key.ctrlAlt("m");
+const CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrlShiftAlt("m");
 const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
 type LockableTui = {
 	addInputListener: (listener: (data: string) => { consume: boolean } | undefined) => () => void;
@@ -2230,6 +2231,10 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut(CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT, {
 		description: "Cycle favorite subagent rewire targets (model and thinking level)",
 		handler: (ctx) => { cycleRewireModelPresets(pi, ctx); },
+	});
+	pi.registerShortcut(CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT, {
+		description: "Cycle favorite subagent rewire targets backwards (model and thinking level)",
+		handler: (ctx) => { cycleRewireModelPresets(pi, ctx, -1); },
 	});
 
 	pi.registerShortcut(ACTION_DIALOG_TOGGLE_SHORTCUT, {

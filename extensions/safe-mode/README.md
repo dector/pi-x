@@ -195,8 +195,6 @@ This covers normal skill loading via `read` of `SKILL.md` plus sibling/reference
 
 - `Ctrl+Shift+M`
   - Cycle safe modes.
-- `Ctrl+Alt+Shift+M`
-  - Toggle outer access modifier.
 
 ## Approval dialog
 
