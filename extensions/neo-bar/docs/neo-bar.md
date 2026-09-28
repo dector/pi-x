@@ -149,11 +149,17 @@ Exact-name alias tables in `~/.pi/agent/status-bar.json` shorten the border labe
 
 ```json
 {
-  "providerAliases": { "openai-codex": "cdx", "deepseek": "dseek", "opencode-go": "opencode" },
+  "providerAliases": {
+    "openai-codex": "codex",
+    "deepseek": "dseek",
+    "opencode-go": "opencode"
+  },
   "modelAliases": {
-    "gpt-5.6-sol": "5.6-sol",
-    "deepseek-v4.1-flash": "4.1-flash",
-    "deepseek-v4-pro": "4-pro"
+    "gpt-6-astra": "6-astra",
+    "gpt-6-sol": "Sol-6",
+    "gpt-5-luna": "Luna-6",
+    "deepseek-v4.1-flash": "4.1-Flash",
+    "deepseek-flash": "flash"
   }
 }
 ```
