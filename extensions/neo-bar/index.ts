@@ -1158,10 +1158,10 @@ export function collectImageTokens(text: string, cwd: string): number {
 }
 
 // Unsent-message token size for the border's bottom-right corner, e.g. `󰦨 1.2k`.
-// Shown only for large drafts (>= 1k tokens) or pasted images. Text uses
+// Shown only for drafts with >= 150 tokens or pasted images. Text uses
 // pi's conservative chars/4 estimate on the paste-expanded input; `imageTokens`
 // adds the DeepSeek image estimate for any pasted image paths.
-const LARGE_DRAFT_TOKENS = 1000;
+const LARGE_DRAFT_TOKENS = 150;
 export function buildMessageSizeLabel(text: string, imageTokens = 0): string | undefined {
 	const imageEstimate = Math.max(0, Math.floor(imageTokens));
 	const tokens = estimateMessageTokens(text) + imageEstimate;

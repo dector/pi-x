@@ -214,7 +214,7 @@ horizontal editor padding (`paddingX: 1`), and renders:
   (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's published
   vision calculator (upscale below ~544×544, downscale to ~1300×1300, 1024-token
   cap); this is a first estimate, since other providers tokenize images
-  differently. The token label appears only at 1k tokens or above, or when a
+  differently. The token label appears only at 150 tokens or above, or when a
   pasted image contributes tokens. Narrow frames drop stashes, then notes,
   before the token label.
 

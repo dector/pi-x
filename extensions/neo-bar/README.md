@@ -256,7 +256,7 @@ labels are rendered in the frame corners:
   published vision calculator (upscale below ~544×544, downscale to ~1300×1300,
   1024-token cap). That is a first estimate only: other providers tokenize images
   differently, and the path text is counted too. The token size appears only
-  at 1k tokens or above, or when a pasted image contributes tokens; the counters
+  at 150 tokens or above, or when a pasted image contributes tokens; the counters
   are hidden when empty. On narrow frames,
   stashes then notes are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is

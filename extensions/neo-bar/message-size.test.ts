@@ -26,14 +26,15 @@ describe("buildMessageSizeLabel", () => {
 		expect(BORDER_MESSAGE_ICON).toBe("󰦨 ");
 	});
 
-	test("hides drafts below 1k tokens, including empty drafts", () => {
+	test("hides drafts below 150 tokens, including empty drafts", () => {
 		expect(buildMessageSizeLabel("")).toBeUndefined();
 		expect(buildMessageSizeLabel("   \n")).toBeUndefined();
-		expect(buildMessageSizeLabel("a".repeat(3996))).toBeUndefined();
+		expect(buildMessageSizeLabel("a".repeat(596))).toBeUndefined();
 		expect(buildMessageSizeLabel("abcd", -5)).toBeUndefined();
 	});
 
-	test("shows drafts at 1k tokens and above in git red", () => {
+	test("shows drafts at 150 tokens and above in git red", () => {
+		expect(buildMessageSizeLabel("a".repeat(600))).toBe(label("150"));
 		expect(buildMessageSizeLabel("a".repeat(4000))).toBe(label("1.0k"));
 		expect(buildMessageSizeLabel("a".repeat(4800))).toBe(label("1.2k"));
 	});
