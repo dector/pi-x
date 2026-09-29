@@ -76,7 +76,8 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
     adapter = next
     const current = generation
     if (next) detach = next.subscribe(event => { if (generation === current && adapter === next) emit(event) })
-    for (const stream of streams) stream.push({ kind: 'resync', seq: ++seq })
+    const resync = { kind: 'resync' as const, seq: ++seq }
+    for (const stream of streams) stream.push(resync)
   }
   setAdapter(initialAdapter)
 
