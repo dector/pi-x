@@ -2,6 +2,5 @@
   "name": "pi-tunnel",
   "private": true,
   "type": "module",
-  "scripts": { "test": "bun test" },
-  "dependencies": { "elysia": "^1.4.30" }
+  "scripts": { "test": "bun test" }
 }

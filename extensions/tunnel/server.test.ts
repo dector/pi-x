@@ -62,6 +62,19 @@ test('pairing and authenticated routes, origin/CSRF, idempotency and rebind', as
   } finally { server.close() }
 })
 
+test('Bun listener binds the requested port and releases it on close', async () => {
+  const { server, send } = fixture()
+  try {
+    expect((await send('/api/v1/session')).status).toBe(401)
+    expect(() => createTunnelServer(null, { port })).toThrow()
+    expect((await server.app.handle(new Request(origin + '/api/v1/session'))).status).toBe(401)
+  } finally { server.close() }
+  expect((await server.app.handle(new Request(origin + '/api/v1/session'))).status).toBe(503)
+  const replacement = createTunnelServer(null, { port })
+  try { expect((await fetch(origin + '/api/v1/session')).status).toBe(401) }
+  finally { replacement.close() }
+})
+
 test('SSE emits snapshot and updates, rejects unauthenticated access', async () => {
   const { server, send, event } = fixture()
   try {

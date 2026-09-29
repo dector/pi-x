@@ -1,4 +1,3 @@
-import { Elysia } from 'elysia'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { resolve, sep } from 'node:path'
@@ -217,8 +216,10 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
     }
     return error(404, 'Not found')
   }
-  const app = new Elysia().all('/', ({ request }) => handle(request)).all('/*', ({ request }) => handle(request))
-  app.listen({ port, hostname: host })
+  // Keep the test-facing handle interface while avoiding Elysia's TypeBox imports:
+  // Pi's bundled runtime resolves those imports to incompatible virtual modules.
+  const listener = Bun.serve({ port, hostname: host, fetch: handle })
+  const app = { handle, stop: () => listener.stop(true) }
   return {
     app, port, host, auth,
     newPairCode: () => auth.newCode(),
