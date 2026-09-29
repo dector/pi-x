@@ -44,7 +44,7 @@ test("compact footer rotates git, policy, and extended token stats", () => {
 });
 
 test("mobile rewire indicator moves to a right-aligned third status line", () => {
-	const label = "󰚩 ⇢ Inherit · high";
+	const label = "󰚩 ⇢Inherit · high";
 	const mobile = placeRewireStatusLabel(label, true, 60);
 	expect(mobile.firstLine).toBeUndefined();
 	expect(mobile.thirdLine.trimStart()).toBe(label);

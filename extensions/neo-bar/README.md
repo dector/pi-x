@@ -70,11 +70,11 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
   mode keeps the plain `~/pi-x (trunk)` form.
 - When session rewiring is enabled, the first-line right section shows a red
-  `󰚩 ⇢ <provider>/<model> · <effort>` immediately before the skill counter. In
+  `󰚩 ⇢<provider>/<model> · <effort>` immediately before the skill counter. In
   compact/mobile mode, the entire red indicator moves to its own right-aligned
   third status line. Provider and model aliases are applied, for example
-  `󰚩 ⇢ cdx/5.6-sol · high`. Inherited `Inherit model` shows
-  `󰚩 ⇢ Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 ⇢ Inherit`.
+  `󰚩 ⇢cdx/5.6-sol · high`. Inherited `Inherit model` shows
+  `󰚩 ⇢Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 ⇢Inherit`.
 - `new` display mode appends the context token breakdown to the first-line right
   section above 60 columns, after the producer items (including the skill counter).
   In compact mode it moves to the second-line right, and git stats take its first-line

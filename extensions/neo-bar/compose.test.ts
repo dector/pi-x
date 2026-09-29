@@ -76,24 +76,24 @@ describe("pure text helpers", () => {
 				{ "openai-codex": "cdx" },
 				{ "gpt-5.6-sol": "5.6-sol" },
 			),
-		).toBe("󰚩 ⇢ cdx/5.6-sol · high");
+		).toBe("󰚩 ⇢cdx/5.6-sol · high");
 	});
 
 	test("keeps full unaliased model names and supports provider-less ids", () => {
 		expect(formatRewireStatusLabel("anthropic/claude-sonnet", "medium")).toBe(
-			"󰚩 ⇢ anthropic/claude-sonnet · medium",
+			"󰚩 ⇢anthropic/claude-sonnet · medium",
 		);
 		expect(formatRewireStatusLabel("local-model", "off", {}, { "local-model": "local" })).toBe(
-			"󰚩 ⇢ local · off",
+			"󰚩 ⇢local · off",
 		);
 	});
 
 	test("keeps the configured effort for model-only inheritance", () => {
-		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 ⇢ Inherit · high");
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 ⇢Inherit · high");
 	});
 
 	test("omits the effort suffix for Inherit All", () => {
-		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true, true)).toBe("󰚩 ⇢ Inherit");
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true, true)).toBe("󰚩 ⇢Inherit");
 	});
 
 	test("compactFrameLabel removes value spacing without damaging ANSI colors", () => {

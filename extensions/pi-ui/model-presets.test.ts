@@ -169,14 +169,14 @@ describe("model presets", () => {
 		const ui = picker({ getMain: () => main, getRewire: () => rewire, onUse: async (preset) => { main = preset; }, onRewire: (preset) => { rewire = preset; } });
 		const initial = ui.view.render(80).join("\n");
 		expect(initial).toContain("󰙴  provider/luna · high");
-		expect(initial).toContain(" 󰒟 provider/sol · medium");
+		expect(initial).toContain(" ⇢provider/sol · medium");
 		ui.view.handleInput("j");
 		ui.view.handleInput("\r");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(main).toEqual(presets[1]);
 		ui.view.handleInput("\x1b\r");
 		expect(rewire).toEqual(presets[1]);
-		expect(ui.view.render(80).join("\n")).toContain("󰙴󰒟 provider/sol · medium");
+		expect(ui.view.render(80).join("\n")).toContain("󰙴⇢provider/sol · medium");
 		ui.view.handleInput("\x1b");
 		expect(await ui.result).toEqual({ type: "cancel" });
 	});
@@ -208,7 +208,7 @@ describe("model presets", () => {
 		const lines = ui.view.render(80).join("\n");
 		expect(lines.indexOf("provider/agent")).toBeGreaterThan(lines.indexOf("provider/other"));
 		expect(lines).toContain("󰙴  provider/other · low");
-		expect(lines).toContain(" 󰒟 provider/agent · high");
+		expect(lines).toContain(" ⇢provider/agent · high");
 		ui.view.handleInput("j");
 		ui.view.handleInput("j");
 		ui.view.handleInput("d");
@@ -244,7 +244,7 @@ describe("model presets", () => {
 		const ui = picker({ getMain: () => target, getRewire: () => target, onUse: async () => {}, onRewire: () => {} });
 		const text = ui.view.render(80).join("\n");
 		expect(text.match(/provider\/other/g)).toHaveLength(1);
-		expect(text).toContain("󰙴󰒟 provider/other · low");
+		expect(text).toContain("󰙴⇢provider/other · low");
 		ui.view.handleInput("\x1b");
 		await ui.result;
 	});
