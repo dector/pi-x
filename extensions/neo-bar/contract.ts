@@ -124,8 +124,8 @@ export const DEFAULT_NEO_BAR_LAYOUT: NeoBarLayout = {
 
 // New display mode: context/model/safe-mode live on the editor frame border, so
 // they are suppressed on the status line to avoid duplication. The input/output/
-// cache token breakdown moves to the first line (after the skills counter) and
-// drops the cost suffix, which the border already shows.
+// cache token breakdown moves to the first line above 60 columns, or to the
+// second line's right in compact mode, and drops the cost suffix shown on the border.
 export const BORDER_PRIORITY_NEO_BAR_LAYOUT: NeoBarLayout = {
 	left: [],
 	center: [],

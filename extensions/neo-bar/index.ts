@@ -290,21 +290,43 @@ interface RelocatedBorderLabels {
 	policyLabel?: string;
 }
 
+function appendStatusLabel(base: string | undefined, extra: string | undefined, separator: string): string | undefined {
+	return hasVisibleText(extra) ? (hasVisibleText(base) ? `${base}${separator}${extra}` : extra) : base;
+}
+
+/** Compact layout rotates git, policy, and the extended token breakdown across the footer. */
 export function placeRelocatedFrameLabels(args: {
 	left?: string;
 	right?: string;
 	git?: string;
 	policy?: string;
+	tokens?: string;
 	cost?: string;
 	compact: boolean;
 	separator: string;
 }): { left?: string; right?: string } {
-	const append = (base?: string, extra?: string): string | undefined =>
-		hasVisibleText(extra) ? (hasVisibleText(base) ? `${base}${args.separator}${extra}` : extra) : base;
 	return {
-		left: append(append(args.left, args.compact ? args.git : undefined), args.cost),
-		right: append(append(args.right, args.compact ? undefined : args.git), args.policy),
+		left: appendStatusLabel(
+			appendStatusLabel(args.left, args.compact ? args.policy : undefined, args.separator),
+			args.cost,
+			args.separator,
+		),
+		right: appendStatusLabel(
+			appendStatusLabel(args.right, args.compact ? args.tokens : args.git, args.separator),
+			args.compact ? undefined : args.policy,
+			args.separator,
+		),
 	};
+}
+
+export function placeFirstLineRightIndicators(args: {
+	producer?: string;
+	tokens?: string;
+	git?: string;
+	compact: boolean;
+	separator: string;
+}): string | undefined {
+	return appendStatusLabel(args.producer, args.compact ? args.git : args.tokens, args.separator);
 }
 
 interface FrameStatusEditorOptions {
@@ -2088,6 +2110,14 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					const defaultFirstLine = theme.fg("dim", pwd);
 
 					const firstLineTokenLabel = displayMode === "new" ? buildFirstLineTokenLabel(activeCtx, theme) : undefined;
+					const compactFrame = displayMode === "new" && relocatedBorderLabels.compact === true;
+					const relocatedGitStats = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
+					const relocatedGit = relocatedGitStats
+						? decorateBorderGitStats(relocatedGitStats, {
+								mute: (value) => styleDarkAccent(theme, value),
+								separator: (value) => theme.fg("thinkingOff", value),
+							})
+						: undefined;
 
 					let line1: string;
 					if (hasFirstLineContent()) {
@@ -2116,14 +2146,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							attensionCoreSuffix,
 							rewireContent,
 						);
-						const right = firstLineTokenLabel
-							? producerRight
-								? `${producerRight}${firstLineJoinSeparator}${firstLineTokenLabel}`
-								: firstLineTokenLabel
-							: producerRight;
+						const right = placeFirstLineRightIndicators({
+							producer: producerRight,
+							tokens: firstLineTokenLabel,
+							git: relocatedGit,
+							compact: compactFrame,
+							separator: firstLineJoinSeparator,
+						});
 						line1 = renderThreeSectionLine(width, left, center, right);
-					} else if (firstLineTokenLabel) {
-						line1 = renderThreeSectionLine(width, defaultFirstLine, undefined, firstLineTokenLabel);
+					} else if (firstLineTokenLabel || (compactFrame && relocatedGit)) {
+						line1 = renderThreeSectionLine(width, defaultFirstLine, undefined, compactFrame ? relocatedGit : firstLineTokenLabel);
 					} else {
 						line1 = truncateToWidth(defaultFirstLine, width, theme.fg("dim", "..."));
 					}
@@ -2174,23 +2206,19 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					let center = renderSection(layout.center, undefined, joinSeparator);
 					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
-					// Compact mode puts git on the left and policy on the right; on
-					// wider frames relocated git stays on the right. Cost falls back left.
+					// Compact mode puts policy on the left and extended tokens on the
+					// right; git moves to line 1 right. Cost still falls back left.
 					const relocatedContext = displayMode === "new" ? relocatedBorderLabels.contextLabel : undefined;
 					const relocatedPolicy = displayMode === "new" ? relocatedBorderLabels.policyLabel : undefined;
-					const relocatedGitStats = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
-					const relocatedGit = relocatedGitStats
-						? decorateBorderGitStats(relocatedGitStats, {
-								mute: (value) => styleDarkAccent(theme, value),
-								separator: (value) => theme.fg("thinkingOff", value),
-							})
-						: undefined;
 					const mergeFrameLabels = (left?: string, right?: string, separator: string = joinSeparator) =>
 						placeRelocatedFrameLabels({
-							left, right, separator,
-							compact: relocatedBorderLabels.compact === true,
+							left,
+							right,
+							separator,
+							compact: compactFrame,
 							git: relocatedGit,
 							policy: relocatedPolicy,
+							tokens: compactFrame ? firstLineTokenLabel : undefined,
 							cost: relocatedContext,
 						});
 					({ left, right } = mergeFrameLabels(left, right));

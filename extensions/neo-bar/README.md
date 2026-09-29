@@ -24,8 +24,8 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   - `center: []`
   - `right: ["context-watcher-tokens", "context-watcher-model", "context-watcher-percent"]`
 - `new` display mode uses an empty second line (see [Display mode](#display-mode)) because
-  context/model/safe-mode are shown on the editor frame border and the token breakdown
-  moves to the first line.
+  context/model/safe-mode are shown on the editor frame border. The token breakdown
+  moves to the first line above 60 columns, or to the second line's right in compact mode.
 - `context-watcher-*` IDs are computed internally by `neo-bar` from active context usage/model.
 - Token label format: `↑<input>/↓<output>/<cacheRead>`.
 - Cost suffix: for providers in the cost-display whitelist (currently `deepseek`), the label gains a cumulative session cost suffix ` ($<price>)`, for example `↑12k/↓3.4k/45k ($0.0023)`.
@@ -74,8 +74,9 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   and model aliases are applied, for example `󰚩 󰒟 cdx/5.6-sol · high`. Inherited
   `Inherit model` shows `󰚩 󰒟 Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 󰒟 Inherit`.
 - `new` display mode appends the context token breakdown to the first-line right
-  section, after the producer items (that is, after the `󰐱 <read>/<loaded>` skill
-  counter when present). It is prefixed with the total-usage icon and omits the cost
+  section above 60 columns, after the producer items (including the skill counter).
+  In compact mode it moves to the second-line right, and git stats take its first-line
+  slot. The breakdown is prefixed with the total-usage icon and omits the cost
   suffix: `󰓡 ↑<input>/↓<output>/<cacheRead>`.
 
 ### Extra rows
@@ -174,8 +175,8 @@ labels are rendered in the frame corners:
   files group (`󰐖1󰍵2󰎃4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border above 60 columns if they fit; at 60 columns or
-  less they move to the left of status line 2, while price takes the top-right corner. In
-  `legacy` mode they move to the first line
+  less they move to the first-line right section (after producer items), while
+  price takes the top-right corner. In `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
 - **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage.
   - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> · <tokens> `. The
@@ -261,8 +262,9 @@ labels are rendered in the frame corners:
   at 150 tokens or above, or when a pasted image contributes tokens; the counters
   are hidden when empty. At 60 columns or less, cost (including the subagent
   total when present) moves to the top-right corner and network and subagent
-  indicators move to the right of status line 2, where git stats used to go.
-  If the top-right cost cannot fit, it moves to the left of status line 2. On wider frames cost moves to
+  indicators move to the left of status line 2, while the input/output/cache
+  breakdown moves to its right. If the top-right cost cannot fit, it joins the
+  left of status line 2. On wider frames cost moves to
   status line 2 when the full bottom-right label cannot fit. Stashes then notes
   are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is
@@ -278,9 +280,10 @@ labels are rendered in the frame corners:
 - `new` (default) — border priority.
   - Editor frame shows the corner labels (top-left model icon + model · thinking + review, top-right git totals, bottom-left safe-mode · network + context).
   - Status line 2 is omitted (all sections empty): `left: []`, `center: []`, `right: []`.
-  - The input/output/cache token breakdown moves to status line 1, right after the
-    producer items (after the skill counter), prefixed with the total-usage icon,
-    and omits the cost suffix because the border already shows cost.
+  - Above 60 columns, the input/output/cache token breakdown follows the
+    first-line producer items. In compact mode, git stats use that slot and
+    the breakdown moves to status line 2's right. It keeps the total-usage
+    icon and omits the cost suffix because the border already shows cost.
   - `safe-mode`, the effective network token, `switch-thinking` (favorite thinking modes), model, and percent are hidden from the status line.
 - `legacy` — neo-bar priority.
   - Editor frame is the plain pi editor (horizontal borders only, no corner labels).

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { FrameStatusEditor, placeRelocatedFrameLabels } from "./index.ts";
+import { FrameStatusEditor, placeFirstLineRightIndicators, placeRelocatedFrameLabels } from "./index.ts";
 
 type Options = ConstructorParameters<typeof FrameStatusEditor>[3];
 
@@ -28,19 +28,19 @@ function makeEditor(mode: "new" | "legacy" = "new", decorationColors = false) {
 	return { editor, relocatedLabels };
 }
 
-test("compact status line swaps git left and policy right without moving fallback cost", () => {
-	expect(placeRelocatedFrameLabels({
-		left: undefined, right: undefined, git: "GIT", policy: "󰅟 ✓ · 󰚩 2", cost: undefined,
-		compact: true, separator: " · ",
-	})).toEqual({ left: "GIT", right: "󰅟 ✓ · 󰚩 2" });
-	expect(placeRelocatedFrameLabels({
-		left: undefined, right: undefined, git: "GIT", policy: "󰅟 ✓ · 󰚩 2", cost: "COST",
-		compact: true, separator: " · ",
-	})).toEqual({ left: "GIT · COST", right: "󰅟 ✓ · 󰚩 2" });
-	expect(placeRelocatedFrameLabels({
-		left: undefined, right: undefined, git: "GIT", cost: "COST",
-		compact: false, separator: " · ",
-	})).toEqual({ left: "COST", right: "GIT" });
+test("compact footer rotates git, policy, and extended token stats", () => {
+	const labels = { git: "GIT", policy: "󰅟 ✓ · 󰚩 2", tokens: "󰊚 ↑10/↓2/5", separator: " · " };
+	expect(placeFirstLineRightIndicators({ producer: "OTHER", ...labels, compact: true })).toBe("OTHER · GIT");
+	expect(placeRelocatedFrameLabels({ ...labels, compact: true })).toEqual({
+		left: "󰅟 ✓ · 󰚩 2", right: "󰊚 ↑10/↓2/5",
+	});
+	expect(placeRelocatedFrameLabels({ ...labels, cost: "COST", compact: true })).toEqual({
+		left: "󰅟 ✓ · 󰚩 2 · COST", right: "󰊚 ↑10/↓2/5",
+	});
+	expect(placeFirstLineRightIndicators({ producer: "OTHER", ...labels, compact: false })).toBe("OTHER · 󰊚 ↑10/↓2/5");
+	expect(placeRelocatedFrameLabels({ ...labels, cost: "COST", compact: false })).toEqual({
+		left: "COST", right: "GIT · 󰅟 ✓ · 󰚩 2",
+	});
 });
 
 describe("locked editor frame", () => {

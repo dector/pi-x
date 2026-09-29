@@ -117,9 +117,11 @@ Placement priority:
 `displayMode` (`new` | `legacy`, default `new`) controls which surface owns the
 context/model/safe-mode info:
 
-- `new` (border priority): editor frame shows the corner labels; status line 2 is
-  omitted and the input/output/cache token breakdown moves to status line 1 (after
-  the producer items), prefixed with the total-usage icon and with no cost suffix.
+- `new` (border priority): editor frame shows the corner labels. Above 60 columns,
+  status line 2 is omitted and the input/output/cache token breakdown appears on
+  status line 1 after producer items. In compact mode, git stats take that spot
+  and the breakdown moves to status line 2's right. It keeps the total-usage icon
+  and has no cost suffix.
   `safe-mode`, `switch-thinking`, `context-watcher-model`, and
   `context-watcher-percent` are hidden. The git dirty totals also move
   from the first line to the frame top-right.
@@ -188,15 +190,16 @@ horizontal editor padding (`paddingX: 1`), and renders:
   changed-line group is dropped to keep the files group (`󰐖1󰍵2󰎃4`). The model label
   remains visible whenever it fits, and labels sharing the top edge need only one
   heavy border dash between them. In `new` mode these totals move to status
-  line 2 on the left at 60 columns or less, while price takes the top-right corner (or
-  they move if they do not fit on a wider frame);
+  line 1 on the right at 60 columns or less, while price takes the top-right corner
+  (or they move to line 2's right if they do not fit on a wider frame);
   in `legacy` mode they move to the first line right section as
   `+1 -2 M4 · +150 -200`.
 - bottom-left: context usage, prefixed with `󰊚 ` (`━━ 󰊚 15.9% · 210k `).
   The cost is shown at the end of the bottom-right indicators, prefixed with `󰇁 `
   (`󰇁 0.03`). At 60 columns or less, price (including subagent total) moves
-  to the top-right corner and network/subagent indicators move to the right of
-  status line 2. If price cannot fit on top, it moves to the left of status line 2;
+  to the top-right corner and network/subagent indicators move to the left of
+  status line 2, with extended token stats on the right. If price cannot fit on
+  top, it joins the left of status line 2;
   on wider frames it moves
   there if the full bottom-right label cannot fit.
   The border form has no trailing `$`. Both labels are colored with the subdued accent (a darkened thinking
