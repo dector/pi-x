@@ -1,7 +1,7 @@
 // No dependencies: all Pi content is inserted as text nodes, never as HTML.
 const $ = (id) => document.getElementById(id);
 const ui = Object.fromEntries(['identity','connection','context','session-name','cwd','notice','conversation','messages','activity','bottom','work-state','stop','compose','prompt','send','pair-overlay','pair-form','pair-code','pair-error','pair-submit','choice-overlay'].map(id => [id, $(id)]));
-const state = { sessionId: null, seq: 0, entries: [], busy: false, attention: false, connected: false, pending: false, source: null, generation: 0, timer: null, retryDelay: 1000, draftKey: null, draftText: null, live: null };
+const state = { sessionId: null, seq: 0, entries: [], busy: false, attention: false, connected: false, pending: false, source: null, generation: 0, timer: null, retryDelay: 1000, draftKey: null, draftText: null, live: null, frame: 0 };
 const make = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text != null) el.textContent = String(text); return el; };
 function banner(text) { ui.notice.textContent = text || ''; ui.notice.hidden = !text; }
 function connection(text, style = '') { ui.connection.textContent = text; ui.connection.className = `status ${style}`; state.connected = style === 'online'; updateControls(); }
@@ -63,13 +63,38 @@ function render() {
     const body = make('div', 'message-body'); renderContent(body, message); card.append(body); fragment.append(card);
   }
   if (state.live && !state.entries.some(e => e.id != null && e.id === state.live.id)) {
-    const card = make('article', 'message assistant'); card.append(make('div', 'message-head', 'Pi · streaming'));
+    const liveRole = state.live.message?.role ?? 'assistant';
+    const card = make('article', `message ${liveRole}`); card.append(make('div', 'message-head', liveRole === 'assistant' ? 'Pi · streaming' : liveRole === 'user' ? 'You' : liveRole));
     const body = make('div', 'message-body'); renderContent(body, state.live.message); card.append(body); fragment.append(card);
   }
   if (!fragment.childNodes.length) fragment.append(make('p', 'empty', 'This branch has no messages yet. Send a prompt to begin.'));
   ui.messages.replaceChildren(fragment);
   if (follow) scrollBottom(); else ui.conversation.scrollTop = oldTop; // Keep reader position.
   updateControls();
+}
+function scheduleRender() {
+  if (state.frame) return;
+  state.frame = requestAnimationFrame(() => { state.frame = 0; render(); });
+}
+function applyDelta(delta) {
+  if (!delta || typeof delta !== 'object') return;
+  const type = delta.type;
+  const index = delta.contentIndex;
+  if (!Number.isInteger(index) || index < 0 || index > 200) return;
+  if (!state.live) state.live = { id: null, message: { role: 'assistant', content: [] } };
+  const content = state.live.message.content;
+  if (type === 'text_start' || type === 'thinking_start') content[index] = type === 'text_start' ? { type: 'text', text: '' } : { type: 'thinking', thinking: '' };
+  if (type === 'text_delta') {
+    if (!content[index] || content[index].type !== 'text') content[index] = { type: 'text', text: '' };
+    content[index].text += String(delta.delta ?? '');
+  }
+  if (type === 'thinking_delta') {
+    if (!content[index] || content[index].type !== 'thinking') content[index] = { type: 'thinking', thinking: '' };
+    content[index].thinking += String(delta.delta ?? '');
+  }
+  if (type === 'text_end' && typeof delta.content === 'string') content[index] = { type: 'text', text: delta.content };
+  if (type === 'thinking_end' && typeof delta.content === 'string') content[index] = { type: 'thinking', thinking: delta.content };
+  if (type === 'toolcall_end' && delta.toolCall) content[index] = delta.toolCall;
 }
 function identity(snapshot) {
   ui.identity.textContent = snapshot.name || snapshot.sessionId || 'Active session';
@@ -108,11 +133,14 @@ function applyEvent(event) {
   if (event.kind === 'attention') state.attention = true;
   if (['message_start','message_update','message_end'].includes(event.kind)) {
     const message = data.message ?? (data.role ? data : null);
-    if (message) upsert(message, data.id ?? data.entryId);
-    // Without an entry ID, a completed message must be reconciled with Pi's branch snapshot.
-    if (event.kind === 'message_end') { state.live = null; reconnectSoon(); }
+    if (message) {
+      if (!data.id && !data.entryId) state.live = { id: null, message };
+      else upsert(message, data.id ?? data.entryId);
+    } else if (event.kind === 'message_update') applyDelta(data.assistantMessageEvent);
+    // Native Pi message events have no persisted entry ID; reconcile the completed branch.
+    if (event.kind === 'message_end') reconnectSoon();
   }
-  render();
+  scheduleRender();
 }
 function reconnectSoon() { clearTimeout(state.timer); state.timer = setTimeout(() => reconnect(), 350); }
 function reconnect(message) {
