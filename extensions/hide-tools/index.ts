@@ -72,7 +72,7 @@ interface MouseEventLike {
 }
 
 interface InsertedLine {
-	[LINE_FLAG]: "summary" | "compact";
+	[LINE_FLAG]: "summary" | "compact" | "spacing";
 	render(width: number): string[];
 	invalidate(): void;
 	handleMouse?(event: MouseEventLike): { handled: boolean; render?: boolean } | undefined;
@@ -357,7 +357,7 @@ function compactText(component: AnyRecord, revealed: boolean, width: number): st
 
 /** Build an inserted line, optionally clickable to toggle a peek. */
 function makeLine(
-	kind: "summary" | "compact",
+	kind: "summary" | "compact" | "spacing",
 	render: (width: number) => string[],
 	onActivate?: () => void,
 ): InsertedLine {
@@ -513,11 +513,25 @@ function sync(tui: AnyRecord | undefined): void {
 			index = end;
 		}
 	} else if (mode === "compact" || mode === "compact-running") {
+		let previousTool = false;
 		for (let index = 0; index < children.length; index += 1) {
-			if (!isToolEntry(children[index])) continue;
-			if (mode === "compact-running" && isRunningLongEnough(children[index] as AnyRecord)) continue;
-			children.splice(index, 0, makeCompactLine(children[index] as AnyRecord));
-			index += 1;
+			const child = children[index];
+			if (!isToolEntry(child)) {
+				// Thinking-only assistant entries render nothing in compact modes.
+				if (!isAssistant(child) || hasVisibleText(child as AnyRecord)) previousTool = false;
+				continue;
+			}
+			if (mode === "compact-running" && isRunningLongEnough(child as AnyRecord)) {
+				previousTool = true;
+				continue;
+			}
+			// Pi's assistant text has no trailing spacer before tool calls.
+			// Add one only at the start of a compact tool group.
+			if (!previousTool && index > 0 && !isSpacer(children[index - 1])) {
+				children.splice(index++, 0, makeLine("spacing", () => [""]));
+			}
+			children.splice(index++, 0, makeCompactLine(child as AnyRecord));
+			previousTool = true;
 		}
 	}
 }

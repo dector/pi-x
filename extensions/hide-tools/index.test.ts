@@ -14,7 +14,7 @@ class ToolExecutionComponent {
 }
 
 class AssistantMessageComponent {
-	lastMessage = { stopReason: "error", errorMessage: "Usage limit reached", content: [] };
+	lastMessage: any = { stopReason: "error", errorMessage: "Usage limit reached", content: [] };
 	render() { return ["Error: Usage limit reached"]; }
 }
 
@@ -28,6 +28,45 @@ afterEach(() => {
 	for (const timer of existing?.runningTimers?.values() ?? []) clearTimeout(timer);
 	for (const key of [stateKey, syncKey, tuiKey, themeKey]) delete (globalThis as any)[key];
 	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "0";
+});
+
+test("compact separates message text from tool groups without gaps between tools", async () => {
+	class UserMessageComponent { render() { return ["User blah blah"]; } }
+	const user = new UserMessageComponent();
+	const assistant = new AssistantMessageComponent();
+	assistant.lastMessage = { stopReason: "stop", content: [{ type: "text", text: "Agent blah blah" }] };
+	const thinking = new AssistantMessageComponent();
+	thinking.lastMessage = { stopReason: "toolUse", content: [{ type: "thinking", thinking: "hmm" }] };
+	const first = new ToolExecutionComponent("first");
+	const second = new ToolExecutionComponent("second");
+	const third = new ToolExecutionComponent("third");
+	const chat = { children: [user, assistant, thinking, first, second, user, third] as any[] };
+	const tui: any = { layoutRoot: { children: [chat] }, doRender() {}, requestRender() { this.doRender(); } };
+	let command!: (args: string, ctx: any) => Promise<void>;
+	const ui = {
+		theme: { fg: (_color: string, text: string) => text },
+		setWidget: (_key: string, factory: (tui: any, theme: any) => unknown) => factory(tui, ui.theme),
+		notify() {},
+	};
+	hideToolsExtension({
+		registerShortcut() {},
+		registerCommand: (_name: string, options: any) => { command = options.handler; },
+		on() {},
+	} as any);
+	await command("compact -s", { mode: "tui", hasUI: true, ui });
+	const kinds = () => chat.children.map((child) => child.__px_hide_tools_line ?? child.constructor.name);
+	expect(kinds()).toEqual([
+		"UserMessageComponent", "AssistantMessageComponent", "AssistantMessageComponent",
+		"spacing", "compact", "ToolExecutionComponent", "compact", "ToolExecutionComponent",
+		"UserMessageComponent", "spacing", "compact", "ToolExecutionComponent",
+	]);
+	for (const mode of ["compact-running", "compact"]) {
+		await command(`${mode} -s`, { mode: "tui", hasUI: true, ui });
+		tui.doRender();
+		expect(kinds().filter((kind) => kind === "spacing")).toHaveLength(2);
+	}
+	await command("full -s", { mode: "tui", hasUI: true, ui });
+	expect(kinds().filter((kind) => kind === "spacing" || kind === "compact")).toHaveLength(0);
 });
 
 test("compact collapses failed tools; hidden still shows failed tools in full", async () => {
