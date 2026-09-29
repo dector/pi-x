@@ -62,7 +62,7 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   let closed = false
   type Stream = { push: (event: TunnelEvent | { kind: 'resync'; seq: number }) => void; close: () => void }
   const streams = new Set<Stream>()
-  const dedup = new Map<string, Map<string, Promise<Response>>>()
+  const dedup = new Map<string, Map<string, { generation: number; sessionId: string; payload: string; response: Promise<Response> }>>()
 
   function emit(event: Omit<TunnelEvent, 'seq'>) {
     const wire = { ...event, seq: ++seq }
@@ -137,9 +137,15 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
       const current = adapter, stamp = generation
       if (!current) return error(503, 'Pi unavailable')
       try {
-        const snapshot = await current.snapshot()
-        if (generation !== stamp) return error(503, 'Pi rebinding; retry')
-        return json({ version: 1, seq, ...snapshot }, 200, { 'Cache-Control': 'no-store' })
+        // A snapshot must never be labelled with a sequence newer than its contents.
+        // Retry if an event lands while the (possibly async) snapshot is captured.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const before = seq
+          const snapshot = await current.snapshot()
+          if (generation !== stamp) return error(503, 'Pi rebinding; retry')
+          if (seq === before) return json({ version: 1, seq: before, ...snapshot }, 200, { 'Cache-Control': 'no-store' })
+        }
+        return error(503, 'Session changing; retry')
       } catch { return error(503, 'Pi unavailable') }
     }
     if (url.pathname === '/api/v1/events' && request.method === 'GET') {
@@ -177,14 +183,17 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
           if (cursor !== null && cursor !== String(seq)) push({ kind: 'resync', seq })
           const current = adapter, stamp = generation
           if (!current) { snapshotReady = true; push({ kind: 'resync', seq }) }
-          else Promise.resolve().then(() => current.snapshot()).then(snapshot => {
+          else {
+            const before = seq
+            Promise.resolve().then(() => current.snapshot()).then(snapshot => {
             if (ended) return
-            if (stamp !== generation) { snapshotReady = true; push({ kind: 'resync', seq }); return }
-            const line = `id: ${seq}\nevent: snapshot\ndata: ${JSON.stringify({ kind: 'snapshot', seq, snapshot })}\n\n`
+            if (stamp !== generation || seq !== before) { snapshotReady = true; push({ kind: 'resync', seq }); return }
+            const line = `id: ${before}\nevent: snapshot\ndata: ${JSON.stringify({ kind: 'snapshot', seq: before, snapshot })}\n\n`
             // Existing branch history may be large: never silently truncate it.
             // The event cap applies to live events, not the initial snapshot.
             queue.unshift(line); snapshotReady = true; flush()
           }).catch(() => { snapshotReady = true; push({ kind: 'resync', seq }) })
+          }
           request.signal.addEventListener('abort', close, { once: true })
         },
         pull() { drain?.() },
@@ -202,8 +211,15 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
       if (url.pathname.endsWith('/prompts') && (typeof data?.text !== 'string' || !data.text.trim() || data.text.length > 12_000 || !['normal', 'followUp', 'steer'].includes(data.mode))) return error(400, 'Invalid prompt')
       const cache = dedup.get(client.id) ?? new Map<string, Promise<Response>>()
       dedup.set(client.id, cache)
+      let sessionId: string
+      try { sessionId = (await current.snapshot()).sessionId } catch { return error(503, 'Pi unavailable') }
+      if (generation !== stamp) return error(503, 'Pi rebinding; retry')
+      const payload = JSON.stringify([url.pathname, data])
       const existing = cache.get(key)
-      if (existing) return (await existing).clone()
+      if (existing) {
+        if (existing.generation !== stamp || existing.sessionId !== sessionId || existing.payload !== payload) return error(409, 'Idempotency key belongs to a different request or session')
+        return (await existing.response).clone()
+      }
       const result = (async () => {
         try {
           if (generation !== stamp) return error(503, 'Pi rebinding; retry')
@@ -212,7 +228,7 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
           return json({ accepted: true }, 202)
         } catch { return json({ accepted: false, error: 'Pi operation failed; acceptance unknown' }, 503) }
       })()
-      cache.set(key, result)
+      cache.set(key, { generation: stamp, sessionId, payload, response: result })
       if (cache.size > 256) cache.delete(cache.keys().next().value!)
       return (await result).clone()
     }

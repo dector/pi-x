@@ -63,7 +63,11 @@ test('pairing and authenticated routes, origin/CSRF, idempotency and rebind', as
     const request = { method: 'POST', headers: { ...browser, 'Idempotency-Key': 'abc12345' }, body: JSON.stringify({ text: 'hi', mode: 'followUp' }) }
     expect((await send('/api/v1/prompts', request)).status).toBe(202)
     expect((await send('/api/v1/prompts', request)).status).toBe(202)
+    expect((await send('/api/v1/prompts', { ...request, body: JSON.stringify({ text: 'changed', mode: 'followUp' }) })).status).toBe(409)
     expect(calls).toEqual([['hi', 'followUp']])
+    server.setAdapter(null)
+    server.setAdapter(adapter)
+    expect((await send('/api/v1/prompts', request)).status).toBe(409)
     server.setAdapter(null)
     expect((await send('/api/v1/prompts', { ...request, headers: { ...browser, 'Idempotency-Key': 'new12345' } })).status).toBe(503)
     server.setAdapter(adapter)
@@ -90,6 +94,22 @@ test('Bun listener binds the requested port and releases it on close', async () 
   const replacement = createTunnelServer(null, { port })
   try { expect((await fetch(origin + '/api/v1/session')).status).toBe(401) }
   finally { replacement.close() }
+})
+
+test('snapshot does not skip events emitted during async capture', async () => {
+  const { server, send, adapter, event } = fixture()
+  try {
+    const code = server.newPairCode().code
+    const paired = await send('/api/v1/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, mode: 'client' }) })
+    const { token } = await paired.json()
+    server.setAdapter({ ...adapter, snapshot: async () => {
+      const result = await adapter.snapshot()
+      event('during-snapshot')
+      return result
+    } })
+    const response = await send('/api/v1/session', { headers: { Authorization: `Bearer ${token}` } })
+    expect(response.status).toBe(503)
+  } finally { server.close() }
 })
 
 test('SSE emits snapshot and updates, rejects unauthenticated access', async () => {
