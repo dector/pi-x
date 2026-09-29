@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111b27">
+  <title>Pi · Tunnel</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <div class="brand"><span class="mark" aria-hidden="true">π</span><div><strong>Pi Tunnel</strong><span class="subtitle" id="identity">Active session</span></div></div>
+      <div class="status" id="connection" role="status" aria-live="polite">Connecting…</div>
+    </header>
+    <div class="context" id="context" hidden><span id="session-name"></span><span id="cwd"></span></div>
+    <div class="banner" id="notice" role="status" aria-live="polite" hidden></div>
+    <main id="conversation" class="conversation" aria-label="Conversation" tabindex="0">
+      <div id="messages" class="messages"></div>
+      <div id="activity" class="activity" role="status" aria-live="polite"></div>
+    </main>
+    <div class="bottom" id="bottom" hidden>
+      <div class="controls"><span id="work-state" role="status" aria-live="polite">Ready</span><button type="button" class="stop" id="stop" hidden title="Stop the current run; external side effects may already have happened">Stop run</button></div>
+      <form id="compose" class="compose"><label class="sr-only" for="prompt">Message to Pi</label><textarea id="prompt" rows="1" placeholder="Message Pi…" aria-label="Message to Pi" maxlength="12000"></textarea><button id="send" type="submit" class="primary">Send</button></form>
+      <p class="hint">Drafts stay on this device, not in Pi's terminal.</p>
+    </div>
+  </div>
+  <div class="pair-overlay" id="pair-overlay" hidden>
+    <form class="pair-card" id="pair-form">
+      <div class="pair-icon" aria-hidden="true">π</div>
+      <h1>Connect to Pi</h1>
+      <p>Enter the six-digit code shown in your Pi terminal. Keep this page on your private tailnet.</p>
+      <label for="pair-code">Pairing code</label><input id="pair-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required placeholder="000000">
+      <button class="primary" id="pair-submit" type="submit">Connect</button>
+      <p class="pair-error" id="pair-error" role="alert" hidden></p>
+    </form>
+  </div>
+  <div class="choice-overlay" id="choice-overlay" hidden>
+    <div class="choice-card" role="dialog" aria-modal="true" aria-labelledby="choice-title">
+      <h2 id="choice-title">Pi is working</h2><p>How should this message be delivered?</p>
+      <button type="button" class="choice" data-mode="followUp"><strong>Queue</strong><small>Send after the current run (recommended)</small></button>
+      <button type="button" class="choice" data-mode="steer"><strong>Steer</strong><small>Interrupt at the next turn boundary; running tools may finish</small></button>
+      <button type="button" class="choice cancel" data-mode="cancel">Don't send</button>
+    </div>
+  </div>
+</body>
+</html>
