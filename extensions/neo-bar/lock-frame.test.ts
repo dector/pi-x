@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { FrameStatusEditor, placeFirstLineRightIndicators, placeRelocatedFrameLabels } from "./index.ts";
+import { FrameStatusEditor, placeFirstLineRightIndicators, placeRelocatedFrameLabels, placeRewireStatusLabel } from "./index.ts";
 
 type Options = ConstructorParameters<typeof FrameStatusEditor>[3];
 
@@ -41,6 +41,16 @@ test("compact footer rotates git, policy, and extended token stats", () => {
 	expect(placeRelocatedFrameLabels({ ...labels, cost: "COST", compact: false })).toEqual({
 		left: "COST", right: "GIT · 󰅟 ✓ · 󰚩 2",
 	});
+});
+
+test("mobile rewire indicator moves to a right-aligned third status line", () => {
+	const label = "󰚩 󰒟 Inherit · high";
+	const mobile = placeRewireStatusLabel(label, true, 60);
+	expect(mobile.firstLine).toBeUndefined();
+	expect(mobile.thirdLine.trimStart()).toBe(label);
+	expect(visibleWidth(mobile.thirdLine)).toBe(60);
+	expect(placeRewireStatusLabel(label, false, 80)).toEqual({ firstLine: label, thirdLine: "" });
+	expect(placeRewireStatusLabel(undefined, true, 60)).toEqual({ firstLine: undefined, thirdLine: "" });
 });
 
 describe("locked editor frame", () => {

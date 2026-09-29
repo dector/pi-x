@@ -329,6 +329,16 @@ export function placeFirstLineRightIndicators(args: {
 	return appendStatusLabel(args.producer, args.compact ? args.git : args.tokens, args.separator);
 }
 
+export function placeRewireStatusLabel(label: string | undefined, compact: boolean, width: number): {
+	firstLine?: string;
+	thirdLine: string;
+} {
+	return {
+		firstLine: compact ? undefined : label,
+		thirdLine: compact && label ? renderThreeSectionLine(width, undefined, undefined, label) : "",
+	};
+}
+
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
 	getDisplayMode: () => NeoBarDisplayMode;
@@ -2119,6 +2129,20 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							})
 						: undefined;
 
+					const rewireContent = rewireTarget
+						? theme.fg(
+								"error",
+								formatRewireStatusLabel(
+									rewireTarget.model,
+									rewireTarget.thinkingLevel,
+									providerAliases,
+									modelAliases,
+									rewireTarget.inherit,
+									rewireTarget.inheritAll,
+								),
+							)
+						: undefined;
+					const rewirePlacement = placeRewireStatusLabel(rewireContent, compactFrame, width);
 					let line1: string;
 					if (hasFirstLineContent()) {
 						const firstLineJoinSeparator = theme.fg("muted", NEO_BAR_JOIN_SEPARATOR);
@@ -2127,24 +2151,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						const producerLeft = renderFirstLineSection("left", firstLineJoinSeparator, attensionCoreSuffix);
 						const left = producerLeft ?? (hasAttensionCore ? undefined : defaultFirstLine);
 						const center = renderFirstLineSection("center", firstLineJoinSeparator, attensionCoreSuffix);
-						const rewireContent = rewireTarget
-							? theme.fg(
-									"error",
-									formatRewireStatusLabel(
-										rewireTarget.model,
-										rewireTarget.thinkingLevel,
-										providerAliases,
-										modelAliases,
-										rewireTarget.inherit,
-										rewireTarget.inheritAll,
-									),
-								)
-							: undefined;
 						const producerRight = renderFirstLineSection(
 							"right",
 							firstLineJoinSeparator,
 							attensionCoreSuffix,
-							rewireContent,
+							rewirePlacement.firstLine,
 						);
 						const right = placeFirstLineRightIndicators({
 							producer: producerRight,
@@ -2241,7 +2252,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);
-					const lines = [...progressBefore, ...(line2.length > 0 ? [line1, line2] : [line1])];
+					const line3 = rewirePlacement.thirdLine;
+					const lines = [...progressBefore, ...(line2.length > 0 || line3 ? [line1, line2] : [line1]), ...(line3 ? [line3] : [])];
 					for (const entry of [...rowById.values()].sort((a, b) => a.order - b.order)) {
 						const content = sanitizeStatusText(entry.content);
 						if (!hasVisibleText(content)) continue;
