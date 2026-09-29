@@ -10,7 +10,7 @@ import { TunnelAuth, type Client } from './auth'
  * emit() must be called for all Pi producers, not just tunnel-origin prompts.
  */
 export type TunnelEvent = { seq: number; sessionId: string; kind: string; data: unknown }
-export type TunnelSnapshot = { sessionId: string; cwd: string; name?: string; entries: unknown[]; busy: boolean }
+export type TunnelSnapshot = { sessionId: string; branchId?: string | null; cwd: string; name?: string; entries: unknown[]; busy: boolean }
 export interface TunnelAdapter {
   snapshot(): TunnelSnapshot | Promise<TunnelSnapshot>
   subscribe(emit: (event: Omit<TunnelEvent, 'seq'>) => void): () => void

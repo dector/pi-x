@@ -30,7 +30,7 @@ function makeContext(id: string) {
   const branch = [{ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'why' }, { type: 'toolCall', arguments: { x: 1 } }] } }]
   return {
     cwd: `/repo/${id}`, isIdle: () => idle, abort: () => { aborted++ },
-    sessionManager: { getSessionId: () => id, getSessionName: () => id, getBranch: () => branch },
+    sessionManager: { getSessionId: () => id, getSessionName: () => id, getLeafId: () => `${id}-leaf`, getBranch: () => branch },
     setIdle(value: boolean) { idle = value }, get aborted() { return aborted }, branch,
   }
 }
@@ -60,6 +60,7 @@ test('native branch, busy modes, abort and stale adapter fail closed', () => {
   pi.fire('message_end', { old: true }, first)
   expect(events.at(-1).kind).toBe('session_change')
   expect(bridge.adapter.snapshot().sessionId).toBe('two')
+  expect(bridge.adapter.snapshot().branchId).toBe('two-leaf')
   bridge.invalidate()
   detach()
   expect(() => bridge.adapter.snapshot()).toThrow('rebinding')

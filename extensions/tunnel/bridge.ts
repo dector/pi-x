@@ -8,6 +8,7 @@ export type PiContext = {
     getSessionId(): string
     getSessionName?(): string | undefined
     getBranch(): unknown[]
+    getLeafId?(): string | null
   }
 }
 export type PiApi = {
@@ -34,7 +35,7 @@ export function createPiBridge(pi: PiApi, initialContext: PiContext) {
     if (!live) return
     context = next
     busy = !next.isIdle()
-    publish('session_change', { sessionId: identity(next), cwd: next.cwd, name: pi.getSessionName?.() ?? next.sessionManager.getSessionName?.() })
+    publish('session_change', { sessionId: identity(next), branchId: next.sessionManager.getLeafId?.(), cwd: next.cwd, name: pi.getSessionName?.() ?? next.sessionManager.getSessionName?.() })
   }
   const invalidate = () => {
     live = false
@@ -49,7 +50,7 @@ export function createPiBridge(pi: PiApi, initialContext: PiContext) {
     snapshot(): TunnelSnapshot {
       const ctx = requireContext()
       return {
-        sessionId: identity(ctx), cwd: ctx.cwd,
+        sessionId: identity(ctx), branchId: ctx.sessionManager.getLeafId?.() ?? null, cwd: ctx.cwd,
         name: pi.getSessionName?.() ?? ctx.sessionManager.getSessionName?.(),
         // Native branch entries retain message roles, thinking, tools and tool results.
         entries: ctx.sessionManager.getBranch(), busy: busy || !ctx.isIdle(),

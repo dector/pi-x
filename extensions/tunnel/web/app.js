@@ -1,7 +1,7 @@
 // No dependencies: all Pi content is inserted as text nodes, never as HTML.
 const $ = (id) => document.getElementById(id);
 const ui = Object.fromEntries(['identity','connection','context','session-name','cwd','notice','conversation','messages','activity','bottom','work-state','stop','compose','prompt','send','pair-overlay','pair-form','pair-code','pair-error','pair-submit','choice-overlay'].map(id => [id, $(id)]));
-const state = { sessionId: null, seq: 0, entries: [], busy: false, attention: false, connected: false, pending: false, source: null, generation: 0, timer: null, retryDelay: 1000, draftKey: null, draftText: null, live: null, frame: 0 };
+const state = { sessionId: null, branchId: null, seq: 0, entries: [], busy: false, attention: false, connected: false, pending: false, source: null, generation: 0, timer: null, retryDelay: 1000, draftKey: null, draftText: null, live: null, frame: 0 };
 const make = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text != null) el.textContent = String(text); return el; };
 function banner(text) { ui.notice.textContent = text || ''; ui.notice.hidden = !text; }
 function connection(text, style = '') { ui.connection.textContent = text; ui.connection.className = `status ${style}`; state.connected = style === 'online'; updateControls(); }
@@ -104,11 +104,11 @@ function identity(snapshot) {
 }
 function installSnapshot(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.entries) || !Number.isSafeInteger(snapshot.seq)) throw Error('Invalid session snapshot');
-  const changed = state.sessionId != null && state.sessionId !== snapshot.sessionId;
-  state.sessionId = snapshot.sessionId; state.seq = snapshot.seq; state.entries = snapshot.entries; state.live = null;
+  const changed = state.sessionId != null && (state.sessionId !== snapshot.sessionId || state.branchId !== (snapshot.branchId ?? null));
+  state.sessionId = snapshot.sessionId; state.branchId = snapshot.branchId ?? null; state.seq = snapshot.seq; state.entries = snapshot.entries; state.live = null;
   state.busy = Boolean(snapshot.busy); state.attention = Boolean(snapshot.attention);
   identity(snapshot);
-  if (changed) banner('Active session changed. Showing the current branch.');
+  if (changed) banner('Active conversation branch changed. Showing the current branch.');
   ui.bottom.hidden = false; ui['pair-overlay'].hidden = true;
   render();
   if (changed) ui.conversation.scrollTop = 0;
