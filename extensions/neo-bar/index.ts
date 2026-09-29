@@ -231,7 +231,7 @@ function formatCostTrailingPrecise(total: number): string {
 interface FrameContextParts {
 	/** Context usage meter, e.g. `󰊚 15.9% · 210k`. Always shown on the border. */
 	usage: string;
-	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 Tot󰇁 0.034`. Relocated on narrow frames. */
+	/** Cost, e.g. `󰇁​0.03` or `󰇁​0.03 · 󰇁​󰇁​0.034`. Relocated on narrow frames. */
 	cost: string;
 }
 
@@ -266,9 +266,11 @@ export function buildFrameContextParts(
 	const costText = decorateBorderContextCost(costLabel);
 	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
 
+	// Use selective SGR toggles so bolding cannot reset the active foreground color.
+	const boldCostText = costText.replace(/\d+(?:\.\d+)?/g, "\u001b[1m$&\u001b[22m");
 	const firstBucket = (text: string) => styleDarkAccent(theme, text);
 	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, firstBucket);
-	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, firstBucket);
+	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), boldCostText, firstBucket);
 	return { usage: styledUsage, cost: styledCost };
 }
 

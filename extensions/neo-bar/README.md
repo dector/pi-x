@@ -70,11 +70,11 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   parentheses (`~/pi-x ( trunk)`); the path itself gets no icon. `legacy`
   mode keeps the plain `~/pi-x (trunk)` form.
 - When session rewiring is enabled, the first-line right section shows a red
-  `󰚩 󰒟 <provider>/<model> · <effort>` immediately before the skill counter. In
+  `󰚩 ⇢ <provider>/<model> · <effort>` immediately before the skill counter. In
   compact/mobile mode, the entire red indicator moves to its own right-aligned
   third status line. Provider and model aliases are applied, for example
-  `󰚩 󰒟 cdx/5.6-sol · high`. Inherited `Inherit model` shows
-  `󰚩 󰒟 Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 󰒟 Inherit`.
+  `󰚩 ⇢ cdx/5.6-sol · high`. Inherited `Inherit model` shows
+  `󰚩 ⇢ Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 ⇢ Inherit`.
 - `new` display mode appends the context token breakdown to the first-line right
   section above 60 columns, after the producer items (including the skill counter).
   In compact mode it moves to the second-line right, and git stats take its first-line
@@ -143,7 +143,7 @@ labels are rendered in the frame corners:
 ```
 ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
-╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% · 210k ╼━━━╾ 󰦨 1.2k · 󰇁 0.03 ╼━╯
+╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% · 210k ╼━━━╾ 󰦨 1.2k · 󰇁​0.03 ╼━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -199,11 +199,10 @@ labels are rendered in the frame corners:
     the subdued accent `󰚩 ✓`, and recursive delegation is warning-colored `󰚩 N`.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
-  - `cost` (bottom-right, after all other indicators): cumulative session cost, prefixed with the price icon `󰇁 ` and with no
-    trailing `$` in border mode (for example `󰇁 0.03`). Zero/unavailable renders as
-    `󰇁 0.00`; non-zero below half a cent renders as `󰇁 <0.01`. When subagent usage
-    changes the total, the label shows session then total, each with its own icon:
-    `󰇁 0.01 Tot󰇁 0.013`. The total renders with three decimals to keep small subagent
+  - `cost` (bottom-right, after all other indicators): cumulative session cost, prefixed with the price icon (for example `󰇁​0.03`). Zero/unavailable renders as
+    `󰇁​0.00`; non-zero below half a cent renders as `󰇁​<0.01`. When subagent usage
+    changes the total, the label shows session then total, separated by a center dot;
+    the total uses a doubled price icon: `󰇁​0.01 · 󰇁​󰇁​0.013`. The total renders with three decimals to keep small subagent
     spend visible, and adds every subagent cost found in the branch, nested
     subagents included. The total is omitted while it rounds to the same
     three-decimal value as the session cost.

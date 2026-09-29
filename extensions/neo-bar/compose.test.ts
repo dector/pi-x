@@ -76,24 +76,24 @@ describe("pure text helpers", () => {
 				{ "openai-codex": "cdx" },
 				{ "gpt-5.6-sol": "5.6-sol" },
 			),
-		).toBe("󰚩 󰒟 cdx/5.6-sol · high");
+		).toBe("󰚩 ⇢ cdx/5.6-sol · high");
 	});
 
 	test("keeps full unaliased model names and supports provider-less ids", () => {
 		expect(formatRewireStatusLabel("anthropic/claude-sonnet", "medium")).toBe(
-			"󰚩 󰒟 anthropic/claude-sonnet · medium",
+			"󰚩 ⇢ anthropic/claude-sonnet · medium",
 		);
 		expect(formatRewireStatusLabel("local-model", "off", {}, { "local-model": "local" })).toBe(
-			"󰚩 󰒟 local · off",
+			"󰚩 ⇢ local · off",
 		);
 	});
 
 	test("keeps the configured effort for model-only inheritance", () => {
-		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 󰒟 Inherit · high");
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true)).toBe("󰚩 ⇢ Inherit · high");
 	});
 
 	test("omits the effort suffix for Inherit All", () => {
-		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true, true)).toBe("󰚩 󰒟 Inherit");
+		expect(formatRewireStatusLabel("parent/fallback", "high", {}, {}, true, true)).toBe("󰚩 ⇢ Inherit");
 	});
 
 	test("compactFrameLabel removes value spacing without damaging ANSI colors", () => {
@@ -398,18 +398,18 @@ describe("decorateBorderGitStats", () => {
 });
 
 describe("decorateBorderContextLabel", () => {
-	test("prefixes context and current price, dropping the price `$`", () => {
-		expect(decorateBorderContextLabel("15.9% 210k · 0.03$")).toBe("󰊚 15.9% 210k · 󰇁 0.03");
+	test("prefixes the current price with a ligature-breaking Nerd Font icon", () => {
+		expect(decorateBorderContextLabel("15.9% 210k · 0.03$")).toBe("󰊚 15.9% 210k · 󰇁\u200b0.03");
 	});
 
-	test("prefixes the total price with `Tot` after the current price", () => {
+	test("uses a doubled Nerd Font icon for the total and separates it with a center dot", () => {
 		expect(decorateBorderContextLabel("15.9% 210k · 0.03$ | 0.034$")).toBe(
-			"󰊚 15.9% 210k · 󰇁 0.03 Tot󰇁 0.034",
+			"󰊚 15.9% 210k · 󰇁\u200b0.03 · 󰇁\u200b󰇁\u200b0.034",
 		);
 	});
 
 	test("handles the small-value placeholders without a price", () => {
-		expect(decorateBorderContextLabel("-- -- · <0.01$")).toBe("󰊚 -- -- · 󰇁 <0.01");
+		expect(decorateBorderContextLabel("-- -- · <0.01$")).toBe("󰊚 -- -- · 󰇁\u200b<0.01");
 	});
 
 	test("leaves a context-only label with just the context icon", () => {

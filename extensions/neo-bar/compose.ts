@@ -146,31 +146,30 @@ export function decorateBorderGitStats(
 	return `${filesGroup}${separator(" · ")}${lineGroup}`;
 }
 
-// Border-only context/cost icons (Nerd Font). Each keeps a trailing space so the
-// glyph reads as a prefix. The final/total price doubles the price icon to
-// distinguish it from the current/session price. Legacy mode keeps the `$`
-// suffixes and `|` separator and is intentionally left unchanged.
+// Border-only context/cost icons (Nerd Font). The zero-width space after each
+// price icon prevents terminal ligatures. A doubled icon marks the total.
+// Legacy mode keeps the `$` suffixes and `|` separator unchanged.
 export const BORDER_CONTEXT_ICON = "󰊚 ";
-export const BORDER_PRICE_ICON = "󰇁 ";
+export const BORDER_PRICE_ICON = "󰇁\u200b";
 
 /**
- * Decorate a border-mode cost label with prefix icons.
+ * Decorate a border-mode cost label with Nerd Font price icons.
  *
- *   `0.03$`          -> `󰇁 0.03`
- *   `0.03$ | 0.034$` -> `󰇁 0.03 Tot󰇁 0.034`
+ *   `0.03$`          -> `󰇁​0.03`
+ *   `0.03$ | 0.034$` -> `󰇁​0.03 · 󰇁​󰇁​0.034`
  */
 export function decorateBorderContextCost(label: string): string {
 	const [current = "", total] = label.split(" | ");
 	const currentLabel = `${BORDER_PRICE_ICON}${current.replace(/\$$/, "")}`;
-	const totalLabel = total === undefined ? "" : ` Tot${BORDER_PRICE_ICON}${total.replace(/\$$/, "")}`;
+	const totalLabel = total === undefined ? "" : ` · ${BORDER_PRICE_ICON}${BORDER_PRICE_ICON}${total.replace(/\$$/, "")}`;
 	return `${currentLabel}${totalLabel}`;
 }
 
 /**
  * Decorate a border-mode context/cost label with prefix icons.
  *
- *   `15.9% 210k · 0.03$`          -> `󰊚 15.9% 210k · 󰇁 0.03`
- *   `15.9% 210k · 0.03$ | 0.034$` -> `󰊚 15.9% 210k · 󰇁 0.03 Tot󰇁 0.034`
+ *   `15.9% 210k · 0.03$`          -> `󰊚 15.9% 210k · 󰇁​0.03`
+ *   `15.9% 210k · 0.03$ | 0.034$` -> `󰊚 15.9% 210k · 󰇁​0.03 · 󰇁​󰇁​0.034`
  */
 export function decorateBorderContextLabel(label: string): string {
 	const separator = " · ";
@@ -195,7 +194,7 @@ export function hasVisibleText(value?: string): value is string {
 // unadorned token breakdown.
 export const BORDER_BRANCH_ICON = "\ueafe ";
 export const BORDER_TOTAL_USAGE_ICON = "\u{000f04e1} ";
-export const REWIRE_ICON = "󰚩 󰒟 ";
+export const REWIRE_ICON = "󰚩 ⇢ ";
 
 /** Format the active subagent rewire target with the status bar's exact-name aliases. */
 export function formatRewireStatusLabel(
@@ -346,7 +345,7 @@ export interface BorderBottomLeftArgs {
  * network and top-level subagent depth, which use `accentColor`); the context
  * label follows after the tapered border bridge:
  *
- *   `━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 `
+ *   `━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁​0.03 `
  *
  * Either producer part may be missing; both missing yields `""`.
  */

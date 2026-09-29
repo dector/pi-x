@@ -195,18 +195,18 @@ horizontal editor padding (`paddingX: 1`), and renders:
   in `legacy` mode they move to the first line right section as
   `+1 -2 M4 · +150 -200`.
 - bottom-left: context usage, prefixed with `󰊚 ` (`━━ 󰊚 15.9% · 210k `).
-  The cost is shown at the end of the bottom-right indicators, prefixed with `󰇁 `
-  (`󰇁 0.03`). At 60 columns or less, price (including subagent total) moves
+  The cost is shown at the end of the bottom-right indicators, prefixed with `󰇁​`
+  (`󰇁​0.03`). At 60 columns or less, price (including subagent total) moves
   to the top-right corner and network/subagent indicators move to the left of
   status line 2, with extended token stats on the right. If price cannot fit on
   top, it joins the left of status line 2;
   on wider frames it moves
   there if the full bottom-right label cannot fit.
-  The border form has no trailing `$`. Both labels are colored with the subdued accent (a darkened thinking
-  color) <=20%, `text` <=30%, `warning` <=50%, and `error` >50%. When subagent
-  usage changes the total, cost
-  renders as session then total, each with its own icon
-  (`󰇁 0.01 Tot󰇁 0.013`), the total with three decimals so small
+  A zero-width space after the price icon prevents terminal ligatures. Both labels
+  are colored with the subdued accent (a darkened thinking color) <=20%, `text`
+  <=30%, `warning` <=50%, and `error` >50%. When subagent usage changes the total,
+  cost renders as session then total, separated by a center dot; a doubled price
+  icon marks the total (`󰇁​0.01 · 󰇁​󰇁​0.013`), with three decimals so small
   subagent spend stays visible. It includes every subagent in the branch, nested
   ones included, and the total is omitted while it rounds to the same three-decimal
   value as the session cost.

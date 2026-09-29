@@ -44,7 +44,7 @@ test("compact footer rotates git, policy, and extended token stats", () => {
 });
 
 test("mobile rewire indicator moves to a right-aligned third status line", () => {
-	const label = "󰚩 󰒟 Inherit · high";
+	const label = "󰚩 ⇢ Inherit · high";
 	const mobile = placeRewireStatusLabel(label, true, 60);
 	expect(mobile.firstLine).toBeUndefined();
 	expect(mobile.thirdLine.trimStart()).toBe(label);
@@ -105,7 +105,7 @@ describe("locked editor frame", () => {
 				interruptConfirmation: {} as Options["interruptConfirmation"],
 				topLeft: () => "M",
 				topRightGitStats: () => GIT_STATS,
-				bottomLeft: () => ({ usage: "U", cost: "󰇁 0.01 Tot󰇁 0.013" }),
+				bottomLeft: () => ({ usage: "U", cost: "󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013" }),
 				bottomLeftNetwork: () => "NET",
 				bottomLeftSubagent: () => "SUB",
 				relocatedLabels,
@@ -114,7 +114,7 @@ describe("locked editor frame", () => {
 		editor.setLocked(true);
 		const compact = editor.render(60);
 		expect(compact[0]).not.toContain("󰐖");
-		expect(compact[0]).toContain("󰇁 0.01 Tot󰇁 0.013");
+		expect(compact[0]).toContain("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
 		expect(compact.at(-1)).toContain("U");
 		expect(compact.at(-1)).not.toContain("NET");
 		expect(compact.at(-1)).not.toContain("SUB");
@@ -122,15 +122,15 @@ describe("locked editor frame", () => {
 		expect(relocatedLabels.contextLabel).toBeUndefined();
 		expect(relocatedLabels.policyLabel).toBe("󰅟 NET · 󰚩 SUB");
 
-		const narrowTop = editor.render(28)[0];
-		expect(narrowTop).toContain("󰇁 0.01 Tot󰇁 0.013");
+		const narrowTop = editor.render(24)[0];
+		expect(narrowTop).toContain("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
 		expect(narrowTop).not.toContain("M");
 		expect(relocatedLabels.contextLabel).toBeUndefined();
 
 		const wide = editor.render(100);
 		expect(wide[0]).toContain("󰐖");
 		expect(wide.at(-1)).toContain("󰅟 NET · 󰚩 SUB");
-		expect(wide.at(-1)).toContain("󰇁 0.01 Tot󰇁 0.013");
+		expect(wide.at(-1)).toContain("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
 		expect(relocatedLabels.gitStats).toBeUndefined();
 		expect(relocatedLabels.contextLabel).toBeUndefined();
 		expect(relocatedLabels.policyLabel).toBeUndefined();

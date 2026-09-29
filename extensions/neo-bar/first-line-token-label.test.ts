@@ -33,13 +33,39 @@ describe("buildFrameContextParts", () => {
 		} as unknown as Parameters<typeof buildFrameContextParts>[0];
 		const frameTheme = {
 			fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
+			bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
 			getFgAnsi: () => "\u001b[38;2;143;127;184m",
 		} as unknown as Parameters<typeof buildFrameContextParts>[1];
 
 		expect(buildFrameContextParts(ctx, frameTheme)).toEqual({
 			usage: "\u001b[38;2;86;76;110m󰊚 15.9% · 210k\u001b[39m",
-			cost: "\u001b[38;2;86;76;110m󰇁 0.00\u001b[39m",
+			cost: "\u001b[38;2;86;76;110m󰇁\u200b\u001b[1m0.00\u001b[22m\u001b[39m",
 		});
+	});
+
+	test("bolds the session and total price numbers", () => {
+		const ctx = {
+			getContextUsage: () => ({ percent: 15.9, tokens: 210_000 }),
+			sessionManager: {
+				getBranch: () => [
+					{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.01 } } } },
+					{
+						type: "custom_message",
+						customType: "subagent-completion",
+						details: { results: [{ usage: { cost: 0.003 } }] },
+					},
+				],
+			},
+		} as unknown as Parameters<typeof buildFrameContextParts>[0];
+		const frameTheme = {
+			fg: (token: string, text: string) => `<${token}>${text}</${token}>`,
+			bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
+			getFgAnsi: () => "\u001b[38;2;143;127;184m",
+		} as unknown as Parameters<typeof buildFrameContextParts>[1];
+
+		expect(buildFrameContextParts(ctx, frameTheme).cost).toBe(
+			"\u001b[38;2;86;76;110m󰇁\u200b\u001b[1m0.01\u001b[22m · 󰇁\u200b󰇁\u200b\u001b[1m0.013\u001b[22m\u001b[39m",
+		);
 	});
 });
 
