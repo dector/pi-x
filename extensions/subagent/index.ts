@@ -144,6 +144,7 @@ import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-outpu
 import { formatSubagentError, subagentErrorEntry, SUBAGENT_ERROR_CUSTOM_TYPE, type SubagentErrorEntry } from "./subagent-error.ts";
 import { createRunIdGenerator } from "./run-id.ts";
 import { RewirePresetListView, type RewirePresetListResult } from "./rewire-preset-list.ts";
+import { formatRewireMenuToggle, RewireMenuView, type RewireMenuResult } from "./rewire-menu.ts";
 import {
 	addRewirePreset,
 	deleteRewirePreset,
@@ -1984,33 +1985,62 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			while (true) {
-				const rewireBadge = rewireConfig.enabled
-					? ctx.ui.theme.fg("error", "[ON]")
-					: ctx.ui.theme.fg("muted", "[OFF]");
-				const rewireChoice = `Rewire   ${rewireBadge}`;
-				const modelInheritChoice = `Inherit model   ${isInheritedRewire(rewireConfig) && !isInheritAllRewire(rewireConfig) ? "[ON]" : "[OFF]"}`;
-				const allInheritChoice = `Inherit All   ${isInheritAllRewire(rewireConfig) ? "[ON]" : "[OFF]"}`;
-				const rewireTarget = rewireConfig.enabled
-					? ctx.ui.theme.fg("muted", `Rewiring to ${formatRewireConfig(rewireConfig)}`)
-					: undefined;
-				const choice = await ctx.ui.select("Subagent rewiring", [
-					rewireChoice,
-					modelInheritChoice,
-					allInheritChoice,
-					"\ue615  Configuration",
-					...(rewireTarget ? [rewireTarget] : []),
-				]);
-				if (!choice) return;
-				if (choice === rewireTarget) continue;
-				if (choice === rewireChoice) {
+				const config = rewireConfig;
+				if (!config) return;
+				const inheritAll = isInheritAllRewire(config);
+				const inheritModel = isInheritedRewire(config) && !inheritAll;
+				const target = config.enabled ? formatRewireConfig(config) : undefined;
+				let result: RewireMenuResult | undefined;
+				if (ctx.mode === "tui") {
+					result = await ctx.ui.custom<RewireMenuResult>((tui, theme, keybindings, done) =>
+						new RewireMenuView({
+							enabled: config.enabled,
+							inheritAll,
+							inheritModel,
+							...(target ? { target } : {}),
+							theme: {
+								fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+								bold: (text) => theme.bold(text),
+							},
+							keybindings,
+							requestRender: () => tui.requestRender(),
+							done,
+						}),
+					);
+				} else {
+					const formatToggle = (label: string, enabled: boolean): string =>
+						formatRewireMenuToggle(label, enabled, (color, text) =>
+							ctx.ui.theme.fg(color as Parameters<typeof ctx.ui.theme.fg>[0], text),
+						);
+					const selected = await ctx.ui.select("Subagent rewiring", [
+						"Configuration",
+						formatToggle("Inherit All", inheritAll),
+						formatToggle("Inherit Model", inheritModel),
+						formatToggle("Enabled", config.enabled),
+						...(target ? [`Rewiring to ${target}`] : []),
+					]);
+					if (!selected) return;
+					result = selected.startsWith("Inherit All")
+						? { type: "inherit-all" }
+						: selected.startsWith("Inherit Model")
+							? { type: "inherit-model" }
+							: selected.startsWith("Enabled")
+								? { type: "enabled" }
+								: selected === "Configuration"
+									? { type: "configuration" }
+									: undefined;
+					if (!result) continue;
+				}
+				if (!result || result.type === "cancel") return;
+				if (result.type === "enabled") {
 					await toggleRewire(ctx);
 					continue;
 				}
-				if (choice === modelInheritChoice) {
+				if (result.type === "inherit-model") {
 					toggleInheritedRewireMode(ctx, rewireConfig, "model");
 					continue;
 				}
-				if (choice === allInheritChoice) {
+				if (result.type === "inherit-all") {
 					toggleInheritedRewireMode(ctx, rewireConfig, "all");
 					continue;
 				}
