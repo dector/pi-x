@@ -15,14 +15,14 @@ In Pi:
 /px:tunnel off       # revokes paired clients and closes the server
 ```
 
-The default local port is **43821**. Set `PI_TUNNEL_PORT` in Pi's environment before starting Pi to choose another fixed port; a port conflict is an error, not an automatic fallback. The tunnel does not start until you run `on`. It remains active across Pi session switches and `/reload`; it closes on `off` or Pi exit.
+The default local port is **55555**. Set `PI_TUNNEL_PORT` in Pi's environment before starting Pi to choose another fixed port; a port conflict is an error, not an automatic fallback. The tunnel does not start until you run `on`. It remains active across Pi session switches and `/reload`; it closes on `off` or Pi exit.
 
 ## Phone access with Tailscale Serve
 
 Configure Serve yourself on the **machine running Pi** (do not use Funnel or bind the extension to a public interface):
 
 ```sh
-tailscale serve --bg 43821
+tailscale serve --bg 55555
 tailscale serve status
 ```
 
@@ -40,7 +40,7 @@ All routes live under `/api/v1` and are relative to the same Serve URL. JSON wri
 
 ```sh
 # Do this with a fresh code, ideally locally; never place a token in a URL.
-curl -sS -X POST http://127.0.0.1:43821/api/v1/pair \
+curl -sS -X POST http://127.0.0.1:55555/api/v1/pair \
   -H 'Content-Type: application/json' \
   -d '{"code":"123456","mode":"client"}'
 # Response: {"token":"...","tokenType":"Bearer"}

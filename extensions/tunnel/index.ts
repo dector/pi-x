@@ -9,7 +9,7 @@ const KEY = Symbol.for('px:tunnel:process-owner:v1')
 const globalOwner = globalThis as typeof globalThis & { [KEY]?: Owner }
 
 function config() {
-  const raw = process.env.PI_TUNNEL_PORT ?? '43821'
+  const raw = process.env.PI_TUNNEL_PORT ?? '55555'
   if (!/^[1-9]\d*$/.test(raw) || !Number.isInteger(Number(raw)) || Number(raw) > 65535) throw new Error('PI_TUNNEL_PORT must be an integer from 1 to 65535')
   return { port: Number(raw), origin: process.env.PI_TUNNEL_ORIGIN || undefined }
 }

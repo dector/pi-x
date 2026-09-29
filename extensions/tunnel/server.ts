@@ -29,7 +29,7 @@ const MAX_BODY = 16_384
 const MAX_EVENT = 256_000
 const MAX_QUEUE = 32
 
-/** Start one in-memory HTTP server (default 127.0.0.1:43821; throws on port conflict).
+/** Start one in-memory HTTP server (default 127.0.0.1:55555; throws on port conflict).
  * Browser: POST /api/v1/pair {code,mode:"browser"} with Origin; receives HttpOnly
  * SameSite=Strict cookie (Secure for HTTPS/external HTTPS proxy). Client: pair
  * {code,mode:"client"} receives bearer token. No credentials belong in URLs.
@@ -44,7 +44,7 @@ const MAX_QUEUE = 32
  * headers are trusted. Direct HTTP on an untrusted network is unsupported.
  */
 export function createTunnelServer(initialAdapter: TunnelAdapter | null, options: TunnelOptions = {}) {
-  const port = options.port ?? 43821
+  const port = options.port ?? 55555
   const host = options.host ?? '127.0.0.1'
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid tunnel port')
   const external = options.externalOrigin ? new URL(options.externalOrigin) : null
