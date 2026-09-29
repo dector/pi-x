@@ -20,6 +20,18 @@ function fixture() {
   return { server, send, calls, adapter, event: (kind: string) => emit({ sessionId: 's1', kind, data: { text: 'update' } }) }
 }
 
+test('serves the complete phone interface on the local port', async () => {
+  const { server, send } = fixture()
+  try {
+    for (const path of ['/', '/app.js', '/style.css']) {
+      const response = await send(path)
+      expect(response.status).toBe(200)
+      expect((await response.text()).length).toBeGreaterThan(100)
+    }
+    expect((await send('/../server.ts')).status).toBe(404)
+  } finally { server.close() }
+})
+
 test('pairing and authenticated routes, origin/CSRF, idempotency and rebind', async () => {
   const { server, send, calls, adapter, event } = fixture()
   try {

@@ -23,7 +23,7 @@ export type TunnelOptions = { port?: number; host?: string; externalOrigin?: str
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers })
 const error = (status: number, message: string) => json({ error: message }, status)
-const webRoot = fileURLToPath(new URL('./web/', import.meta.url))
+const webRoot = resolve(fileURLToPath(new URL('./web/', import.meta.url)))
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
 const MAX_BODY = 16_384
 const MAX_EVENT = 256_000
