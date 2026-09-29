@@ -20,6 +20,14 @@ function fixture() {
   return { server, send, calls, adapter, event: (kind: string) => emit({ sessionId: 's1', kind, data: { text: 'update' } }) }
 }
 
+test('fixed port rejects a second Pi without disturbing the first', async () => {
+  const { server, send, adapter } = fixture()
+  try {
+    expect(() => createTunnelServer(adapter, { port })).toThrow()
+    expect((await send('/')).status).toBe(200)
+  } finally { server.close() }
+})
+
 test('serves the complete phone interface on the local port', async () => {
   const { server, send } = fixture()
   try {

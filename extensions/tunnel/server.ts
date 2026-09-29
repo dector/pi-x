@@ -190,9 +190,12 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
             if (ended) return
             if (stamp !== generation || seq !== before) { snapshotReady = true; push({ kind: 'resync', seq }); return }
             const line = `id: ${before}\nevent: snapshot\ndata: ${JSON.stringify({ kind: 'snapshot', seq: before, snapshot })}\n\n`
-            // Existing branch history may be large: never silently truncate it.
-            // The event cap applies to live events, not the initial snapshot.
-            queue.unshift(line); snapshotReady = true; flush()
+            // Full history is always available via GET /session. Avoid an unbounded
+            // duplicate SSE frame for very large existing branches.
+            if (Buffer.byteLength(line) > 2_000_000) {
+              queue.unshift(`id: ${before}\nevent: snapshot_omitted\ndata: ${JSON.stringify({ kind: 'snapshot_omitted', seq: before, reason: 'snapshot_too_large', sessionId: snapshot.sessionId })}\n\n`)
+            } else queue.unshift(line)
+            snapshotReady = true; flush()
           }).catch(() => { snapshotReady = true; push({ kind: 'resync', seq }) })
           }
           request.signal.addEventListener('abort', close, { once: true })
