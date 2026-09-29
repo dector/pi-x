@@ -1,7 +1,10 @@
 // No dependencies: all Pi content is inserted as text nodes, never as HTML.
+import { isBranchSwitch } from './branch.js';
 const $ = (id) => document.getElementById(id);
 const ui = Object.fromEntries(['identity','connection','context','session-name','cwd','notice','conversation','messages','activity','bottom','work-state','stop','compose','prompt','send','pair-overlay','pair-form','pair-code','pair-error','pair-submit','choice-overlay'].map(id => [id, $(id)]));
 const state = { sessionId: null, branchId: null, seq: 0, entries: [], busy: false, attention: false, connected: false, pending: false, source: null, generation: 0, timer: null, retryDelay: 1000, draftKey: null, draftText: null, live: null, frame: 0 };
+const rendered = new Map();
+let liveRendered = null;
 const make = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text != null) el.textContent = String(text); return el; };
 function banner(text) { ui.notice.textContent = text || ''; ui.notice.hidden = !text; }
 function connection(text, style = '') { ui.connection.textContent = text; ui.connection.className = `status ${style}`; state.connected = style === 'online'; updateControls(); }
@@ -49,42 +52,66 @@ function renderContent(parent, message) {
   if (message?.role === 'toolResult' && message.details != null) detail(parent, 'Details', safeJson(message.details));
   if (!parent.childNodes.length) parent.append(make('p', 'text', '[No text content]'));
 }
+function cardFor(message, streaming = false) {
+  const role = message.role ?? 'other';
+  const card = make('article', `message ${['user','assistant','toolResult'].includes(role) ? role : 'other'}`);
+  if (role === 'toolResult') {
+    const fold = make('details', 'tool-result');
+    fold.append(make('summary', '', `${message.toolName || 'Tool'} result${message.isError ? ' · Error' : ''}`));
+    const body = make('div', 'message-body'); renderContent(body, message); fold.append(body); card.append(fold);
+  } else {
+    card.append(make('div', 'message-head', role === 'assistant' ? `Pi${streaming ? ' · streaming' : ''}` : role === 'user' ? 'You' : role));
+    const body = make('div', 'message-body'); renderContent(body, message); card.append(body);
+  }
+  return card;
+}
+function replaceCard(previous, next) {
+  const oldDetails = previous.querySelectorAll('details');
+  const newDetails = next.querySelectorAll('details');
+  oldDetails.forEach((fold, index) => { if (fold.open && newDetails[index]) newDetails[index].open = true; });
+  previous.replaceWith(next);
+}
 function render() {
-  const follow = isNearBottom(); const oldTop = ui.conversation.scrollTop;
-  // Live updates rebuild the message list; keep tool results the reader opened open.
-  const expandedTools = new Set(Array.from(ui.messages.querySelectorAll('details.tool-result[open][data-entry-id]'), el => el.dataset.entryId));
-  const fragment = document.createDocumentFragment();
+  const follow = isNearBottom();
+  // Anchor the first visible card, so changes above it don't move the reader.
+  const top = ui.conversation.getBoundingClientRect().top;
+  const anchor = Array.from(ui.messages.children).find(el => el.getBoundingClientRect().bottom > top);
+  const anchorOffset = anchor?.getBoundingClientRect().top - top;
+  const oldTop = ui.conversation.scrollTop;
+  const wanted = [];
   for (const entry of state.entries) {
     if (entry?.type !== 'message' || !entry.message) continue;
-    const message = entry.message, role = message.role ?? 'other';
-    const card = make('article', `message ${['user','assistant','toolResult'].includes(role) ? role : 'other'}`);
-    if (role === 'toolResult') {
-      const fold = make('details', 'tool-result');
-      if (entry.id != null) { fold.dataset.entryId = entry.id; fold.open = expandedTools.has(entry.id); }
-      fold.append(make('summary', '', `${message.toolName || 'Tool'} result${message.isError ? ' · Error' : ''}`));
-      const body = make('div', 'message-body'); renderContent(body, message); fold.append(body); card.append(fold);
-    } else {
-      card.append(make('div', 'message-head', role === 'assistant' ? 'Pi' : role === 'user' ? 'You' : role));
-      const body = make('div', 'message-body'); renderContent(body, message); card.append(body);
+    const key = entry.id == null ? null : String(entry.id);
+    const signature = JSON.stringify(entry.message);
+    let item = key == null ? null : rendered.get(key);
+    if (!item || item.signature !== signature) {
+      const card = cardFor(entry.message);
+      if (item) replaceCard(item.card, card);
+      item = { card, signature };
+      if (key != null) rendered.set(key, item);
     }
-    fragment.append(card);
+    wanted.push(item.card);
   }
   if (state.live && !state.entries.some(e => e.id != null && e.id === state.live.id)) {
-    const liveRole = state.live.message?.role ?? 'assistant';
-    const card = make('article', `message ${liveRole}`);
-    if (liveRole === 'toolResult') {
-      const fold = make('details', 'tool-result');
-      fold.append(make('summary', '', `${state.live.message.toolName || 'Tool'} result${state.live.message.isError ? ' · Error' : ''}`));
-      const body = make('div', 'message-body'); renderContent(body, state.live.message); fold.append(body); card.append(fold);
-    } else {
-      card.append(make('div', 'message-head', liveRole === 'assistant' ? 'Pi · streaming' : liveRole === 'user' ? 'You' : liveRole));
-      const body = make('div', 'message-body'); renderContent(body, state.live.message); card.append(body);
+    const signature = JSON.stringify(state.live.message);
+    if (!liveRendered || liveRendered.signature !== signature) {
+      const card = cardFor(state.live.message, true);
+      if (liveRendered) replaceCard(liveRendered.card, card);
+      liveRendered = { card, signature };
     }
-    fragment.append(card);
+    wanted.push(liveRendered.card);
+  } else liveRendered = null;
+  if (!wanted.length) wanted.push(make('p', 'empty', 'This branch has no messages yet. Send a prompt to begin.'));
+  // Reuse unchanged cards; only insert, move, or remove nodes when necessary.
+  for (let i = 0; i < wanted.length; i++) {
+    if (ui.messages.children[i] !== wanted[i]) ui.messages.insertBefore(wanted[i], ui.messages.children[i] ?? null);
   }
-  if (!fragment.childNodes.length) fragment.append(make('p', 'empty', 'This branch has no messages yet. Send a prompt to begin.'));
-  ui.messages.replaceChildren(fragment);
-  if (follow) scrollBottom(); else ui.conversation.scrollTop = oldTop; // Keep reader position.
+  while (ui.messages.children.length > wanted.length) ui.messages.lastElementChild.remove();
+  const keys = new Set(state.entries.filter(e => e?.type === 'message' && e.id != null).map(e => String(e.id)));
+  for (const key of rendered.keys()) if (!keys.has(key)) rendered.delete(key);
+  if (follow) scrollBottom();
+  else if (anchor?.isConnected) ui.conversation.scrollTop += anchor.getBoundingClientRect().top - top - anchorOffset;
+  else ui.conversation.scrollTop = oldTop;
   updateControls();
 }
 function scheduleRender() {
@@ -119,7 +146,7 @@ function identity(snapshot) {
 }
 function installSnapshot(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.entries) || !Number.isSafeInteger(snapshot.seq)) throw Error('Invalid session snapshot');
-  const changed = state.sessionId != null && (state.sessionId !== snapshot.sessionId || state.branchId !== (snapshot.branchId ?? null));
+  const changed = isBranchSwitch(state, snapshot);
   state.sessionId = snapshot.sessionId; state.branchId = snapshot.branchId ?? null; state.seq = snapshot.seq; state.entries = snapshot.entries; state.live = null;
   state.busy = Boolean(snapshot.busy); state.attention = Boolean(snapshot.attention);
   identity(snapshot);
