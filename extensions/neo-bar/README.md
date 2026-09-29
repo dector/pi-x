@@ -140,7 +140,7 @@ labels are rendered in the frame corners:
 ```
 ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ╼━╮
 ┃ ... input ...                                  ┃
-╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% 210k · 󰇁 0.03 ╼━━━╾ 󰦨 1.2k ╼━╯
+╰━╾ 󰕥 SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 󰊚 15.9% · 210k ╼━━━╾ 󰦨 1.2k · 󰇁 0.03 ╼━╯
 ```
 
 - The inner editor is rendered 2 columns narrower and wrapped with heavy `┃`
@@ -175,8 +175,8 @@ labels are rendered in the frame corners:
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border; in `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
-- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage/cost.
-  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> <tokens> · 󰇁 <cost> `. The
+- **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage.
+  - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> · <tokens> `. The
     network-to-context bridge is tapered on both label sides, so the line reads
     as one heavy stroke that thins out where it meets either label. The safe-mode
     and network parts are omitted when their producer/core is absent.
@@ -194,7 +194,7 @@ labels are rendered in the frame corners:
     the subdued accent `󰚩 ✓`, and recursive delegation is warning-colored `󰚩 N`.
   - `percent`: current context usage percent, one decimal (for example `15.9%`), or `--` when unknown.
   - `tokens`: current context usage tokens, compact (for example `210k`), or `--` when unknown.
-  - `cost`: cumulative session cost, prefixed with the price icon `󰇁 ` and with no
+  - `cost` (bottom-right, after all other indicators): cumulative session cost, prefixed with the price icon `󰇁 ` and with no
     trailing `$` in border mode (for example `󰇁 0.03`). Zero/unavailable renders as
     `󰇁 0.00`; non-zero below half a cent renders as `󰇁 <0.01`. When subagent usage
     changes the total, the label shows session then total, each with its own icon:
@@ -257,7 +257,7 @@ labels are rendered in the frame corners:
   1024-token cap). That is a first estimate only: other providers tokenize images
   differently, and the path text is counted too. The token size appears only
   at 150 tokens or above, or when a pasted image contributes tokens; the counters
-  are hidden when empty. On narrow frames,
+  are hidden when empty. On narrow frames, cost moves to status line 2 first;
   stashes then notes are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.

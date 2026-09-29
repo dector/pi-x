@@ -224,15 +224,13 @@ function formatCostTrailingPrecise(total: number): string {
 	return `${total.toFixed(3)}$`;
 }
 
-// Bottom-border context usage + cost, kept separate so a narrow frame can keep the
-// usage meter on the border and relocate only the cost to status line 2.
+// Bottom-border context usage + cost, kept separate so the cost can appear
+// after the bottom-right indicators or relocate to status line 2 on narrow frames.
 interface FrameContextParts {
-	/** Context usage meter, e.g. `󰊚 15.9% 210k`. Always shown on the border. */
+	/** Context usage meter, e.g. `󰊚 15.9% · 210k`. Always shown on the border. */
 	usage: string;
 	/** Cost, e.g. `󰇁 0.03` or `󰇁 0.03 Tot󰇁 0.034`. Relocated on narrow frames. */
 	cost: string;
-	/** Separator between usage and cost, colored like the meter so the dot never shows as white. */
-	separator: string;
 }
 
 // Uses the subdued accent for the first bucket; higher usage follows the neo-bar context colors.
@@ -262,16 +260,14 @@ export function buildFrameContextParts(
 			? `${formatCostTrailing(cost)} | ${formatCostTrailingPrecise(totalCost)}`
 			: formatCostTrailing(cost);
 
-	const usageLabel = `${BORDER_CONTEXT_ICON}${percent} ${tokens}`;
+	const usageLabel = `${BORDER_CONTEXT_ICON}${percent} · ${tokens}`;
 	const costText = decorateBorderContextCost(costLabel);
-	const separator = " · ";
-	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText, separator };
+	if (!theme || percentValue === undefined) return { usage: usageLabel, cost: costText };
 
 	const firstBucket = (text: string) => styleDarkAccent(theme, text);
 	const styledUsage = styleContextLabel(theme, Number(percentValue.toFixed(1)), usageLabel, firstBucket);
 	const styledCost = styleContextLabel(theme, Number(percentValue.toFixed(1)), costText, firstBucket);
-	const styledSeparator = styleContextLabel(theme, Number(percentValue.toFixed(1)), separator, firstBucket);
-	return { usage: styledUsage, cost: styledCost, separator: styledSeparator };
+	return { usage: styledUsage, cost: styledCost };
 }
 
 type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefined;
@@ -438,7 +434,7 @@ export function stripEditorCursor(lines: readonly string[]): string[] {
  * ```
  * ╭━╾ 󰙴 cdx/5.6-sol · high ╼━━╾ 󰐖 1 󰍵 2 󰎃 4 · 󰐖 150 󰍵 200 ╼━╮
  * ┃ ... input ...                                  ┃
- * ╰━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k · 0.03$ ╼━━━━━╯
+ * ╰━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% · 210k ╼━╾ 0.03$ ╼━╯
  * ```
  */
 export class FrameStatusEditor extends CustomEditor {
@@ -847,12 +843,7 @@ export class FrameStatusEditor extends CustomEditor {
 		const subagentLabel = this.bottomLeftSubagentProvider?.();
 		const stashLabel = this.bottomRightStashProvider?.();
 		const notesLabel = this.bottomRightNotesProvider?.();
-		// Full border context is usage + cost; the usage meter always stays on the border.
-		const combinedContext =
-			hasVisibleText(usageLabel) && hasVisibleText(costLabel)
-				? `${usageLabel}${contextParts?.separator ?? " · "}${costLabel}`
-				: usageLabel || costLabel;
-		const fullLeftSegment = this.bottomLeftSegment(combinedContext, statusLabel, networkLabel, subagentLabel);
+		const leftSegment = this.bottomLeftSegment(usageLabel, statusLabel, networkLabel, subagentLabel);
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		// The unsent-message size uses the paste-expanded text, which is what pi
 		// actually sends (submit expands paste markers, then trims).
@@ -869,26 +860,23 @@ export class FrameStatusEditor extends CustomEditor {
 		// const modeSegment = this.isInputInactive()
 		// 	? `${this.labelColor(FRAME_LABEL_OPEN)}${this.labelColor("NORMAL")}${this.labelColor(FRAME_LABEL_CLOSE)}`
 		// 	: "";
-		const rightSegments = [
+		const rightLabelCandidates = [
 			[...rightLabels],
 			[rightLabels[0], rightLabels[1]],
 			[rightLabels[0]],
 			[],
-		].map((labels) => `${scrollSegment}${makeRightSegment(labels)}`);
-		const rightSegment = rightSegments[0];
+		];
 		const borderColor = (text: string) => this.borderColor(text);
-
-		// On a narrow frame the cost no longer fits. Keep the usage meter on the border
-		// and relocate only the prices to status line 2.
-		const costRelocated = hasVisibleText(costLabel) && visibleWidth(fullLeftSegment) >= width;
-		const leftSegment = this.bottomLeftSegment(
-			costRelocated ? usageLabel : combinedContext,
-			statusLabel,
-			networkLabel,
-			subagentLabel,
+		const cost = hasVisibleText(costLabel) ? sanitizeStatusText(costLabel) : undefined;
+		// Keep all other indicators ahead of cost. If the full set cannot fit,
+		// relocate only the cost before dropping any other indicator.
+		const fullRight = `${scrollSegment}${makeRightSegment([...rightLabels, cost])}`;
+		const costFits = cost !== undefined && visibleWidth(leftSegment) + visibleWidth(fullRight) < width;
+		const rightSegments = rightLabelCandidates.map((labels) =>
+			`${scrollSegment}${makeRightSegment(costFits ? [...labels, cost] : labels)}`,
 		);
 		if (this.relocatedLabels) {
-			this.relocatedLabels.contextLabel = costRelocated ? costLabel : undefined;
+			this.relocatedLabels.contextLabel = cost !== undefined && !costFits ? costLabel : undefined;
 		}
 
 		if (!leftSegment) {
@@ -912,7 +900,7 @@ export class FrameStatusEditor extends CustomEditor {
 	/**
 	 * Combined bottom-left segment. Safe mode and the effective network token
 	 * share one label joined by exactly ` · `; context info follows after the
-	 * tapered border bridge: `━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% 210k `. The bridge keeps
+	 * tapered border bridge: `━╾ SMART · 󰅟 ✓? · 󰚩 ✓ ╼━╾ 15.9% · 210k `. The bridge keeps
 	 * its light halves on the label sides, so it reads as one line either way.
 	 * Composition (including safe-mode recoloring) lives in the pure
 	 * `composeBorderBottomLeft` helper.

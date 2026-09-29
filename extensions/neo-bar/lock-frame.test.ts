@@ -39,7 +39,7 @@ describe("locked editor frame", () => {
 		expect(lines[0]).toContain(`󰐖 ${GIT_STATS.filesAdded}`);
 		expect(lines.at(-1)).toContain("USAGE");
 		expect(lines.at(-1)).toContain("COST");
-		expect(lines.at(-1)).toContain("DRAFT unsent · 󰈙 3 · 󱊖 2");
+		expect(lines.at(-1)).toContain("DRAFT unsent · 󰈙 3 · 󱊖 2 · COST");
 		expect(lines.at(-1)?.indexOf("USAGE")).toBeLessThan(lines.at(-1)!.indexOf("DRAFT unsent"));
 		expect(lines.at(-1)).toStartWith("╰");
 		expect(lines.at(-1)).toEndWith("╯");
@@ -65,8 +65,17 @@ describe("locked editor frame", () => {
 		editor.setText("unsent");
 		const narrow = editor.render(55).at(-1)!;
 		expect(narrow).toContain("DRAFT unsent");
-		expect(narrow).not.toContain("󱊖 2");
+		expect(narrow).not.toContain("COST");
 		expect(visibleWidth(narrow)).toBe(55);
+	});
+
+	test("relocates cost before dropping notes or stash on a crowded border", () => {
+		const { editor, relocatedLabels } = makeEditor();
+		editor.setLocked(true);
+		const border = editor.render(43).at(-1)!;
+		expect(border).toContain("󰈙 3 · 󱊖 2");
+		expect(border).not.toContain("COST");
+		expect(relocatedLabels.contextLabel).toBe("COST");
 	});
 
 	test("dims the stripes and grays the rules without dimming the lock label", () => {

@@ -190,9 +190,10 @@ horizontal editor padding (`paddingX: 1`), and renders:
   heavy border dash between them. In `new` mode these totals stay on the border;
   in `legacy` mode they move to the first line right section as
   `+1 -2 M4 · +150 -200`.
-- bottom-left: context usage and cumulative cost, prefixed with the context icon
-  `󰊚 ` and the price icon `󰇁 ` (`━━ 󰊚 15.9% 210k · 󰇁 0.03 `). The border form has no
-  trailing `$`. The label is colored with the subdued accent (a darkened thinking
+- bottom-left: context usage, prefixed with `󰊚 ` (`━━ 󰊚 15.9% · 210k `).
+  The cost is shown at the end of the bottom-right indicators, prefixed with `󰇁 `
+  (`󰇁 0.03`), or moved to status line 2 if the full right label does not fit.
+  The border form has no trailing `$`. Both labels are colored with the subdued accent (a darkened thinking
   color) <=20%, `text` <=30%, `warning` <=50%, and `error` >50%. When subagent
   usage changes the total, cost
   renders as session then total, each with its own icon
@@ -213,8 +214,8 @@ horizontal editor padding (`paddingX: 1`), and renders:
   the subdued accent `󰚩 ✓` for top-level only, and warning-colored `󰚩 N` for
   recursive delegation.
 - bottom-right: the git-red unsent-message token size (`󰦨 1.2k`) comes first,
-  followed by muted-purple available-notes (`󰈙 <count>`) and orange stash (`󱊖 <count>`)
-  indicators when nonzero. Text uses pi's conservative chars/4
+  followed by muted-purple available-notes (`󰈙 <count>`), orange stash (`󱊖 <count>`)
+  indicators when nonzero, and cost last. Text uses pi's conservative chars/4
   heuristic on the paste-expanded editor text, so it matches what will be sent.
   Pasted image paths are detected, their pixel size is read from the file header
   (PNG/JPEG/GIF/WebP), and the result is converted with DeepSeek's published
