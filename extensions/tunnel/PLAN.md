@@ -7,7 +7,7 @@ Delivery target: run `/px:tunnel on` in an interactive Pi terminal, pair a phone
 ```
 Pi event handlers + command (index.ts)
     ⇅  disposable current-session adapter (never hold stale Pi API)
-Process-local server owner (server.ts, Elysia)
+Process-local server owner (server.ts, native Bun HTTP)
     ├── in-memory pairing/client credentials (auth.ts)
     ├── versioned JSON API + SSE broadcaster
     └── same-origin mobile UI (web/*)
@@ -27,10 +27,10 @@ The process-local owner holds the port and credentials across Pi session replace
 
 ## Stages and commit boundaries
 
-1. **Transport/auth** (server/auth/tests/package): verify Elysia runs in installed Pi's runtime, define narrow adapter interface, implement localhost bind, pairing cookie/bearer, Origin/CSRF checks, bounded request/stream buffers, idempotency, snapshot/SSE/prompt/abort routes. Tests cover expiration, guessing lockout, token revocation, auth, cross-origin writes, lifecycle rebinding, duplicate submissions. Commit `feat(tunnel): add authenticated local API server`.
+1. **Transport/auth** (server/auth/tests/package): verify the HTTP transport runs in installed Pi's runtime (Elysia failed bundled Pi's TypeBox compatibility check, so use native Bun HTTP), define narrow adapter interface, implement localhost bind, pairing cookie/bearer, Origin/CSRF checks, bounded request/stream buffers, idempotency, snapshot/SSE/prompt/abort routes. Tests cover expiration, guessing lockout, token revocation, auth, cross-origin writes, lifecycle rebinding, duplicate submissions. Commit `feat(tunnel): add authenticated local API server`.
 2. **Phone web UI** (web assets): pairing and reconnect flows, native history and live message rendering (thinking/tool content safely escaped), mobile keyboard/safe areas, copyable code, explicit Queue/Steer/Don't send and Stop, honest status/attention UI. Independent of Pi internals except documented API. Commit `feat(tunnel): add mobile-first chat client`.
 3. **Pi bridge** (index.ts + bridge tests): `/px:tunnel on|off|status|pair`, port/origin config, process owner/rebind on session switch/fork/tree/reload; session snapshots, Pi events, native send modes/abort. Test fake Pi event emitter for stale contexts and branch changes. Commit `feat(tunnel): connect server to active Pi session`.
-4. **Delivery integration** (install, README, tests/fixes): add extension to install whitelist/dependency flow; document Bun/Elysia setup, Tailscale Serve manual setup, secret handling, API examples, phone pairing and second terminal port conflict. Smoke Pi locally, API security/integration tests, run broad regression checks, address issues in narrow follow-up commits. Commit `docs(tunnel): document install and phone pairing` plus focused fix commits if needed.
+4. **Delivery integration** (install, README, tests/fixes): add extension to install whitelist/dependency flow; document Bun HTTP runtime setup, Tailscale Serve manual setup, secret handling, API examples, phone pairing and second terminal port conflict. Smoke Pi locally, API security/integration tests, run broad regression checks, address issues in narrow follow-up commits. Commit `docs(tunnel): document install and phone pairing` plus focused fix commits if needed.
 
 ## Acceptance and release gates
 

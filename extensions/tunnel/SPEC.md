@@ -8,11 +8,11 @@ Continue working with the **active Pi session** from a phone on the same Tailsca
 
 ## Deployment and commands
 
-- The Pi extension owns an Elysia HTTP server listening on `127.0.0.1` on a configurable, stable port. The default port is to be selected during implementation and documented. A port conflict fails clearly; never silently pick another port. No automatic Tailscale configuration or public binding.
+- The Pi extension owns an HTTP server (native Bun HTTP transport; Elysia was prototyped but conflicts with Pi's bundled TypeBox) listening on `127.0.0.1` on a configurable, stable port. The default port is to be selected during implementation and documented. A port conflict fails clearly; never silently pick another port. No automatic Tailscale configuration or public binding.
 - The user configures **Tailscale Serve HTTPS** to proxy to that local port. The UI requires a secure origin over the tailnet; the localhost origin is available for local setup/testing. Tailscale is transport, not the only authorization boundary.
 - `/px:tunnel on`: start or report the existing server; display local address, external URL if configured, and a fresh six-digit pairing code with expiry. Repeating `on` must not silently revoke clients or reconfigure Serve.
 - `/px:tunnel pair`: generate a new code to add another device; older unused code is invalidated. `/px:tunnel status`: show port, active session identity, pairing expiry, and paired-client count **without printing bearer credentials**. `/px:tunnel off`: close server/streams and revoke all credentials.
-- No automatic start on fresh Pi startup. Pi exit closes the server and invalidates credentials. If Elysia cannot run in the supported Pi runtime (notably bundled Pi), establish that with a prototype before building the UI; document supported runtime rather than silently changing architectures.
+- No automatic start on fresh Pi startup. Pi exit closes the server and invalidates credentials. The implementation uses Bun's built-in HTTP server to run inside Pi's bundled runtime; do not require a separate gateway or an incompatible Elysia dependency for v1.
 
 ## Pairing and authorization
 

@@ -25,6 +25,7 @@ This repo currently contains the following extension(s):
 | [`git`](extensions/git/README.md) | Adds a `git` tool and `/px:git` command with compact porcelain `status` output (`git status --porcelain=v1 -b`) plus filtered/range-limited `log` support. | `git` CLI |
 | [`gust`](extensions/gust/README.md) | TUI browser and per-thread worker orchestrator for [Gust](https://github.com/dector/gust) comment threads, backed by `gust ctl comments` (`/px:gust`, `/px:gust process`). | gust CLI |
 | [`pi-ui`](extensions/pi-ui/README.md) | UI tweaks: configurable working indicator, input-expected bell, `Ctrl+,` action dialog with favorite model/effort presets (`m`), and transcript selection (`Alt+PgDn`/`Alt+PgUp` select and scroll, `Alt+O` toggles the selected entry). | `focus-mode` optional (Focus mode row) |
+| [`tunnel`](extensions/tunnel/README.md) | Phone-first, paired web UI and API for the active Pi session over a local server (use Tailscale Serve for remote access). |
 | [`pi-nvim`](extensions/pi-nvim/README.md) | Unix-socket bridge for sending prompts into a running pi session from compatible Neovim clients. | compatible Neovim plugin |
 | [`attension-core`](extensions/attension-core/README.md) | Minimal attention bell: emits terminal BEL (`\u0007`) on `agent_end`, with a short cooldown and a `/px:attension-core-test` command. | |
 | [`save`](extensions/save/README.md) | Adds a `/save` command to write the latest assistant response to Markdown (`/save` or `/px file.md`). | |
