@@ -55,6 +55,7 @@ import {
 	BORDER_MESSAGE_ICON,
 	chooseTopBorderSegments,
 	composeBorderBottomLeft,
+	composeBorderPolicyGroup,
 	composeLegacyLeftSection,
 	composeTopLeftModelReview,
 	composeSectionItems,
@@ -279,16 +280,37 @@ type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefin
  * reads the same-frame decision.
  */
 interface RelocatedBorderLabels {
+	/** Whether the editor frame used compact mode on this render. */
+	compact?: boolean;
 	/** Git dirty totals moved off the top-right border. */
 	gitStats?: GitStats;
-	/** Cost label moved off the bottom-left border (the usage meter stays). */
+	/** Cost label moved off a border when it cannot fit. */
 	contextLabel?: string;
+	/** Network and subagent indicators moved off the bottom-left border in compact mode. */
+	policyLabel?: string;
+}
+
+export function placeRelocatedFrameLabels(args: {
+	left?: string;
+	right?: string;
+	git?: string;
+	policy?: string;
+	cost?: string;
+	compact: boolean;
+	separator: string;
+}): { left?: string; right?: string } {
+	const append = (base?: string, extra?: string): string | undefined =>
+		hasVisibleText(extra) ? (hasVisibleText(base) ? `${base}${args.separator}${extra}` : extra) : base;
+	return {
+		left: append(append(args.left, args.compact ? args.git : undefined), args.cost),
+		right: append(append(args.right, args.compact ? undefined : args.git), args.policy),
+	};
 }
 
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
 	getDisplayMode: () => NeoBarDisplayMode;
-	/** Bottom-left context usage + cost, split so only the cost relocates on narrow frames. */
+	/** Context usage and cost; compact mode shows the cost on the top-right border. */
 	bottomLeft?: () => FrameContextParts | undefined;
 	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
 	bottomLeftStatus?: FrameStatusProvider;
@@ -639,9 +661,8 @@ export class FrameStatusEditor extends CustomEditor {
 	}
 
 	/**
-	 * Top-right corner label: git dirty totals in the full split form. On a narrow
-	 * frame the totals no longer fit, so the editor drops them here and relocates
-	 * them to status line 2 (no compact/files-only fallback).
+	 * Top-right corner label: git dirty totals in the full split form on wide
+	 * frames. Compact mode uses this corner for cost and moves git to status line 2.
 	 */
 	private topRightSegment(): string {
 		const stats = this.topRightGitStats?.();
@@ -786,9 +807,8 @@ export class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Keep the model whenever possible. In compact mode (<=60 columns), move
-		// git totals to status line 2; on wider frames, move them if they do not fit.
-		// Git totals have no compact/files-only border fallback.
+		// Compact mode (<=60 columns) gives the top-right corner to price and
+		// moves git totals to status line 2. On wider frames, move git if it cannot fit.
 		const modelLabel = this.topLeftLabel();
 		const reviewLabel = this.topLeftReviewProvider?.();
 		const reviewSuffix = hasVisibleText(reviewLabel) ? ` · ${reviewLabel}` : "";
@@ -797,17 +817,29 @@ export class FrameStatusEditor extends CustomEditor {
 		const modelPlaceholder = modelLabel
 			? `${FRAME_LEFT_CORNER_OPEN}${modelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
 			: "";
-		const fullRightSegment = this.topRightSegment();
-		const chosen = chooseTopBorderSegments({
+		const compact = width <= COMPACT_FRAME_MAX_WIDTH;
+		const costLabel = compact ? this.bottomLeftProvider?.().cost : undefined;
+		const compactCostSegment = hasVisibleText(costLabel)
+			? `${this.borderColor(FRAME_LABEL_OPEN)}${sanitizeStatusText(costLabel)}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`
+			: "";
+		const fullRightSegment = compact ? compactCostSegment : this.topRightSegment();
+		let chosen = chooseTopBorderSegments({
 			width,
 			leftSegments: [modelPlaceholder],
-			rightSegments: width <= COMPACT_FRAME_MAX_WIDTH ? [] : [fullRightSegment],
+			rightSegments: [fullRightSegment],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
 		});
+		// If both cannot fit in compact mode, keep the price (including total)
+		// instead of the model whenever the price fits on its own.
+		if (compact && !chosen.right && visibleWidth(compactCostSegment) + MIN_CORNER_LABEL_GAP <= width) {
+			chosen = { left: "", right: compactCostSegment };
+		}
 		const rawGitStats = this.topRightGitStats?.();
 		if (this.relocatedLabels) {
-			this.relocatedLabels.gitStats = hasVisibleText(chosen.right) ? undefined : rawGitStats;
+			this.relocatedLabels.compact = compact;
+			this.relocatedLabels.gitStats = compact || !hasVisibleText(chosen.right) ? rawGitStats : undefined;
+			if (compact) this.relocatedLabels.contextLabel = hasVisibleText(chosen.right) ? undefined : costLabel;
 		}
 		const selectedModelLabel = chosen.left === modelPlaceholder ? modelLabel : undefined;
 		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel) : "";
@@ -842,7 +874,23 @@ export class FrameStatusEditor extends CustomEditor {
 		const subagentLabel = this.bottomLeftSubagentProvider?.();
 		const stashLabel = this.bottomRightStashProvider?.();
 		const notesLabel = this.bottomRightNotesProvider?.();
-		const leftSegment = this.bottomLeftSegment(usageLabel, statusLabel, networkLabel, subagentLabel);
+		const compact = width <= COMPACT_FRAME_MAX_WIDTH;
+		const leftSegment = this.bottomLeftSegment(
+			usageLabel,
+			statusLabel,
+			compact ? undefined : networkLabel,
+			compact ? undefined : subagentLabel,
+		);
+		if (this.relocatedLabels) {
+			this.relocatedLabels.policyLabel = compact
+				? composeBorderPolicyGroup({
+						networkLabel,
+						subagentLabel,
+						borderColor: (text) => this.borderColor(text),
+						accentColor: this.subduedColor,
+					})
+				: undefined;
+		}
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↓ ${hiddenLineCount} more `) : "";
 		// The unsent-message size uses the paste-expanded text, which is what pi
 		// actually sends (submit expands paste markers, then trims).
@@ -867,15 +915,15 @@ export class FrameStatusEditor extends CustomEditor {
 		];
 		const borderColor = (text: string) => this.borderColor(text);
 		const cost = hasVisibleText(costLabel) ? sanitizeStatusText(costLabel) : undefined;
-		// Keep all other indicators ahead of cost. Move cost in compact mode,
-		// or when the full set cannot fit on a wider frame.
+		// Compact mode shows cost on top, not on this border. On wider frames,
+		// keep all other indicators ahead of cost and relocate it if they cannot fit.
 		const fullRight = `${scrollSegment}${makeRightSegment([...rightLabels, cost])}`;
 		const costFits =
-			width > COMPACT_FRAME_MAX_WIDTH && cost !== undefined && visibleWidth(leftSegment) + visibleWidth(fullRight) < width;
+			!compact && cost !== undefined && visibleWidth(leftSegment) + visibleWidth(fullRight) < width;
 		const rightSegments = rightLabelCandidates.map((labels) =>
 			`${scrollSegment}${makeRightSegment(costFits ? [...labels, cost] : labels)}`,
 		);
-		if (this.relocatedLabels) {
+		if (this.relocatedLabels && !compact) {
 			this.relocatedLabels.contextLabel = cost !== undefined && !costFits ? costLabel : undefined;
 		}
 
@@ -2126,10 +2174,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					let center = renderSection(layout.center, undefined, joinSeparator);
 					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
-					// On a narrow frame the editor frame relocates the cost label (usage stays on
-					// the border) and the git dirty totals to status line 2 (left and right).
-					// Merge them into the section content here so crowding accounts for them.
+					// Compact mode puts git on the left and policy on the right; on
+					// wider frames relocated git stays on the right. Cost falls back left.
 					const relocatedContext = displayMode === "new" ? relocatedBorderLabels.contextLabel : undefined;
+					const relocatedPolicy = displayMode === "new" ? relocatedBorderLabels.policyLabel : undefined;
 					const relocatedGitStats = displayMode === "new" ? relocatedBorderLabels.gitStats : undefined;
 					const relocatedGit = relocatedGitStats
 						? decorateBorderGitStats(relocatedGitStats, {
@@ -2137,24 +2185,22 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 								separator: (value) => theme.fg("thinkingOff", value),
 							})
 						: undefined;
-					const mergeRelocated = (
-						base: string | undefined,
-						extra: string | undefined,
-						separator: string,
-					): string | undefined => {
-						if (!hasVisibleText(extra)) return base;
-						return hasVisibleText(base) ? `${base}${separator}${extra}` : extra;
-					};
-					left = mergeRelocated(left, relocatedContext, joinSeparator);
-					right = mergeRelocated(right, relocatedGit, joinSeparator);
+					const mergeFrameLabels = (left?: string, right?: string, separator: string = joinSeparator) =>
+						placeRelocatedFrameLabels({
+							left, right, separator,
+							compact: relocatedBorderLabels.compact === true,
+							git: relocatedGit,
+							policy: relocatedPolicy,
+							cost: relocatedContext,
+						});
+					({ left, right } = mergeFrameLabels(left, right));
 
 					if (isCrowded(width, left, center, right)) {
 						joinSeparator = theme.fg("muted", COMPACT_ITEM_JOIN_SEPARATOR);
 						left = renderLeft(joinSeparator);
 						center = renderSection(layout.center, undefined, joinSeparator);
 						right = renderSection(layout.right, contextOverrides, joinSeparator);
-						left = mergeRelocated(left, relocatedContext, joinSeparator);
-						right = mergeRelocated(right, relocatedGit, joinSeparator);
+						({ left, right } = mergeFrameLabels(left, right, joinSeparator));
 					}
 
 					const hasThinkingSection = layout.left.includes(SWITCH_THINKING_ID);
@@ -2163,7 +2209,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 					if (needCompactThinking) {
 						left = renderLeft(joinSeparator, new Map([[SWITCH_THINKING_ID, activeThinking]]));
-						left = mergeRelocated(left, relocatedContext, joinSeparator);
+						({ left, right } = mergeFrameLabels(left, right, joinSeparator));
 					}
 
 					const line2 = renderThreeSectionLine(width, left, center, right);

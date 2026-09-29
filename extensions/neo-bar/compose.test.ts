@@ -5,6 +5,7 @@ import {
 	chooseTopBorderSegments,
 	compactFrameLabel,
 	composeBorderBottomLeft,
+	composeBorderPolicyGroup,
 	composeLegacyLeftSection,
 	composeSafeModeNetworkGroup,
 	composeSectionItems,
@@ -177,6 +178,18 @@ describe("chooseTopBorderSegments", () => {
 	test("keeps the model alone when no git form fits", () => {
 		const chosen = choose(visibleWidth(fullModel) + 1);
 		expect(chosen).toEqual({ left: fullModel, right: "" });
+	});
+});
+
+describe("composeBorderPolicyGroup (relocated compact indicators)", () => {
+	test("keeps both icons, the network producer color, and the subdued subagent color", () => {
+		const label = composeBorderPolicyGroup({
+			networkLabel: "\u001b[31m✓?\u001b[0m",
+			subagentLabel: "󰚩 ✓",
+			borderColor: border,
+			accentColor: accent,
+		});
+		expect(label).toBe("\u001b[31m󰅟 \u001b[0m\u001b[31m✓?\u001b[0m« · »‹󰚩 ✓›");
 	});
 });
 

@@ -188,13 +188,17 @@ horizontal editor padding (`paddingX: 1`), and renders:
   changed-line group is dropped to keep the files group (`󰐖1󰍵2󰎃4`). The model label
   remains visible whenever it fits, and labels sharing the top edge need only one
   heavy border dash between them. In `new` mode these totals move to status
-  line 2 at 60 columns or less (or if they do not fit on a wider frame);
+  line 2 on the left at 60 columns or less, while price takes the top-right corner (or
+  they move if they do not fit on a wider frame);
   in `legacy` mode they move to the first line right section as
   `+1 -2 M4 · +150 -200`.
 - bottom-left: context usage, prefixed with `󰊚 ` (`━━ 󰊚 15.9% · 210k `).
   The cost is shown at the end of the bottom-right indicators, prefixed with `󰇁 `
-  (`󰇁 0.03`), or moved to status line 2 at 60 columns or less (or if
-  the full right label does not fit on a wider frame).
+  (`󰇁 0.03`). At 60 columns or less, price (including subagent total) moves
+  to the top-right corner and network/subagent indicators move to the right of
+  status line 2. If price cannot fit on top, it moves to the left of status line 2;
+  on wider frames it moves
+  there if the full bottom-right label cannot fit.
   The border form has no trailing `$`. Both labels are colored with the subdued accent (a darkened thinking
   color) <=20%, `text` <=30%, `warning` <=50%, and `error` >50%. When subagent
   usage changes the total, cost

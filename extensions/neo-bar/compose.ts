@@ -85,6 +85,22 @@ function decorateBorderSubagentLabel(label: string, accentColor: (text: string) 
 		: accentColor(`${BORDER_SUBAGENT_ICON}${value}`);
 }
 
+/** Reuse the border's icon and color treatment when policy moves to status line 2. */
+export function composeBorderPolicyGroup(args: {
+	networkLabel?: string;
+	subagentLabel?: string;
+	borderColor: (text: string) => string;
+	accentColor?: (text: string) => string;
+}): string | undefined {
+	const accentColor = args.accentColor ?? args.borderColor;
+	return joinStatusPolicyGroup(
+		undefined,
+		hasVisibleText(args.networkLabel) ? decorateBorderNetworkLabel(args.networkLabel, accentColor) : undefined,
+		hasVisibleText(args.subagentLabel) ? decorateBorderSubagentLabel(args.subagentLabel, accentColor) : undefined,
+		args.borderColor,
+	);
+}
+
 /**
  * Render the dirty counters for the editor border as two explicit groups, files
  * first then changed lines, separated by ` · `:

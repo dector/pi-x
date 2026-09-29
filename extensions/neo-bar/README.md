@@ -174,7 +174,8 @@ labels are rendered in the frame corners:
   files group (`󰐖1󰍵2󰎃4`). The model label remains visible whenever it fits. Labels
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border above 60 columns if they fit; at 60 columns or
-  less they move to status line 2. In `legacy` mode they move to the first line
+  less they move to the left of status line 2, while price takes the top-right corner. In
+  `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
 - **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage.
   - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> · <tokens> `. The
@@ -258,9 +259,12 @@ labels are rendered in the frame corners:
   1024-token cap). That is a first estimate only: other providers tokenize images
   differently, and the path text is counted too. The token size appears only
   at 150 tokens or above, or when a pasted image contributes tokens; the counters
-  are hidden when empty. At 60 columns or less, cost moves to status line 2
-  even if it fits. On wider frames, it moves when the full right label cannot
-  fit. Stashes then notes are dropped before the token size.
+  are hidden when empty. At 60 columns or less, cost (including the subagent
+  total when present) moves to the top-right corner and network and subagent
+  indicators move to the right of status line 2, where git stats used to go.
+  If the top-right cost cannot fit, it moves to the left of status line 2. On wider frames cost moves to
+  status line 2 when the full bottom-right label cannot fit. Stashes then notes
+  are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is
   filled with dashes. Labels are dropped when the terminal is too narrow.
 - When the editor is scrolled, the `↓ N more` indicator sits on the right of the
