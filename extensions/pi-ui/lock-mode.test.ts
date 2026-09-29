@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { matchesKey } from "@earendil-works/pi-tui";
 import piUiExtension from "./index";
 
 describe("lock input gate", () => {
@@ -35,6 +36,18 @@ describe("lock input gate", () => {
 			registerCommand: () => {},
 			events: { on: () => {}, emit: (...args: unknown[]) => { emitted.push(args); } },
 		} as never);
+		for (const [key, sequence] of [
+			["ctrl+9", "\x1b[57;5u"], ["ctrl+8", "\x1b[56;5u"],
+			["ctrl+7", "\x1b[55;5u"], ["ctrl+6", "\x1b[54;5u"],
+		] as const) {
+			expect(shortcuts.has(key)).toBe(true);
+			expect(matchesKey(sequence, key)).toBe(true);
+		}
+		expect(shortcuts.has("ctrl+l")).toBe(false);
+		expect(shortcuts.has("ctrl+shift+l")).toBe(false);
+		expect(shortcuts.has("ctrl+alt+m")).toBe(false);
+		expect(shortcuts.has("ctrl+shift+alt+m")).toBe(false);
+		expect([...shortcuts.keys()].some((key) => matchesKey("\r", key as Parameters<typeof matchesKey>[1]))).toBe(false);
 		await handlers.get("session_start")?.({}, ctx);
 		expect(inputListener?.("\x1b")).toBeUndefined();
 		const opening = shortcuts.get("ctrl+,") ?? [...shortcuts.values()].at(-1)!;

@@ -28,10 +28,10 @@ const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
-const CYCLE_FAVORITE_MODEL_SHORTCUT = Key.alt("m");
-const CYCLE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.altShift("m");
-const CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT = Key.ctrlAlt("m");
-const CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrlShiftAlt("m");
+const CYCLE_FAVORITE_MODEL_SHORTCUT = Key.ctrl("9");
+const CYCLE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrl("8");
+const CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT = Key.ctrl("7");
+const CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrl("6");
 const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
 type LockableTui = {
 	addInputListener: (listener: (data: string) => { consume: boolean } | undefined) => () => void;

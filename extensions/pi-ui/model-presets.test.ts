@@ -30,7 +30,7 @@ const withTempAgentDir = async (run: () => Promise<void>) => {
 };
 
 describe("model presets", () => {
-	test("Alt+m cycles favorite model and thinking level, skipping unavailable entries and wrapping", async () => {
+	test("Ctrl+9 cycles favorite model and thinking level, skipping unavailable entries and wrapping", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let model = { provider: "provider", id: "other", reasoning: true };
@@ -56,7 +56,7 @@ describe("model presets", () => {
 		});
 	});
 
-	test("Alt+Shift+m cycles main favorites backwards, skipping unavailable entries and wrapping", async () => {
+	test("Ctrl+8 cycles main favorites backwards, skipping unavailable entries and wrapping", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let model = { provider: "provider", id: "other", reasoning: true };
@@ -91,7 +91,7 @@ describe("model presets", () => {
 			expect(notices).toEqual(["No favorite models. Add one with Ctrl+, then m.", "No favorite models are available."]);
 		});
 	});
-	test("Ctrl+Alt+m cycles rewire targets without changing main model or enabling rewiring", async () => {
+	test("Ctrl+7 cycles rewire targets without changing main model or enabling rewiring", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let target: (typeof presets)[number] | undefined;
@@ -120,7 +120,7 @@ describe("model presets", () => {
 		});
 	});
 
-	test("Ctrl+Alt+Shift+m cycles rewire targets backwards, skipping unavailable favorites", async () => {
+	test("Ctrl+6 cycles rewire targets backwards, skipping unavailable favorites", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let target: (typeof presets)[number] | undefined;

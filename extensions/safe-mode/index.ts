@@ -1260,7 +1260,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrlShift("m"), {
+	pi.registerShortcut(Key.alt("m"), {
 		description: "Cycle safe mode",
 		handler: async (ctx) => {
 			setMode(cycleSafeMode(mode), ctx);

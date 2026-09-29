@@ -193,7 +193,7 @@ This covers normal skill loading via `read` of `SKILL.md` plus sibling/reference
 
 ## Shortcut
 
-- `Ctrl+Shift+M`
+- `Alt+M`
   - Cycle safe modes.
 
 ## Approval dialog
