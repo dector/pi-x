@@ -46,26 +46,41 @@ function renderContent(parent, message) {
     else if (block?.type === 'image') parent.append(make('p', 'text', '[Image omitted from text view]'));
     else if (block != null) detail(parent, `Content · ${block.type ?? 'unknown'}`, safeJson(block));
   }
-  if (message?.role === 'toolResult') {
-    if (message.toolName) parent.prepend(make('p', 'text', `Tool: ${message.toolName}${message.isError ? ' · Error' : ''}`));
-    if (message.details != null) detail(parent, 'Details', safeJson(message.details));
-  }
+  if (message?.role === 'toolResult' && message.details != null) detail(parent, 'Details', safeJson(message.details));
   if (!parent.childNodes.length) parent.append(make('p', 'text', '[No text content]'));
 }
 function render() {
   const follow = isNearBottom(); const oldTop = ui.conversation.scrollTop;
+  // Live updates rebuild the message list; keep tool results the reader opened open.
+  const expandedTools = new Set(Array.from(ui.messages.querySelectorAll('details.tool-result[open][data-entry-id]'), el => el.dataset.entryId));
   const fragment = document.createDocumentFragment();
   for (const entry of state.entries) {
     if (entry?.type !== 'message' || !entry.message) continue;
     const message = entry.message, role = message.role ?? 'other';
     const card = make('article', `message ${['user','assistant','toolResult'].includes(role) ? role : 'other'}`);
-    card.append(make('div', 'message-head', role === 'toolResult' ? 'Tool result' : role === 'assistant' ? 'Pi' : role === 'user' ? 'You' : role));
-    const body = make('div', 'message-body'); renderContent(body, message); card.append(body); fragment.append(card);
+    if (role === 'toolResult') {
+      const fold = make('details', 'tool-result');
+      if (entry.id != null) { fold.dataset.entryId = entry.id; fold.open = expandedTools.has(entry.id); }
+      fold.append(make('summary', '', `${message.toolName || 'Tool'} result${message.isError ? ' · Error' : ''}`));
+      const body = make('div', 'message-body'); renderContent(body, message); fold.append(body); card.append(fold);
+    } else {
+      card.append(make('div', 'message-head', role === 'assistant' ? 'Pi' : role === 'user' ? 'You' : role));
+      const body = make('div', 'message-body'); renderContent(body, message); card.append(body);
+    }
+    fragment.append(card);
   }
   if (state.live && !state.entries.some(e => e.id != null && e.id === state.live.id)) {
     const liveRole = state.live.message?.role ?? 'assistant';
-    const card = make('article', `message ${liveRole}`); card.append(make('div', 'message-head', liveRole === 'assistant' ? 'Pi · streaming' : liveRole === 'user' ? 'You' : liveRole));
-    const body = make('div', 'message-body'); renderContent(body, state.live.message); card.append(body); fragment.append(card);
+    const card = make('article', `message ${liveRole}`);
+    if (liveRole === 'toolResult') {
+      const fold = make('details', 'tool-result');
+      fold.append(make('summary', '', `${state.live.message.toolName || 'Tool'} result${state.live.message.isError ? ' · Error' : ''}`));
+      const body = make('div', 'message-body'); renderContent(body, state.live.message); fold.append(body); card.append(fold);
+    } else {
+      card.append(make('div', 'message-head', liveRole === 'assistant' ? 'Pi · streaming' : liveRole === 'user' ? 'You' : liveRole));
+      const body = make('div', 'message-body'); renderContent(body, state.live.message); card.append(body);
+    }
+    fragment.append(card);
   }
   if (!fragment.childNodes.length) fragment.append(make('p', 'empty', 'This branch has no messages yet. Send a prompt to begin.'));
   ui.messages.replaceChildren(fragment);
