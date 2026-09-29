@@ -186,6 +186,7 @@ const FRAME_LINE_AFTER_LABEL = "╼";
 const FRAME_LINE_BEFORE_LABEL = "╾";
 // Providers whose context usage label also shows cumulative session cost.
 const COST_DISPLAY_PROVIDERS = new Set<string>(["deepseek"]);
+const COMPACT_FRAME_MAX_WIDTH = 60;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -273,10 +274,9 @@ export function buildFrameContextParts(
 type FrameStatusProvider = (options?: { compact?: boolean }) => string | undefined;
 
 /**
- * Border labels that no longer fit on a narrow editor frame. The editor clears
- * them while the full label fits and fills them when it relocates the label to
- * status line 2. The editor renders before the footer, so the footer reads the
- * same-frame decision.
+ * Border labels relocated in compact mode (width <= 60), or when a wider
+ * border cannot fit them. The editor renders before the footer, so the footer
+ * reads the same-frame decision.
  */
 interface RelocatedBorderLabels {
 	/** Git dirty totals moved off the top-right border. */
@@ -786,10 +786,9 @@ export class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Keep the model whenever possible. Git totals render on the border only in
-		// their full split form; on a narrow frame that no longer fits, so the label is
-		// relocated to status line 2 (no compact/files-only fallback). If even the model
-		// alone does not fit, the model still wins and the totals relocate.
+		// Keep the model whenever possible. In compact mode (<=60 columns), move
+		// git totals to status line 2; on wider frames, move them if they do not fit.
+		// Git totals have no compact/files-only border fallback.
 		const modelLabel = this.topLeftLabel();
 		const reviewLabel = this.topLeftReviewProvider?.();
 		const reviewSuffix = hasVisibleText(reviewLabel) ? ` · ${reviewLabel}` : "";
@@ -802,7 +801,7 @@ export class FrameStatusEditor extends CustomEditor {
 		const chosen = chooseTopBorderSegments({
 			width,
 			leftSegments: [modelPlaceholder],
-			rightSegments: [fullRightSegment],
+			rightSegments: width <= COMPACT_FRAME_MAX_WIDTH ? [] : [fullRightSegment],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
 		});
@@ -868,10 +867,11 @@ export class FrameStatusEditor extends CustomEditor {
 		];
 		const borderColor = (text: string) => this.borderColor(text);
 		const cost = hasVisibleText(costLabel) ? sanitizeStatusText(costLabel) : undefined;
-		// Keep all other indicators ahead of cost. If the full set cannot fit,
-		// relocate only the cost before dropping any other indicator.
+		// Keep all other indicators ahead of cost. Move cost in compact mode,
+		// or when the full set cannot fit on a wider frame.
 		const fullRight = `${scrollSegment}${makeRightSegment([...rightLabels, cost])}`;
-		const costFits = cost !== undefined && visibleWidth(leftSegment) + visibleWidth(fullRight) < width;
+		const costFits =
+			width > COMPACT_FRAME_MAX_WIDTH && cost !== undefined && visibleWidth(leftSegment) + visibleWidth(fullRight) < width;
 		const rightSegments = rightLabelCandidates.map((labels) =>
 			`${scrollSegment}${makeRightSegment(costFits ? [...labels, cost] : labels)}`,
 		);

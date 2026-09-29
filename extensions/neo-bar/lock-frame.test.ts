@@ -69,6 +69,36 @@ describe("locked editor frame", () => {
 		expect(visibleWidth(narrow)).toBe(55);
 	});
 
+	test("moves git and cost at 60 columns even when both fit", () => {
+		const relocatedLabels: NonNullable<Options["relocatedLabels"]> = {};
+		const editor = new FrameStatusEditor(
+			{ requestRender() {} } as ConstructorParameters<typeof FrameStatusEditor>[0],
+			{ borderColor: (text: string) => text } as ConstructorParameters<typeof FrameStatusEditor>[1],
+			{} as ConstructorParameters<typeof FrameStatusEditor>[2],
+			{
+				getDisplayMode: () => "new",
+				interruptConfirmation: {} as Options["interruptConfirmation"],
+				topLeft: () => "M",
+				topRightGitStats: () => GIT_STATS,
+				bottomLeft: () => ({ usage: "U", cost: "C" }),
+				relocatedLabels,
+			},
+		);
+		editor.setLocked(true);
+		const compact = editor.render(60);
+		expect(compact[0]).not.toContain("󰐖");
+		expect(compact.at(-1)).toContain("U");
+		expect(compact.at(-1)).not.toContain("C");
+		expect(relocatedLabels.gitStats).toEqual(GIT_STATS);
+		expect(relocatedLabels.contextLabel).toBe("C");
+
+		const wide = editor.render(100);
+		expect(wide[0]).toContain("󰐖");
+		expect(wide.at(-1)).toContain("C");
+		expect(relocatedLabels.gitStats).toBeUndefined();
+		expect(relocatedLabels.contextLabel).toBeUndefined();
+	});
+
 	test("relocates cost before dropping notes or stash on a crowded border", () => {
 		const { editor, relocatedLabels } = makeEditor();
 		editor.setLocked(true);
