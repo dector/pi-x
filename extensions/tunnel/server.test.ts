@@ -49,6 +49,11 @@ test('pairing and authenticated routes, origin/CSRF, idempotency and rebind', as
     const proxyPair = await server.app.handle(new Request(origin + '/api/v1/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: external }, body: JSON.stringify({ code: proxyCode }) }))
     expect(proxyPair.status).toBe(200)
     expect(proxyPair.headers.get('set-cookie')).toContain('Secure')
+    // Serve may preserve the HTTPS public Host after terminating TLS upstream.
+    const forwardedHost = await server.app.handle(new Request('http://pi.example.ts.net/api/v1/session', { headers: { Cookie: proxyPair.headers.get('set-cookie')! } }))
+    expect(forwardedHost.status).toBe(200)
+    const unknownHost = await server.app.handle(new Request('http://evil.example/api/v1/session', { headers: { Cookie: proxyPair.headers.get('set-cookie')! } }))
+    expect(unknownHost.status).toBe(403)
     expect((await send('/api/v1/pair', { method: 'POST', headers, body: JSON.stringify({ code }) })).status).toBe(401)
     const browser = { ...headers, Cookie: cookie }
     const snapshot = await (await send('/api/v1/session', { headers: browser })).json()

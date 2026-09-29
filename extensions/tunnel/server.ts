@@ -50,7 +50,9 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   const external = options.externalOrigin ? new URL(options.externalOrigin) : null
   if (external && (external.protocol !== 'https:' || external.pathname !== '/' || external.search || external.hash || external.username || external.password)) throw new Error('externalOrigin must be an HTTPS origin')
   const localOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`])
-  const origins = new Set([...(host === '127.0.0.1' || host === 'localhost' ? localOrigins : []), ...(external ? [external.origin] : [])])
+  // Serve terminates HTTPS and may forward the original Host over HTTP.
+  // Accept that exact configured host, never arbitrary forwarded Host headers.
+  const origins = new Set([...(host === '127.0.0.1' || host === 'localhost' ? localOrigins : []), ...(external ? [external.origin, `http://${external.host}`] : [])])
   if (!origins.size) throw new Error('Configure an external HTTPS origin for non-loopback binding')
   const auth = new TunnelAuth()
   let adapter: TunnelAdapter | null = null
@@ -93,7 +95,7 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   }
   function originAllowed(request: Request, write: boolean, client?: Client | null): boolean {
     const origin = request.headers.get('origin')
-    if (origin && !origins.has(origin)) return false
+    if (origin && !localOrigins.has(origin) && origin !== external?.origin) return false
     if (write && client?.mode === 'browser' && (!origin || !origins.has(origin))) return false
     return true
   }
