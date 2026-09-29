@@ -160,6 +160,7 @@ extensions=(
   "prompt-stash"
   "notes"
   "pi-nvim"
+  "tunnel"
   "focus-mode"
   "vim-mode"
   "model-presets"
