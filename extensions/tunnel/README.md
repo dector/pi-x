@@ -22,11 +22,11 @@ The default local port is **55555**. Set `PI_TUNNEL_PORT` in Pi's environment be
 Configure Serve yourself on the **machine running Pi** (do not use Funnel or bind the extension to a public interface):
 
 ```sh
-tailscale serve --bg 55555
+tailscale serve --bg --https=55555 55555
 tailscale serve status
 ```
 
-Set `PI_TUNNEL_ORIGIN` to the exact HTTPS origin printed by `tailscale serve status` (for example `https://my-pc.my-tailnet.ts.net`) **before launching Pi**. If the host/port changes, update Serve and the environment together. Open that URL on your phone, enter the six-digit code shown by `/px:tunnel on`, then continue the current conversation. The code expires after five minutes and can be used once; `/px:tunnel pair` makes a new code. Five bad guesses invalidate the current code. Paired devices reconnect without entering a new code until `/px:tunnel off` or Pi exit.
+Open the resulting `https://<your-node>.<your-tailnet>.ts.net:55555` URL on your phone. The extension accepts `.ts.net` hosts without `PI_TUNNEL_ORIGIN`; browser writes must originate from the exact HTTPS host and port used to open the page. For a custom domain, set `PI_TUNNEL_ORIGIN` to its exact HTTPS origin before launching Pi. Enter the six-digit code shown by `/px:tunnel on`, then continue the current conversation. The code expires after five minutes and can be used once; `/px:tunnel pair` makes a new code. Five bad guesses invalidate the current code. Paired devices reconnect without entering a new code until `/px:tunnel off` or Pi exit.
 
 The Pi process and Tailscale Serve must stay running. Tailscale provides transport; pairing controls who can read/write the Pi session. Paired clients can see sensitive thinking, tool arguments, command output, and file contents. Do not share the code or Serve URL with untrusted people. Never expose the local port directly on the internet.
 

@@ -91,6 +91,30 @@ test('pairing and authenticated routes, origin/CSRF, idempotency and rebind', as
   } finally { server.close() }
 })
 
+test('Serve accepts .ts.net without configuration but requires exact browser origin', async () => {
+  const server = createTunnelServer(null, { port })
+  const base = 'http://factory.chicken-matrix.ts.net:55555'
+  const browserOrigin = 'https://factory.chicken-matrix.ts.net:55555'
+  try {
+    expect((await server.app.handle(new Request(base + '/'))).status).toBe(200)
+    expect((await server.app.handle(new Request('http://factory.chicken-matrix.ts.net.evil.com/'))).status).toBe(403)
+    expect((await server.app.handle(new Request('http://ts.net/'))).status).toBe(403)
+    const code = server.newPairCode().code
+    const pair = (value: string) => server.app.handle(new Request(base + '/api/v1/pair', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: value }, body: JSON.stringify({ code })
+    }))
+    expect((await pair('https://other.chicken-matrix.ts.net:55555')).status).toBe(403)
+    expect((await pair('https://factory.chicken-matrix.ts.net')).status).toBe(403)
+    const response = await pair(browserOrigin)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain('Secure')
+    const cookie = response.headers.get('set-cookie')!
+    expect((await server.app.handle(new Request(base + '/api/v1/prompts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://other.chicken-matrix.ts.net:55555', Cookie: cookie, 'Idempotency-Key': 'wronghost' }, body: JSON.stringify({ text: 'test', mode: 'normal' })
+    }))).status).toBe(403)
+  } finally { server.close() }
+})
+
 test('Bun listener binds the requested port and releases it on close', async () => {
   const { server, send } = fixture()
   try {

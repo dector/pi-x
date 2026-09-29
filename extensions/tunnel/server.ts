@@ -50,9 +50,10 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   const external = options.externalOrigin ? new URL(options.externalOrigin) : null
   if (external && (external.protocol !== 'https:' || external.pathname !== '/' || external.search || external.hash || external.username || external.password)) throw new Error('externalOrigin must be an HTTPS origin')
   const localOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`])
-  // Serve terminates HTTPS and may forward the original Host over HTTP.
-  // Accept that exact configured host, never arbitrary forwarded Host headers.
+  // Serve terminates HTTPS and preserves the original Host over HTTP.
+  // Accept tailnet hosts without requiring a process-level origin setting.
   const origins = new Set([...(host === '127.0.0.1' || host === 'localhost' ? localOrigins : []), ...(external ? [external.origin, `http://${external.host}`] : [])])
+  const tailnetHost = (url: URL) => url.hostname.endsWith('.ts.net') && url.hostname.length > '.ts.net'.length && (url.protocol === 'http:' || url.protocol === 'https:')
   if (!origins.size) throw new Error('Configure an external HTTPS origin for non-loopback binding')
   const auth = new TunnelAuth()
   let adapter: TunnelAdapter | null = null
@@ -96,8 +97,13 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   }
   function originAllowed(request: Request, write: boolean, client?: Client | null): boolean {
     const origin = request.headers.get('origin')
-    if (origin && !localOrigins.has(origin) && origin !== external?.origin) return false
-    if (write && client?.mode === 'browser' && (!origin || !origins.has(origin))) return false
+    const url = new URL(request.url)
+    // A browser writing through Serve must come from this exact HTTPS host and port,
+    // not merely another subdomain on the same tailnet.
+    const tailnetOrigin = tailnetHost(url) && origin === `https://${url.host}`
+    if (tailnetHost(url) && origin && !tailnetOrigin) return false
+    if (origin && !localOrigins.has(origin) && origin !== external?.origin && !tailnetOrigin) return false
+    if (write && client?.mode === 'browser' && (!origin || (!origins.has(origin) && !tailnetOrigin))) return false
     return true
   }
   async function serveStatic(path: string): Promise<Response> {
@@ -112,7 +118,7 @@ export function createTunnelServer(initialAdapter: TunnelAdapter | null, options
   async function handle(request: Request): Promise<Response> {
     if (closed) return error(503, 'Unavailable')
     const url = new URL(request.url)
-    if (!origins.has(url.origin)) return error(403, 'Forbidden host')
+    if (!origins.has(url.origin) && !tailnetHost(url)) return error(403, 'Forbidden host')
     if (request.method === 'OPTIONS') return error(405, 'Method not allowed') // no permissive CORS
     if (url.pathname === '/' || (!url.pathname.startsWith('/api/') && request.method === 'GET')) return serveStatic(url.pathname)
     if (!url.pathname.startsWith('/api/v1/')) return error(404, 'Not found')
