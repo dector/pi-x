@@ -164,6 +164,7 @@ extensions=(
   "focus-mode"
   "vim-mode"
   "model-presets"
+  "gust"
   "herdr-agent-state"
 )
 
