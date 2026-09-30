@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, Loader, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, Loader, Text, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { cycleModelPresets, cycleRewireModelPresets, openModelPresets } from "./model-presets.ts";
+import { pickStartupMotto } from "./startup-mottos.ts";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
 const WORKING_INSTANCE_FLAG = "__pi_ui_working_loader_instance";
@@ -72,6 +73,16 @@ const CHIP_DURATION_MS = 1500;
 // Selection marker used by default; see SELECTION_MARKERS for the options.
 const DEFAULT_SELECTION_MARKER = "chip";
 const SELECTION_MARKER_ENV = "PI_UI_SELECTION_MARKER";
+
+// Compact startup header: the synthwave "duo" mark chosen for pi-x.
+const STARTUP_HEADER_ENV = "PI_UI_STARTUP_HEADER";
+const STARTUP_MARK = "/\u1d18x\u258c";
+const STARTUP_MARK_COLORS: Record<string, string> = {
+	"/": "#01cdfe",
+	"\u1d18": "#ff71ce",
+	x: "#b967ff",
+	"\u258c": "#01cdfe",
+};
 
 /**
  * Transcript entry components pi renders, used to recognise them by class name.
@@ -1895,6 +1906,97 @@ export async function showHiDialog(
 	}
 }
 
+/** Theme surface needed to pick the startup mark colour encoding. */
+export interface StartupHeaderTheme {
+	getColorMode?(): string;
+}
+
+const ANSI_RESET_FG = "\x1b[39m";
+const CUBE_VALUES = [0, 95, 135, 175, 215, 255] as const;
+const GRAY_VALUES = Array.from({ length: 24 }, (_, index) => 8 + index * 10);
+
+function nearestIndex(value: number, values: readonly number[]): number {
+	let best = 0;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	for (let index = 0; index < values.length; index += 1) {
+		const distance = Math.abs(value - (values[index] ?? 0));
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			best = index;
+		}
+	}
+	return best;
+}
+
+function colorDistance(r1: number, g1: number, b1: number, r2: number, g2: number, b2: number): number {
+	const dr = r1 - r2;
+	const dg = g1 - g2;
+	const db = b1 - b2;
+	return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+	return [
+		Number.parseInt(hex.slice(1, 3), 16),
+		Number.parseInt(hex.slice(3, 5), 16),
+		Number.parseInt(hex.slice(5, 7), 16),
+	];
+}
+
+/** Nearest xterm-256 palette index, matching pi's theme colour fallback. */
+function hexToAnsi256(hex: string): number {
+	const [r, g, b] = hexToRgb(hex);
+	const rIndex = nearestIndex(r, CUBE_VALUES);
+	const gIndex = nearestIndex(g, CUBE_VALUES);
+	const bIndex = nearestIndex(b, CUBE_VALUES);
+	const cubeR = CUBE_VALUES[rIndex] ?? 0;
+	const cubeG = CUBE_VALUES[gIndex] ?? 0;
+	const cubeB = CUBE_VALUES[bIndex] ?? 0;
+	const cubeIndex = 16 + 36 * rIndex + 6 * gIndex + bIndex;
+	const cubeDistance = colorDistance(r, g, b, cubeR, cubeG, cubeB);
+
+	const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+	const grayIndex = nearestIndex(gray, GRAY_VALUES);
+	const grayValue = GRAY_VALUES[grayIndex] ?? 0;
+	const grayDistance = colorDistance(r, g, b, grayValue, grayValue, grayValue);
+
+	const spread = Math.max(r, g, b) - Math.min(r, g, b);
+	if (spread < 10 && grayDistance < cubeDistance) return 232 + grayIndex;
+	return cubeIndex;
+}
+
+function startupForeground(hex: string, truecolor: boolean): string {
+	if (!truecolor) return `\x1b[38;5;${hexToAnsi256(hex)}m`;
+	const [r, g, b] = hexToRgb(hex);
+	return `\x1b[38;2;${r};${g};${b}m`;
+}
+
+/**
+ * Render the compact startup mark `/ᴘx▌` in the synthwave palette:
+ * slash cyan, `ᴘ` pink, `x` purple, cursor cyan.
+ *
+ * Uses truecolor when the theme reports it, otherwise the nearest xterm-256
+ * colour so the mark stays valid in 256-colour terminals.
+ */
+export function renderStartupMark(theme?: StartupHeaderTheme): string {
+	const truecolor = theme?.getColorMode?.() !== "256color";
+	let mark = "";
+	for (const char of STARTUP_MARK) {
+		const hex = STARTUP_MARK_COLORS[char] ?? STARTUP_MARK_COLORS["/"] ?? "#01cdfe";
+		mark += `${startupForeground(hex, truecolor)}${char}${ANSI_RESET_FG}`;
+	}
+	return mark;
+}
+
+/**
+ * `ctx.mode` exists at runtime but is missing from the pinned 0.75.4
+ * `ExtensionContext` type. Read it defensively so the TUI-only gate still
+ * typechecks and non-TUI sessions (RPC/print/JSON) never install the header.
+ */
+function isTuiContext(ctx: ExtensionContext): boolean {
+	return (ctx as ExtensionContext & { mode?: string }).mode === "tui";
+}
+
 export default function piUiExtension(pi: ExtensionAPI): void {
 	// Disabled: use pi's default busy indicator instead of pi-ui custom loader.
 	// patchLoaderWorkingSpinner();
@@ -1914,6 +2016,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 	let bellEnabled = parseBooleanEnv("PI_UI_BELL", DEFAULT_BELL_ENABLED);
 	setGlobalBellEnabled(bellEnabled);
+	const startupHeaderEnabled = parseBooleanEnv(STARTUP_HEADER_ENV, true);
 	setGlobalBellDebounceMs(
 		clamp(
 			parseIntEnv("PI_UI_BELL_DEBOUNCE_MS", DEFAULT_BELL_DEBOUNCE_MS),
@@ -1981,6 +2084,19 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		patchUiInputBell(ctx);
 	};
 
+	/** Replace the stock multi-line startup header with the compact pi-x mark. */
+	const installStartupHeader = (ctx: ExtensionContext): boolean => {
+		if (!startupHeaderEnabled) return false;
+		if (!isTuiContext(ctx) || !ctx.hasUI) return false;
+		if (typeof ctx.ui.setHeader !== "function") return false;
+		const motto = pickStartupMotto();
+		ctx.ui.setHeader((_tui, theme) => {
+			const mottoColor = startupForeground("#a99ac2", theme.getColorMode?.() !== "256color");
+			return new Text(`\n${renderStartupMark(theme)}  ${mottoColor}${motto}${ANSI_RESET_FG}`, 1, 0);
+		});
+		return true;
+	};
+
 	const pushFrame = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		ctx.ui.setWorkingMessage(encodeFrameStep(frame));
@@ -2020,6 +2136,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		setSelectedEntry(undefined);
 		installLockGate(ctx);
 		ensureUiBellPatched(ctx);
+		installStartupHeader(ctx);
 		notifyInputExpectedIfReady(ctx);
 	});
 

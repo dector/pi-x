@@ -173,6 +173,17 @@ Implementation notes:
 - The TUI reference comes from a hidden zero-height widget registered with `setWidget`.
 - Everything is coupled to pi internals and requires fullscreen TUI mode; if pi renames the components or moves the scroll view, the shortcuts report a notification instead of doing the wrong thing (`/px:pi-ui-nav` shows entry count, selection, and scroll-view state).
 
+### 5) Compact startup header
+
+Replaces pi's stock startup header (logo, keybinding hints, onboarding) with a blank line followed by `/ᴘx▌` and a random motto in the header slot. One of 120 short mottos is picked at each session start and stays fixed during redraws. The mottos live in `startup-mottos.ts` and use muted purple; the mark uses:
+
+- `/` cyan `#01cdfe`
+- `ᴘ` pink `#ff71ce`
+- `x` purple `#b967ff`
+- `▌` cursor cyan `#01cdfe`
+
+The mark uses truecolor when the active theme reports it, otherwise the nearest xterm-256 colour. It is a `setHeader` component, so it renders above the chat at startup without adding a transcript message or model context. It is installed on `session_start` only in TUI mode; set `PI_UI_STARTUP_HEADER=false` to keep pi's built-in header.
+
 ## Configuration
 
 ### Env vars
@@ -181,6 +192,7 @@ Implementation notes:
 - `PI_UI_WORKING_INTERVAL_MS` — animation speed in ms (default: `16`, minimum: `5`)
 - `PI_UI_WORKING_HUE_STEP_DEG` — hue change per frame in degrees (default: `8`)
 - `PI_UI_SELECTION_MARKER` — selection marker: `chip` (default) or `none`
+- `PI_UI_STARTUP_HEADER` — replace pi's stock startup header with the compact synthwave mark (default: `true`)
 - `PI_UI_BELL` — enable/disable bell notifications (default: `true`)
 - `PI_UI_BELL_DEBOUNCE_MS` — minimum milliseconds between bells (default: `250`, range: `0-5000`)
 
