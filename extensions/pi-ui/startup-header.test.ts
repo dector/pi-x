@@ -7,6 +7,7 @@ const RESET = "\x1b[39m";
 const CYAN_TRUE = "\x1b[38;2;1;205;254m";
 const PINK_TRUE = "\x1b[38;2;255;113;206m";
 const PURPLE_TRUE = "\x1b[38;2;185;103;255m";
+const DUSTY_BLUE_TRUE = "\x1b[38;2;120;155;181m";
 
 function stripAnsi(input: string): string {
 	return input.replace(/\x1b\[[0-9;]*m/g, "");
@@ -15,13 +16,13 @@ function stripAnsi(input: string): string {
 describe("startup header mark", () => {
 	test("paints /ᴘx▌ with the synthwave truecolor palette", () => {
 		expect(renderStartupMark({ getColorMode: () => "truecolor" })).toBe(
-			`${CYAN_TRUE}/${RESET}${PINK_TRUE}ᴘ${RESET}${PURPLE_TRUE}x${RESET}${CYAN_TRUE}▌${RESET}`,
+			`${CYAN_TRUE}/${RESET}${PINK_TRUE}ᴘ${RESET}${PURPLE_TRUE}x${RESET}${DUSTY_BLUE_TRUE}▌${RESET}`,
 		);
 	});
 
 	test("falls back to the nearest xterm-256 colours", () => {
 		expect(renderStartupMark({ getColorMode: () => "256color" })).toBe(
-			`\x1b[38;5;45m/${RESET}\x1b[38;5;206mᴘ${RESET}\x1b[38;5;135mx${RESET}\x1b[38;5;45m▌${RESET}`,
+			`\x1b[38;5;45m/${RESET}\x1b[38;5;206mᴘ${RESET}\x1b[38;5;135mx${RESET}\x1b[38;5;103m▌${RESET}`,
 		);
 	});
 

@@ -77,11 +77,23 @@ const SELECTION_MARKER_ENV = "PI_UI_SELECTION_MARKER";
 // Compact startup header: the synthwave "duo" mark chosen for pi-x.
 const STARTUP_HEADER_ENV = "PI_UI_STARTUP_HEADER";
 const STARTUP_MARK = "/\u1d18x\u258c";
+const STARTUP_CURSOR_PALETTE = {
+	cyan: "#01cdfe",
+	amber: "#c99562",
+	dustyBlue: "#789bb5",
+	slateBlue: "#7189a6",
+	softTeal: "#6ea5a1",
+	seaGlass: "#83b5a7",
+	sage: "#91a68a",
+	mutedJade: "#6f9e87",
+} as const;
+// Change this key to select the startup cursor colour.
+const STARTUP_CURSOR_COLOR: keyof typeof STARTUP_CURSOR_PALETTE = "dustyBlue";
 const STARTUP_MARK_COLORS: Record<string, string> = {
 	"/": "#01cdfe",
 	"\u1d18": "#ff71ce",
 	x: "#b967ff",
-	"\u258c": "#01cdfe",
+	"\u258c": STARTUP_CURSOR_PALETTE[STARTUP_CURSOR_COLOR],
 };
 
 /**
@@ -1973,7 +1985,7 @@ function startupForeground(hex: string, truecolor: boolean): string {
 
 /**
  * Render the compact startup mark `/ᴘx▌` in the synthwave palette:
- * slash cyan, `ᴘ` pink, `x` purple, cursor cyan.
+ * slash cyan, `ᴘ` pink, `x` purple, cursor from STARTUP_CURSOR_PALETTE.
  *
  * Uses truecolor when the theme reports it, otherwise the nearest xterm-256
  * colour so the mark stays valid in 256-colour terminals.

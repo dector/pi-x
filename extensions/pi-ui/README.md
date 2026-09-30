@@ -180,7 +180,9 @@ Replaces pi's stock startup header (logo, keybinding hints, onboarding) with a b
 - `/` cyan `#01cdfe`
 - `ᴘ` pink `#ff71ce`
 - `x` purple `#b967ff`
-- `▌` cursor cyan `#01cdfe`
+- `▌` cursor dusty blue `#789bb5` by default
+
+Choose the cursor colour in `index.ts` by changing `STARTUP_CURSOR_COLOR` to a key from `STARTUP_CURSOR_PALETTE`: `cyan`, `amber`, `dustyBlue`, `slateBlue`, `softTeal`, `seaGlass`, `sage`, or `mutedJade`.
 
 The mark uses truecolor when the active theme reports it, otherwise the nearest xterm-256 colour. It is a `setHeader` component, so it renders above the chat at startup without adding a transcript message or model context. It is installed on `session_start` only in TUI mode; set `PI_UI_STARTUP_HEADER=false` to keep pi's built-in header.
 
