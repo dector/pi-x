@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ThreadsDialog } from "./dialog.ts";
-import { gustClient } from "./gust.ts";
+import { gustClient, reloadClient, type ReloadTarget } from "./gust.ts";
+import { processHoldSettings, ReloadHold } from "./hold.ts";
 import { Orchestrator, type OrchestratorStatus } from "./orchestrator.ts";
 import type { ThreadState } from "./types.ts";
 
@@ -117,10 +118,67 @@ function showStatus(ctx: ExtensionCommandContext): void {
 }
 
 export default function gustExtension(pi: ExtensionAPI): void {
-	pi.registerCommand("px:gust", {
-		description: "Browse Gust threads, or `process` to run worker orchestration",
+	const hold = new ReloadHold(reloadClient, processHoldSettings());
+	const target = (ctx: ExtensionContext): ReloadTarget => ({
+		cwd: projectRoot(ctx),
+		socket: process.env.GUST_SOCKET?.trim() || undefined,
+	});
+	const renderHold = (ctx: ExtensionContext) => {
+		try {
+			ctx.ui.setStatus("gust-hold", hold.settings.enabled ? "gust: hold" : undefined);
+		} catch { /* Context may have been replaced. */ }
+	};
+	const holdAction = async (ctx: ExtensionContext, work: () => Promise<unknown>) => {
+		try {
+			await work();
+		} catch (error) {
+			try {
+				ctx.ui.notify(`gust hold: ${error instanceof Error ? error.message : String(error)}`, "warning");
+			} catch { /* Context may have been replaced. */ }
+		} finally {
+			renderHold(ctx);
+		}
+	};
+	const toggleHold = async (ctx: ExtensionCommandContext) => {
+		await holdAction(ctx, async () => {
+			const enabled = await hold.toggle(target(ctx), !ctx.isIdle());
+			ctx.ui.notify(`gust: automatic reload hold ${enabled ? "enabled" : "disabled"}`, "info");
+		});
+	};
+
+	pi.registerCommand("gust", {
+		description: "`hold` toggles automatic reload pausing while the agent works",
 		getArgumentCompletions: (prefix) =>
-			["process", "process stop", "status"]
+			["hold"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+		handler: async (args, ctx) => {
+			if (args.trim() === "hold") await toggleHold(ctx);
+			else ctx.ui.notify("Usage: /gust hold (toggle automatic reload hold)", "info");
+		},
+	});
+
+	pi.on("session_start", async (_event, ctx) => {
+		await holdAction(ctx, async () => {
+			await hold.settle(); // Retry any release whose reply was lost during replacement.
+			if (!ctx.isIdle()) await hold.start(target(ctx));
+		});
+	});
+	// before_agent_start is awaited before the loop starts. agent_start also
+	// covers automatic continuations; duplicate starts are idempotent.
+	pi.on("before_agent_start", async (_event, ctx) => {
+		await holdAction(ctx, () => hold.start(target(ctx)));
+	});
+	pi.on("agent_start", async (_event, ctx) => {
+		await holdAction(ctx, () => hold.start(target(ctx)));
+	});
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!ctx.isIdle()) return; // A new run may already have started.
+		await holdAction(ctx, () => hold.settle(() => ctx.isIdle()));
+	});
+
+	pi.registerCommand("px:gust", {
+		description: "Browse Gust threads, `process` workers, or `hold` automatic reloads during agent work",
+		getArgumentCompletions: (prefix) =>
+			["process", "process stop", "status", "hold"]
 				.filter((value) => value.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
@@ -138,6 +196,9 @@ export default function gustExtension(pi: ExtensionAPI): void {
 				case "stop":
 					await stopProcess(ctx);
 					return;
+				case "hold":
+					await toggleHold(ctx);
+					return;
 				case "status":
 					showStatus(ctx);
 					return;
@@ -148,7 +209,8 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event, ctx) => {
+		await holdAction(ctx, () => hold.shutdown(event.reason === "quit"));
 		await orchestrator?.stop().catch(() => {});
 		orchestrator = null;
 		activeCtx = null;

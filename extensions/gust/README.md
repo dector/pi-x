@@ -23,6 +23,29 @@ session per thread.
 - `/px:gust process` — start the worker orchestrator.
 - `/px:gust process stop` — stop it.
 - `/px:gust status` — print a one-line status.
+- `/gust hold` (also `/px:gust hold`) — toggle automatic reload coordination.
+
+## Automatic reload hold
+
+Opt in with `/gust hold`. Gust continues auto-reloading while Pi is idle.
+When the agent starts working, the extension runs `gust ctl pause`. At
+`agent_settled` (after all model/tool rounds and automatic continuations), it
+runs `gust ctl resume`. Gust performs one catch-up reload if files changed;
+there is no forced reload when nothing changed.
+
+The toggle stays enabled across `/new`, session switches, and `/reload` in the
+same Pi process. It is not saved to disk. Run `/gust hold` again to disable it.
+Orderly shutdown releases any pause owned by the extension. An existing manual
+Gust pause is left untouched. The footer shows `gust: hold` while enabled.
+
+Requires Gust with `ctl status`, `pause`, and `resume` support. Uses the same
+`GUST_CMD`, `GUST_CWD`, and `GUST_SOCKET` overrides as the comment browser.
+Control failures produce warnings rather than stopping the agent.
+
+V1 coordinates only the foreground agent in one Pi process per Gust instance.
+Concurrent sessions, detached subagents, and comment workers are not covered.
+Manual `gust ctl rerun` bypasses the hold. A Pi crash can leave Gust paused
+(recover with `gust ctl resume`); restarting Gust resets its pause state.
 
 ## Worker orchestration
 
@@ -132,5 +155,7 @@ thread reopens it as `submitted` and creates a fresh batch for the agent inbox.
 - `orchestrator.ts` — watch loop, thread reconciliation, serial dispatch
 - `worker.ts` — per-thread Pi invocation, session id, prompt
 - `types.ts` — `Thread` / `ThreadMessage` / `ThreadState` (mirror the ctl JSON)
-- `index.ts` — `/px:gust` registration and status widget
+- `index.ts` — command registration, hold lifecycle hooks, and status widget
+- `hold.ts` — serialized pause ownership and process-local opt-in toggle
+- `hold.test.ts` — hold lifecycle and failure tests
 - `orchestrator.test.ts` — unit tests (`bun test`)

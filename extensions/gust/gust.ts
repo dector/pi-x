@@ -41,6 +41,18 @@ export class GustError extends Error {}
 interface CtlOptions {
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	target?: ReloadTarget;
+}
+
+export interface ReloadTarget {
+	cwd: string;
+	socket?: string;
+}
+
+export interface ReloadClient {
+	status(target: ReloadTarget): Promise<"active" | "paused">;
+	pause(target: ReloadTarget): Promise<void>;
+	resume(target: ReloadTarget): Promise<void>;
 }
 
 interface CtlResult {
@@ -84,8 +96,10 @@ function cwd(): string {
 
 function runOnce(invocation: GustInvocation, args: string[], options: CtlOptions): Promise<RunResult> {
 	return new Promise((resolve) => {
-		const child = spawn(invocation.command, [...invocation.args, "ctl", ...socketArgs(), ...args], {
-			cwd: cwd(),
+		const child = spawn(invocation.command, [...invocation.args, "ctl", ...(options.target
+			? (options.target.socket ? ["-S", options.target.socket] : [])
+			: socketArgs()), ...args], {
+			cwd: options.target?.cwd ?? cwd(),
 			shell: false,
 		});
 		let stdout = "";
@@ -139,7 +153,7 @@ async function ctl(args: string[], options: CtlOptions = {}): Promise<CtlResult>
 		: candidates;
 
 	for (const invocation of ordered) {
-		const result = await runOnce(invocation, args, { timeoutMs, signal: options.signal });
+		const result = await runOnce(invocation, args, { timeoutMs, signal: options.signal, target: options.target });
 		if (result.aborted) {
 			throw new GustError("aborted");
 		}
@@ -191,6 +205,28 @@ function invocationLabel(): string {
 function socketLabel(): string {
 	return process.env.GUST_SOCKET?.trim() || "(socket from cwd)";
 }
+
+function parseAutoReload(stdout: string): "active" | "paused" {
+	const state = /^auto_reload:\s*(active|paused)\s*$/m.exec(stdout)?.[1];
+	if (state !== "active" && state !== "paused") {
+		throw new GustError("gust returned no valid auto_reload state (update Gust to support pause/resume)");
+	}
+	return state;
+}
+
+export const reloadClient: ReloadClient = {
+	async status(target) {
+		return parseAutoReload((await ctl(["status"], { target, timeoutMs: 5_000 })).stdout);
+	},
+	async pause(target) {
+		const state = parseAutoReload((await ctl(["pause"], { target, timeoutMs: 5_000 })).stdout);
+		if (state !== "paused") throw new GustError("gust did not pause auto-reload");
+	},
+	async resume(target) {
+		const state = parseAutoReload((await ctl(["resume"], { target, timeoutMs: 5_000 })).stdout);
+		if (state !== "active") throw new GustError("gust did not resume auto-reload");
+	},
+};
 
 export const gustClient: GustClient = {
 	async listThreads(): Promise<Thread[]> {
