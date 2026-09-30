@@ -214,6 +214,17 @@ function parseAutoReload(stdout: string): "active" | "paused" {
 	return state;
 }
 
+/** Quiet, bounded probe for the status icon (including invocation discovery). */
+export async function detectReloadState(target: ReloadTarget): Promise<"active" | "paused" | undefined> {
+	try {
+		return parseAutoReload((await ctl(["status"], {
+			target, timeoutMs: 500, signal: AbortSignal.timeout(500),
+		})).stdout);
+	} catch {
+		return undefined;
+	}
+}
+
 export const reloadClient: ReloadClient = {
 	async status(target) {
 		return parseAutoReload((await ctl(["status"], { target, timeoutMs: 5_000 })).stdout);

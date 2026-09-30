@@ -35,8 +35,12 @@ there is no forced reload when nothing changed.
 
 The toggle stays enabled across `/new`, session switches, and `/reload` in the
 same Pi process. It is not saved to disk. Run `/gust hold` again to disable it.
-When enabled, neo-bar also shows a white `󰖝` wind icon after the model/review
-label on the top-left editor border. Orderly shutdown releases any pause owned
+Neo-bar shows a purple `󰖝` wind icon after the model/review label whenever
+Gust is running in the project, even with hold disabled. The icon turns muted
+yellow while automatic reloads are paused, and returns to purple on release.
+It is hidden when Gust is unavailable. Detection has a 500 ms timeout and
+refreshes every 3 seconds, plus after hold actions.
+Orderly shutdown releases any pause owned
 by the extension. An existing manual Gust pause is left untouched. The footer
 shows `gust: hold` while enabled.
 

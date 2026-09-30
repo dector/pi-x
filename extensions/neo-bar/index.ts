@@ -1327,9 +1327,16 @@ export function isReviewLevelSetPayload(value: unknown): value is NeoBarReviewLe
 	return typeof level === "string" && Object.hasOwn(REVIEW_LEVEL_ICONS, level);
 }
 
+/** Purple when available, muted yellow while reloads are actually paused. */
+export function formatGustIndicator(running: boolean, paused: boolean): string | undefined {
+	if (!running) return undefined;
+	return `\x1b[38;2;${paused ? "181;154;86" : "175;135;255"}m${GUST_HOLD_ICON} \x1b[39m`;
+}
+
 export function isGustHoldSetPayload(value: unknown): value is NeoBarGustHoldSetPayload {
 	if (!value || typeof value !== "object") return false;
-	return typeof (value as Partial<NeoBarGustHoldSetPayload>).enabled === "boolean";
+	const state = value as Partial<NeoBarGustHoldSetPayload>;
+	return typeof state.enabled === "boolean" && typeof state.running === "boolean" && typeof state.paused === "boolean";
 }
 
 export function isInputModeSetPayload(value: unknown): value is NeoBarInputModeSetPayload {
@@ -1939,7 +1946,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let rewireTarget: NeoBarRewireSetPayload | undefined;
 	let subagentDepth: number | undefined;
 	let reviewLevel: NeoBarReviewLevel | undefined;
-	let gustHoldEnabled = false;
+	let gustRunning = false;
+	let gustPaused = false;
 	let inputMode: NeoBarInputMode | undefined;
 	let displayMode: NeoBarDisplayMode = loadDisplayMode();
 	// Git dirty totals for the current cwd, collected internally. `undefined`
@@ -2321,7 +2329,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			topLeftReview: () =>
 				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
 			topLeftGustHold: () =>
-				gustHoldEnabled ? activeContext().ui.theme.fg("text", `${GUST_HOLD_ICON} `) : undefined,
+				formatGustIndicator(gustRunning, gustPaused),
 			topRightGitStats: () => gitStats,
 			bottomRight: (text) =>
 				buildMessageSizeLabel(text, collectImageTokens(text, activeContext().cwd)),
@@ -2474,7 +2482,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		progressStore.deactivate();
 		subagentDepth = undefined;
 		reviewLevel = undefined;
-		gustHoldEnabled = false;
+		gustRunning = false;
+		gustPaused = false;
 		inputMode = undefined;
 		gitStatsWatcher.dispose();
 		gitStats = undefined;
@@ -2554,7 +2563,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.gustHoldSet, (payload) => {
 		if (!isGustHoldSetPayload(payload)) return;
-		gustHoldEnabled = payload.enabled;
+		gustRunning = payload.running;
+		gustPaused = payload.paused;
 		requestRender();
 	});
 

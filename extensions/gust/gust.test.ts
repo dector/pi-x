@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
-import { gustClient, reloadClient } from "./gust.ts";
+import { detectReloadState, gustClient, reloadClient } from "./gust.ts";
 import gustExtension from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -42,8 +42,12 @@ esac
 
 		const target = { cwd: "/tmp", socket: "/tmp/test-gust.sock" };
 		expect(await reloadClient.status(target)).toBe("active");
+		expect(await detectReloadState(target)).toBe("active");
 		await reloadClient.pause(target);
+		expect(await detectReloadState(target)).toBe("paused");
 		await reloadClient.resume(target);
+		expect(await detectReloadState(target)).toBe("active");
+		expect(await detectReloadState({ cwd: `${script}.missing` })).toBeUndefined();
 		const controlCalls = await Bun.file(log).text();
 		expect(controlCalls).toContain("ctl -S /tmp/test-gust.sock status");
 		expect(controlCalls).toContain("ctl -S /tmp/test-gust.sock pause");
@@ -69,8 +73,13 @@ esac
 		await events.get("session_start")({ reason: "new" }, ctx);
 		await events.get("agent_start")({}, ctx);
 		await events.get("session_shutdown")({ reason: "quit" }, ctx);
-		expect(emitted).toContainEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: true } });
-		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: false } });
+		expect(emitted).toContainEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: true, running: true, paused: true } });
+		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: false, running: false, paused: false } });
+		// A hung detector must not inherit the normal control timeout.
+		writeFileSync(script, '#!/usr/bin/env bash\nexec sleep 10\n');
+		const detectionStarted = Date.now();
+		expect(await detectReloadState(target)).toBeUndefined();
+		expect(Date.now() - detectionStarted).toBeLessThan(1_500);
 		const lifecycleCalls = (await Bun.file(log).text()).slice(controlCalls.length);
 		expect(lifecycleCalls.match(/ctl pause/g)).toHaveLength(2);
 		expect(lifecycleCalls.match(/ctl resume/g)).toHaveLength(2);

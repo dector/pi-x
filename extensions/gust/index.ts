@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ThreadsDialog } from "./dialog.ts";
-import { gustClient, reloadClient, type ReloadTarget } from "./gust.ts";
+import { detectReloadState, gustClient, reloadClient, type ReloadTarget } from "./gust.ts";
 import { processHoldSettings, ReloadHold } from "./hold.ts";
 import { Orchestrator, type OrchestratorStatus } from "./orchestrator.ts";
 import type { ThreadState } from "./types.ts";
@@ -123,8 +123,15 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		cwd: projectRoot(ctx),
 		socket: process.env.GUST_SOCKET?.trim() || undefined,
 	});
-	const renderHold = (ctx: ExtensionContext) => {
-		pi.events.emit("px:status-bar:gust-hold:set", { enabled: hold.settings.enabled });
+	let detectorTimer: ReturnType<typeof setInterval> | undefined;
+	let detectorVersion = 0;
+	const renderHold = async (ctx: ExtensionContext) => {
+		const version = ++detectorVersion;
+		const state = await detectReloadState(target(ctx));
+		if (version !== detectorVersion) return;
+		pi.events.emit("px:status-bar:gust-hold:set", {
+			enabled: hold.settings.enabled, running: state !== undefined, paused: state === "paused",
+		});
 		try {
 			ctx.ui.setStatus("gust-hold", hold.settings.enabled ? "gust: hold" : undefined);
 		} catch { /* Context may have been replaced. */ }
@@ -137,7 +144,7 @@ export default function gustExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(`gust hold: ${error instanceof Error ? error.message : String(error)}`, "warning");
 			} catch { /* Context may have been replaced. */ }
 		} finally {
-			renderHold(ctx);
+			await renderHold(ctx);
 		}
 	};
 	const toggleHold = async (ctx: ExtensionCommandContext) => {
@@ -158,10 +165,14 @@ export default function gustExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		if (detectorTimer) clearInterval(detectorTimer);
 		await holdAction(ctx, async () => {
 			await hold.settle(); // Retry any release whose reply was lost during replacement.
 			if (!ctx.isIdle()) await hold.start(target(ctx));
 		});
+		// Notice external pauses/resumes and Gust starting or stopping while idle.
+		detectorTimer = setInterval(() => { void renderHold(ctx); }, 3_000);
+		detectorTimer.unref?.();
 	});
 	// before_agent_start is awaited before the loop starts. agent_start also
 	// covers automatic continuations; duplicate starts are idempotent.
@@ -211,7 +222,11 @@ export default function gustExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		if (detectorTimer) clearInterval(detectorTimer);
+		detectorTimer = undefined;
+		++detectorVersion;
 		await holdAction(ctx, () => hold.shutdown(event.reason === "quit"));
+		pi.events.emit("px:status-bar:gust-hold:set", { enabled: hold.settings.enabled, running: false, paused: false });
 		await orchestrator?.stop().catch(() => {});
 		orchestrator = null;
 		activeCtx = null;

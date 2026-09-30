@@ -84,6 +84,8 @@ export interface NeoBarReviewLevelSetPayload {
 
 export interface NeoBarGustHoldSetPayload {
 	enabled: boolean;
+	running: boolean;
+	paused: boolean;
 }
 
 // Which way the editor's keyboard is routed. `insert` is ordinary pi input;
