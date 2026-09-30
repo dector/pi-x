@@ -2608,8 +2608,9 @@ export default function (pi: ExtensionAPI) {
 						? theme.fg("warning", "⊘")
 						: theme.fg("error", "✗");
 
+			const title = theme.fg("muted", data.title);
 			const build = (isExpanded: boolean): Component => {
-				if (!isExpanded) return new Text(`${icon} ${data.title}`, outputPad, 0);
+				if (!isExpanded) return new Text(`${icon} ${title}`, outputPad, 0);
 				const container = new Container();
 				const mdTheme = getMarkdownTheme();
 				const styles = runLineStylesFor(theme);
@@ -2617,7 +2618,7 @@ export default function (pi: ExtensionAPI) {
 				for (const block of buildCompletionRenderBlocks(data)) {
 					switch (block.kind) {
 						case "title":
-							container.addChild(new Text(`${icon} ${block.text}`, outputPad, 0));
+							container.addChild(new Text(`${icon} ${theme.fg("muted", block.text)}`, outputPad, 0));
 							break;
 						case "summary":
 							container.addChild(new Text(theme.fg("dim", block.text), outputPad, 0));
