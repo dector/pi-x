@@ -6,7 +6,7 @@ import { availableThinkingLevels } from "../subagent/rewire.ts";
 
 export type ModelPreset = { model: string; thinkingLevel: ReturnType<typeof availableThinkingLevels>[number] };
 export const modelPresetsPath = () => path.join(getAgentDir(), "model-presets.json");
-const label = (preset: ModelPreset) => `${preset.model} · ${preset.thinkingLevel}`;
+const label = (preset: ModelPreset) => `${preset.model.replace("/", " ")} · ${preset.thinkingLevel}`;
 
 export function loadModelPresets(file = modelPresetsPath()): ModelPreset[] {
 	if (!fs.existsSync(file)) return [];
@@ -86,13 +86,13 @@ export async function showModelPresetList(ctx: ExtensionContext, presets: ModelP
 					const isMain = main?.model === preset.model && main.thinkingLevel === preset.thinkingLevel;
 					const isRewire = rewire?.model === preset.model && rewire.thinkingLevel === preset.thinkingLevel;
 					const icons = `${isMain ? "󰙴" : " "}${isRewire ? "⇢" : " "}`;
-					const text = `${i === selected ? " → " : "   "}${icons}${isRewire ? "" : " "}${label(preset)}`;
+					const text = `${i === selected ? " → " : "   "}${icons} ${label(preset)}`;
 					lines.push(truncateToWidth(index >= presets.length ? theme.fg("muted", text) : i === selected ? theme.fg("accent", text) : text, w));
 				}
 				if (indices.length > count) lines.push(truncateToWidth(` ${selected + 1}/${indices.length}`, w));
 				lines.push("", truncateToWidth(theme.fg("dim", " 󰙴 main · ⇢rewire"), w), truncateToWidth(theme.fg("dim", searching
-					? " Type to filter · ↑/↓ move · Enter use · Alt+Enter rewire · Backspace edit · Esc clear"
-					: " / search · j/k navigate · Shift+j/k reorder · Enter use · Alt+Enter rewire · n new · d delete · Esc back"), w), "");
+					? " Type to filter · ↑/↓ move · Enter use · Ctrl+Enter rewire (Alt+Enter fallback) · Backspace edit · Esc clear"
+					: " / search · j/k navigate · Shift+j/k reorder · Enter use · Ctrl+Enter rewire (Alt+Enter fallback) · n new · d delete · Esc back"), w), "");
 				return lines;
 			},
 			handleInput(data: string) {
@@ -125,7 +125,7 @@ export async function showModelPresetList(ctx: ExtensionContext, presets: ModelP
 				if (!searching && index !== undefined && index < presets.length && matchesKey(data, Key.shift("k"))) return done({ type: "move", index, delta: -1 });
 				if (!searching && data === "n") return done({ type: "new" });
 				if (!searching && data === "d" && index !== undefined && index < presets.length) return done({ type: "delete", index });
-				if (matchesKey(data, Key.alt("enter")) && index !== undefined && actions) {
+				if ((matchesKey(data, Key.ctrl("enter")) || matchesKey(data, Key.alt("enter"))) && index !== undefined && actions) {
 					actions.onRewire(items[index]!);
 					tui.requestRender();
 					return;

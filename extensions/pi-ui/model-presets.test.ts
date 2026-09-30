@@ -163,20 +163,23 @@ describe("model presets", () => {
 		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
-	test("Enter and Alt+Enter act without dismissing the picker", async () => {
+	test("Enter, Ctrl+Enter, and Alt+Enter fallback act without dismissing the picker", async () => {
 		let main = presets[0];
 		let rewire = presets[1];
 		const ui = picker({ getMain: () => main, getRewire: () => rewire, onUse: async (preset) => { main = preset; }, onRewire: (preset) => { rewire = preset; } });
 		const initial = ui.view.render(80).join("\n");
-		expect(initial).toContain("󰙴  provider/luna · high");
-		expect(initial).toContain(" ⇢provider/sol · medium");
+		expect(initial).toContain("󰙴  provider luna · high");
+		expect(initial).toContain(" ⇢ provider sol · medium");
 		ui.view.handleInput("j");
 		ui.view.handleInput("\r");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(main).toEqual(presets[1]);
-		ui.view.handleInput("\x1b\r");
+		ui.view.handleInput("\x1b[13;5u");
 		expect(rewire).toEqual(presets[1]);
-		expect(ui.view.render(80).join("\n")).toContain("󰙴⇢provider/sol · medium");
+		expect(ui.view.render(80).join("\n")).toContain("󰙴⇢ provider sol · medium");
+		ui.view.handleInput("k");
+		ui.view.handleInput("\x1b\r");
+		expect(rewire).toEqual(presets[0]);
 		ui.view.handleInput("\x1b");
 		expect(await ui.result).toEqual({ type: "cancel" });
 	});
@@ -186,8 +189,8 @@ describe("model presets", () => {
 		const ui = picker({ getMain: () => undefined, getRewire: () => undefined, onUse: async (preset) => { applied = preset.model; }, onRewire: () => {} });
 		ui.view.handleInput("/");
 		for (const char of "SOL med") ui.view.handleInput(char);
-		expect(ui.view.render(80).join("\n")).toContain("provider/sol · medium");
-		expect(ui.view.render(80).join("\n")).not.toContain("provider/luna · high");
+		expect(ui.view.render(80).join("\n")).toContain("provider sol · medium");
+		expect(ui.view.render(80).join("\n")).not.toContain("provider luna · high");
 		ui.view.handleInput("\r");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(applied).toBe("provider/sol");
@@ -206,9 +209,9 @@ describe("model presets", () => {
 		const applied: string[] = [];
 		const ui = picker({ getMain: () => main, getRewire: () => rewire, onUse: async (preset) => { applied.push(preset.model); }, onRewire: (preset) => { applied.push(preset.model); } });
 		const lines = ui.view.render(80).join("\n");
-		expect(lines.indexOf("provider/agent")).toBeGreaterThan(lines.indexOf("provider/other"));
-		expect(lines).toContain("󰙴  provider/other · low");
-		expect(lines).toContain(" ⇢provider/agent · high");
+		expect(lines.indexOf("provider agent")).toBeGreaterThan(lines.indexOf("provider other"));
+		expect(lines).toContain("󰙴  provider other · low");
+		expect(lines).toContain(" ⇢ provider agent · high");
 		ui.view.handleInput("j");
 		ui.view.handleInput("j");
 		ui.view.handleInput("d");
@@ -223,13 +226,13 @@ describe("model presets", () => {
 	test("switching the main model does not replace the original muted row", async () => {
 		let main = { model: "provider/other", thinkingLevel: "low" as const } as (typeof presets)[number] | { model: string; thinkingLevel: "low" };
 		const ui = picker({ getMain: () => main, getRewire: () => undefined, onUse: async (preset) => { main = preset; }, onRewire: () => {} });
-		expect(ui.view.render(80).join("\n")).toContain("󰙴  provider/other · low");
+		expect(ui.view.render(80).join("\n")).toContain("󰙴  provider other · low");
 		ui.view.handleInput("\r"); // select saved luna instead
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		const after = ui.view.render(80).join("\n");
-		expect(after).toContain("󰙴  provider/luna · high");
-		expect(after).toContain("provider/other · low");
-		expect(after).not.toContain("󰙴  provider/other · low");
+		expect(after).toContain("󰙴  provider luna · high");
+		expect(after).toContain("provider other · low");
+		expect(after).not.toContain("󰙴  provider other · low");
 		ui.view.handleInput("j");
 		ui.view.handleInput("j");
 		ui.view.handleInput("\r"); // still selects original, not a replaced row
@@ -243,8 +246,8 @@ describe("model presets", () => {
 		const target = { model: "provider/other", thinkingLevel: "low" as const };
 		const ui = picker({ getMain: () => target, getRewire: () => target, onUse: async () => {}, onRewire: () => {} });
 		const text = ui.view.render(80).join("\n");
-		expect(text.match(/provider\/other/g)).toHaveLength(1);
-		expect(text).toContain("󰙴⇢provider/other · low");
+		expect(text.match(/provider other/g)).toHaveLength(1);
+		expect(text).toContain("󰙴⇢ provider other · low");
 		ui.view.handleInput("\x1b");
 		await ui.result;
 	});
@@ -347,12 +350,12 @@ describe("model presets", () => {
 				events: { emit() {} },
 			} as any;
 			await openModelPresets(pi, ctx);
-			expect(initial).toContain("→ 󰙴  provider/other · low");
+			expect(initial).toContain("→ 󰙴  provider other · low");
 			expect(selectedModelCalls).toBe(1);
 			expect(main.id).toBe("luna");
 			expect(thinking).toBe("high");
-			expect(after).toContain("󰙴  provider/luna · high");
-			expect(after).toContain("provider/other · low");
+			expect(after).toContain("󰙴  provider luna · high");
+			expect(after).toContain("provider other · low");
 		});
 	});
 
@@ -381,9 +384,9 @@ describe("model presets", () => {
 			} as any;
 			await openModelPresets(pi, ctx);
 			expect(thinking).toBe("medium");
-			expect(rendered).toContain("󰙴  provider/sol · medium");
-			expect(rendered).toContain("provider/other · high");
-			expect(rendered).not.toContain("provider/other · medium");
+			expect(rendered).toContain("󰙴  provider sol · medium");
+			expect(rendered).toContain("provider other · high");
+			expect(rendered).not.toContain("provider other · medium");
 		});
 	});
 
