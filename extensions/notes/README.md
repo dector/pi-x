@@ -42,7 +42,8 @@ scope is independent of editor text and does not make the note appear unsaved.
 
 | Key | Action |
 | --- | --- |
-| `n` | Open a new note editor. Closing the editor returns to the list, including when the list was empty. |
+| `n` | Open a blank note editor. Closing the editor returns to the list, including when the list was empty. |
+| `N` | When the prompt is non-empty, open a new note editor prefilled with the prompt text. This action is hidden and does nothing when the prompt is blank. |
 | `enter` | Preview the selected note. In the preview, press `e` to edit it or `esc` to return to the list. |
 | `}` or `tab` | Cycle current project → Global → all projects → current project. |
 | `up` / `down` or `j` / `k` | Select a note in the left list. |

@@ -45,6 +45,21 @@ async function settle(dialog: NotesListDialog): Promise<void> {
 	throw new Error("Apply did not finish");
 }
 
+test("N opens a new note prefilled with the current prompt", async () => {
+	const prompt = "  Prompt text\nwith a second line  ";
+	const { dialog } = await setup(prompt);
+	expect(dialog.render(100).join("\n")).toContain("N from prompt");
+	dialog.handleInput("N");
+	expect((dialog as any).editor.editor.getText()).toBe(prompt);
+});
+
+test("N is hidden and does nothing when the prompt is blank", async () => {
+	const { dialog } = await setup(" \n\t ");
+	expect(dialog.render(100).join("\n")).not.toContain("N from prompt");
+	dialog.handleInput("N");
+	expect((dialog as any).editor).toBeNull();
+});
+
 test("A returns raw note to close the dialog, without filling editor while dialog is open", async () => {
 	const { dialog, content, path, getClosed, getPrompt } = await setup();
 	dialog.handleInput("A");

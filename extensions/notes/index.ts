@@ -190,7 +190,7 @@ class NoteEditorDialog implements Component, Focusable {
 	private status = "ctrl+s save • ctrl+x ctrl+x clear • esc close";
 	private _focused = false;
 
-	constructor(tui: TUI, theme: Theme, done: (result: null) => void, cwd: string, existing?: { note: NoteMeta; text: string }) {
+	constructor(tui: TUI, theme: Theme, done: (result: null) => void, cwd: string, existing?: { note: NoteMeta; text: string }, initialText = "") {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
@@ -203,6 +203,8 @@ class NoteEditorDialog implements Component, Focusable {
 			this.scope = existing.note.cwd === undefined ? "global" : "current";
 			this.savedScope = this.scope;
 			this.editor.setText(existing.text);
+		} else if (initialText) {
+			this.editor.setText(initialText);
 		}
 	}
 
@@ -554,6 +556,10 @@ export class NotesListDialog implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
+	private promptForNote(): string {
+		return this.ctx.ui.getEditorText();
+	}
+
 	private async applySelected(): Promise<void> {
 		const note = this.notes[this.selected];
 		if (!note || this.applying) return;
@@ -709,10 +715,12 @@ export class NotesListDialog implements Component, Focusable {
 			return;
 		}
 		if (data === "n" || data === "N") {
+			const initialText = data === "N" ? this.promptForNote() : "";
+			if (data === "N" && !initialText.trim()) return;
 			this.editor = new NoteEditorDialog(this.tui, this.theme, () => {
 				this.editor = null;
 				void this.load();
-			}, this.cwd);
+			}, this.cwd, undefined, initialText);
 			this.editor.focused = this.focused;
 			this.tui.requestRender();
 			return;
@@ -853,7 +861,7 @@ export class NotesListDialog implements Component, Focusable {
 				this.renderHeader(renderWidth),
 				truncateToWidth(this.theme.fg("muted", this.status.startsWith("Load failed:") ? " Notes could not be loaded." : " No notes yet. Press n to create one."), renderWidth),
 				border,
-				truncateToWidth(this.theme.fg("dim", " n new note • }/tab scope • g move • u undo • esc close"), renderWidth),
+				truncateToWidth(this.theme.fg("dim", ` n new note${this.promptForNote().trim() ? " • N from prompt" : ""} • }/tab scope • g move • u undo • esc close`), renderWidth),
 			];
 			if (this.status) lines.push(truncateToWidth(this.theme.fg("success", this.status), renderWidth));
 			return lines;
@@ -892,7 +900,7 @@ export class NotesListDialog implements Component, Focusable {
 		}
 
 		lines.push(this.theme.fg("dim", "─".repeat(renderWidth)));
-		const hint = " n new note • enter preview • }/tab scope • ↑↓/j k select • A apply • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close";
+		const hint = ` n new note${this.promptForNote().trim() ? " • N from prompt" : ""} • enter preview • }/tab scope • ↑↓/j k select • A apply • g move • d delete • u undo • shift+j/k scroll • ctrl+c/y copy • esc close`;
 		lines.push(truncateToWidth(this.theme.fg("dim", hint), renderWidth));
 		if (this.status) {
 			const color = this.status.startsWith("Prompt input is not empty") || this.status.startsWith("Apply failed:") ? "warning" : "success";
