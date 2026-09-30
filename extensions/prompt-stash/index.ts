@@ -7,6 +7,7 @@ const STASH_EVENT = "px:prompt-stash:stash";
 const POP_EVENT = "px:prompt-stash:pop";
 const LIST_EVENT = "px:prompt-stash:list";
 const CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
+const NEW_EVENT = "px:prompt-stash:new";
 const STATUS_BAR_SET_EVENT = "px:status-bar:set";
 const STATUS_BAR_CLEAR_EVENT = "px:status-bar:clear";
 const STATUS_BAR_ID = "prompt-stash";
@@ -145,6 +146,14 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		publishStatus(ctx);
 	};
 
+	const saveStash = (ctx: ExtensionContext, text: string): PromptStashItem => {
+		const stash = createStash(text);
+		stashes.push(stash);
+		appendEvent(pi, { action: "stash", stash });
+		publishStatus(ctx);
+		return stash;
+	};
+
 	const stashCurrentEditor = async (ctx: ExtensionContext): Promise<PromptStashItem | undefined> => {
 		const text = ctx.ui.getEditorText();
 		if (!trimEditorText(text)) {
@@ -152,13 +161,21 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const stash = createStash(text);
-		stashes.push(stash);
-		appendEvent(pi, { action: "stash", stash });
-		publishStatus(ctx);
+		const stash = saveStash(ctx, text);
 		ctx.ui.setEditorText("");
 		notify(ctx, `prompt-stash: stashed ${formatCount(stash.charCount)} (${formatPreview(stash.text)})`, "info");
 		return stash;
+	};
+
+	const createNewStash = async (ctx: ExtensionContext): Promise<void> => {
+		if (!ctx.hasUI) {
+			notify(ctx, "prompt-stash: creating a stash requires an interactive session", "warning");
+			return;
+		}
+		const text = await ctx.ui.editor("prompt-stash: new prompt", "");
+		if (text === undefined || !trimEditorText(text)) return;
+		const stash = saveStash(ctx, text);
+		notify(ctx, `prompt-stash: stashed ${formatCount(stash.charCount)} (${formatPreview(stash.text)})`, "info");
 	};
 
 	const removeStash = (ctx: ExtensionContext, stash: PromptStashItem): void => {
@@ -221,6 +238,13 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		description: "Save current editor draft and clear the editor",
 		handler: async (_args, ctx) => {
 			await stashCurrentEditor(ctx);
+		},
+	});
+
+	pi.registerCommand("px:prompt-stash.new", {
+		description: "Compose a prompt and save it directly to the stash",
+		handler: async (_args, ctx) => {
+			await createNewStash(ctx);
 		},
 	});
 
@@ -293,6 +317,7 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.events.on(STASH_EVENT, (payload) => void withCtx(payload, stashCurrentEditor));
+	pi.events.on(NEW_EVENT, (payload) => void withCtx(payload, createNewStash));
 	pi.events.on(POP_EVENT, (payload) => void withCtx(payload, popNewest));
 	pi.events.on(LIST_EVENT, (payload) => void withCtx(payload, listStashes));
 	pi.events.on(CLEAR_ALL_EVENT, (payload) => void withCtx(payload, clearAll));

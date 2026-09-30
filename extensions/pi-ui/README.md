@@ -70,6 +70,7 @@ Behavior details:
 - Pressing `Enter` runs the selected action. Toggles keep the dialog open and refresh their indicators (preserving the query and selection in search); other actions close it unless they open a submenu. Direct hotkeys keep their existing close behavior.
 - Pressing `s` (or `S`) opens the prompt-stash submenu:
   - `s` — emits event `px:prompt-stash:stash` and closes the dialog.
+  - `n` — emits event `px:prompt-stash:new` and closes the dialog; prompt-stash opens a separate editor and saves the result directly to the stash.
   - `o` — emits event `px:prompt-stash:pop` and closes the dialog.
   - `l` — emits event `px:prompt-stash:list` and closes the dialog. The list is selectable; `Enter` restores the selected stash.
   - `x` — emits event `px:prompt-stash:clear-all` and closes the dialog.
@@ -113,6 +114,7 @@ Integration contract (important):
 
 - Event names used by `pi-ui`:
   - `px:prompt-stash:stash`
+  - `px:prompt-stash:new`
   - `px:prompt-stash:pop`
   - `px:prompt-stash:list`
   - `px:prompt-stash:clear-all`
@@ -125,7 +127,7 @@ Integration contract (important):
   - `px:notes:list`
   - `px:subagent:rewire:toggle`
   - `px:subagent:rewire:menu`
-- Expected prompt-stash listener behavior (implemented in `prompt-stash`): save, pop, list/restore, or clear prompt stashes for the active context.
+- Expected prompt-stash listener behavior (implemented in `prompt-stash`): compose and save, save the current draft, pop, list/restore, or clear prompt stashes for the active context.
 - Expected notes listener behavior (implemented in `notes`): open the `/px:notes` editor for `px:notes:open`, and the `/px:notes:list` browser for `px:notes:list`.
 - Expected subagent listener behavior (implemented in `subagent`): toggle the current session rewire for `px:subagent:rewire:toggle`, and open `/px:agents:rewire` for `px:subagent:rewire:menu`.
 - Expected safe-mode listener behavior (implemented in `safe-mode`):
@@ -206,6 +208,7 @@ PI_UI_WORKING_LENGTH=24 PI_UI_WORKING_INTERVAL_MS=16 PI_UI_WORKING_HUE_STEP_DEG=
   - `/` — enter global action search (`Esc` cancels search)
   - `s` — open prompt-stash submenu
     - `s` — request prompt-stash stash via `px:prompt-stash:stash`
+    - `n` — compose a prompt directly into the stash via `px:prompt-stash:new`
     - `o` — request prompt-stash pop via `px:prompt-stash:pop`
     - `l` — request prompt-stash list/restore via `px:prompt-stash:list`
     - `x` — request prompt-stash clear-all via `px:prompt-stash:clear-all`

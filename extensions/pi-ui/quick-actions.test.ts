@@ -16,6 +16,7 @@ function openDialog(initiallyLocked = false) {
 	let focus = false;
 	let doomCalls = 0;
 	let rewire = false;
+	let newPromptStashCalls = 0;
 	let locked = initiallyLocked;
 	let renderFromEvent: (() => void) | undefined;
 	const ctx = {
@@ -39,6 +40,7 @@ function openDialog(initiallyLocked = false) {
 		isFocusEnabled: () => focus,
 		onShowPromptPreviews: () => {},
 		onPromptStashStash: () => {},
+		onPromptStashNew: () => { newPromptStashCalls++; },
 		onPromptStashPop: () => {},
 		onPromptStashList: () => {},
 		onPromptStashClearAll: () => {},
@@ -57,7 +59,7 @@ function openDialog(initiallyLocked = false) {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; }, get newPromptStashCalls() { return newPromptStashCalls; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -74,6 +76,17 @@ describe("quick actions", () => {
 		ui.dialog.handleInput("r");
 		await ui.finished;
 		expect(ui.reader).toBe(false);
+		expect(ui.closes).toBe(1);
+	});
+
+	test("stash submenu n opens a new prompt stash composer", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("s");
+		expect(ui.dialog.render(80).some((line) => line.includes("New prompt stash"))).toBe(true);
+		ui.dialog.handleInput("n");
+		await ui.finished;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ui.newPromptStashCalls).toBe(1);
 		expect(ui.closes).toBe(1);
 	});
 

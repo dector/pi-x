@@ -20,6 +20,7 @@ const PROMPT_STASH_STASH_EVENT = "px:prompt-stash:stash";
 const PROMPT_STASH_POP_EVENT = "px:prompt-stash:pop";
 const PROMPT_STASH_LIST_EVENT = "px:prompt-stash:list";
 const PROMPT_STASH_CLEAR_ALL_EVENT = "px:prompt-stash:clear-all";
+const PROMPT_STASH_NEW_EVENT = "px:prompt-stash:new";
 const NOTES_OPEN_EVENT = "px:notes:open";
 const NOTES_LIST_EVENT = "px:notes:list";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
@@ -1280,6 +1281,7 @@ export async function showHiDialog(
 		isFocusEnabled: () => boolean;
 		onShowPromptPreviews: () => Promise<void>;
 		onPromptStashStash: () => void;
+		onPromptStashNew: () => void;
 		onPromptStashPop: () => void;
 		onPromptStashList: () => void;
 		onPromptStashClearAll: () => void;
@@ -1325,6 +1327,7 @@ export async function showHiDialog(
 					isFocusEnabled,
 					onShowPromptPreviews,
 					onPromptStashStash,
+					onPromptStashNew,
 					onPromptStashPop,
 					onPromptStashList,
 					onPromptStashClearAll,
@@ -1557,6 +1560,15 @@ export async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(onPromptStashStash),
+					},
+					{
+						hotkey: "n",
+						hotkeyAliases: ["N"],
+						label: "New prompt stash…",
+						showStatusBadge: false,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onPromptStashNew),
 					},
 					{
 						hotkey: "o",
@@ -2272,6 +2284,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					},
 					onPromptStashStash: () => {
 						pi.events.emit(PROMPT_STASH_STASH_EVENT, { ctx });
+					},
+					onPromptStashNew: () => {
+						pi.events.emit(PROMPT_STASH_NEW_EVENT, { ctx });
 					},
 					onPromptStashPop: () => {
 						pi.events.emit(PROMPT_STASH_POP_EVENT, { ctx });
