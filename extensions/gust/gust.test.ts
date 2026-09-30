@@ -52,9 +52,11 @@ esac
 		// Drive the real registration wiring, including a replacement runtime.
 		const commands = new Map<string, any>();
 		const events = new Map<string, any>();
+		const emitted: Array<{ name: string; payload: unknown }> = [];
 		const pi = {
 			registerCommand(name: string, command: unknown) { commands.set(name, command); },
 			on(name: string, handler: unknown) { events.set(name, handler); },
+			events: { emit(name: string, payload: unknown) { emitted.push({ name, payload }); } },
 		} as unknown as ExtensionAPI;
 		const ctx = { cwd: "/tmp", isIdle: () => true, ui: { notify() {}, setStatus() {} } };
 		gustExtension(pi);
@@ -67,6 +69,8 @@ esac
 		await events.get("session_start")({ reason: "new" }, ctx);
 		await events.get("agent_start")({}, ctx);
 		await events.get("session_shutdown")({ reason: "quit" }, ctx);
+		expect(emitted).toContainEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: true } });
+		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: false } });
 		const lifecycleCalls = (await Bun.file(log).text()).slice(controlCalls.length);
 		expect(lifecycleCalls.match(/ctl pause/g)).toHaveLength(2);
 		expect(lifecycleCalls.match(/ctl resume/g)).toHaveLength(2);

@@ -47,6 +47,7 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   model label, immediately after effort with a frame-colored ` · ` separator:
   off `󰛑`, minimal `󱀧`, normal `󰛐`, or high `󰡬`. Auto is hidden.
 - Every visible review icon uses the same frame-border purple and keeps an explicit trailing space.
+- When `/gust hold` is enabled, the white `󰖝` wind icon follows the review icon on the top-left border. It is hidden when hold is off.
 
 ### First line sections
 

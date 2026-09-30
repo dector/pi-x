@@ -54,6 +54,25 @@ test("mobile rewire indicator moves to a right-aligned third status line", () =>
 });
 
 describe("locked editor frame", () => {
+	test("places the Gust wind indicator after model/review and preserves its white styling", () => {
+		const editor = new FrameStatusEditor(
+			{ requestRender() {} } as ConstructorParameters<typeof FrameStatusEditor>[0],
+			{ borderColor: (text: string) => text } as ConstructorParameters<typeof FrameStatusEditor>[1],
+			{} as ConstructorParameters<typeof FrameStatusEditor>[2],
+			{
+				getDisplayMode: () => "new",
+				interruptConfirmation: {} as Options["interruptConfirmation"],
+				topLeft: () => "MODEL",
+				topLeftReview: () => "REVIEW",
+				topLeftGustHold: () => "\u001b[37m󰖝 \u001b[0m",
+			},
+		);
+		editor.setLocked(true);
+		const top = editor.render(80)[0]!;
+		expect(top).toContain(`MODEL · REVIEW · \u001b[37m󰖝 \u001b[0m`);
+		expect(top.indexOf("REVIEW")).toBeLessThan(top.indexOf("󰖝"));
+	});
+
 	test("keeps live border labels and draft stats while replacing only the body", () => {
 		const { editor } = makeEditor();
 		editor.setText("unsent");

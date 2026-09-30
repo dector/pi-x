@@ -139,6 +139,13 @@ describe("top-left model/review composition", () => {
 			"󰙴 cdx/5.6-sol · high",
 		);
 	});
+
+	test("appends the Gust hold indicator after review without recoloring it", () => {
+		const whiteWind = "\u001b[37m󰖝 \u001b[0m";
+		expect(composeTopLeftModelReview("MODEL", "󰡬 ", border, whiteWind)).toBe(
+			`MODEL« · 󰡬 »« · »${whiteWind}`,
+		);
+	});
 });
 
 describe("chooseTopBorderSegments", () => {

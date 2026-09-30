@@ -37,6 +37,7 @@ import {
 	type NeoBarDisplayMode,
 	type NeoBarFirstLineClearPayload,
 	type NeoBarFirstLineSetPayload,
+	type NeoBarGustHoldSetPayload,
 	type NeoBarInputMode,
 	type NeoBarInputModeSetPayload,
 	type NeoBarLayout,
@@ -130,6 +131,7 @@ const REVIEW_LEVEL_ICONS: Record<NeoBarReviewLevel, string> = {
 	normal: "󰛐",
 	high: "󰡬",
 };
+const GUST_HOLD_ICON = "󰖝"; // Nerd Font MDI weather-windy.
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dash kept between labels (or beside a lone label).
 const MIN_CORNER_LABEL_GAP = 1;
@@ -356,6 +358,8 @@ interface FrameStatusEditorOptions {
 	topLeft?: FrameStatusProvider;
 	/** Recommended review level, rendered after the top-left model effort. */
 	topLeftReview?: FrameStatusProvider;
+	/** Gust automatic-reload hold indicator, rendered after model/review. */
+	topLeftGustHold?: FrameStatusProvider;
 	/** Dirty counters rendered as the top-right corner label. */
 	topRightGitStats?: () => GitStats | undefined;
 	/** Counts shown after the unsent-message token size in the bottom-right corner. */
@@ -504,6 +508,7 @@ export class FrameStatusEditor extends CustomEditor {
 	private readonly bottomRightNotesProvider?: FrameStatusProvider;
 	private readonly topLeftProvider?: FrameStatusProvider;
 	private readonly topLeftReviewProvider?: FrameStatusProvider;
+	private readonly topLeftGustHoldProvider?: FrameStatusProvider;
 	private readonly topRightGitStats?: () => GitStats | undefined;
 	private readonly bottomRightProvider?: (text: string) => string | undefined;
 	private readonly relocatedLabels?: RelocatedBorderLabels;
@@ -544,6 +549,7 @@ export class FrameStatusEditor extends CustomEditor {
 		this.bottomRightNotesProvider = options.bottomRightNotes;
 		this.topLeftProvider = options.topLeft;
 		this.topLeftReviewProvider = options.topLeftReview;
+		this.topLeftGustHoldProvider = options.topLeftGustHold;
 		this.topRightGitStats = options.topRightGitStats;
 		this.bottomRightProvider = options.bottomRight;
 		this.relocatedLabels = options.relocatedLabels;
@@ -689,8 +695,13 @@ export class FrameStatusEditor extends CustomEditor {
 	 * Top-left corner label: model plus effort inset from the corner by `━━ `.
 	 * While streaming the label runs the configured animation.
 	 */
-	private topLeftSegment(label: string, reviewLabel?: string): string {
-		const body = composeTopLeftModelReview(this.renderModelLabel(label), reviewLabel, (text) => this.labelColor(text));
+	private topLeftSegment(label: string, reviewLabel?: string, gustHoldLabel?: string): string {
+		const body = composeTopLeftModelReview(
+			this.renderModelLabel(label),
+			reviewLabel,
+			(text) => this.labelColor(text),
+			gustHoldLabel,
+		);
 		return `${this.borderColor(FRAME_LEFT_CORNER_OPEN)}${body}${this.borderColor(FRAME_LABEL_CLOSE)}`;
 	}
 
@@ -845,11 +856,13 @@ export class FrameStatusEditor extends CustomEditor {
 		// moves git totals to status line 2. On wider frames, move git if it cannot fit.
 		const modelLabel = this.topLeftLabel();
 		const reviewLabel = this.topLeftReviewProvider?.();
+		const gustHoldLabel = this.topLeftGustHoldProvider?.();
 		const reviewSuffix = hasVisibleText(reviewLabel) ? ` · ${reviewLabel}` : "";
+		const gustHoldSuffix = hasVisibleText(gustHoldLabel) ? ` · ${GUST_HOLD_ICON} ` : "";
 		// Measure the uncolored placeholder so only the model label runs through
 		// the stateful working animation renderer.
 		const modelPlaceholder = modelLabel
-			? `${FRAME_LEFT_CORNER_OPEN}${modelLabel}${reviewSuffix}${FRAME_LABEL_CLOSE}`
+			? `${FRAME_LEFT_CORNER_OPEN}${modelLabel}${reviewSuffix}${gustHoldSuffix}${FRAME_LABEL_CLOSE}`
 			: "";
 		const compact = width <= COMPACT_FRAME_MAX_WIDTH;
 		const costLabel = compact ? this.bottomLeftProvider?.().cost : undefined;
@@ -876,7 +889,7 @@ export class FrameStatusEditor extends CustomEditor {
 			if (compact) this.relocatedLabels.contextLabel = hasVisibleText(chosen.right) ? undefined : costLabel;
 		}
 		const selectedModelLabel = chosen.left === modelPlaceholder ? modelLabel : undefined;
-		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel) : "";
+		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel, gustHoldLabel) : "";
 		const rightSegment = chosen.right;
 
 		const candidates: Array<[string, string]> = [
@@ -1312,6 +1325,11 @@ export function isReviewLevelSetPayload(value: unknown): value is NeoBarReviewLe
 	if (!value || typeof value !== "object") return false;
 	const level = (value as Partial<NeoBarReviewLevelSetPayload>).level;
 	return typeof level === "string" && Object.hasOwn(REVIEW_LEVEL_ICONS, level);
+}
+
+export function isGustHoldSetPayload(value: unknown): value is NeoBarGustHoldSetPayload {
+	if (!value || typeof value !== "object") return false;
+	return typeof (value as Partial<NeoBarGustHoldSetPayload>).enabled === "boolean";
 }
 
 export function isInputModeSetPayload(value: unknown): value is NeoBarInputModeSetPayload {
@@ -1921,6 +1939,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	let rewireTarget: NeoBarRewireSetPayload | undefined;
 	let subagentDepth: number | undefined;
 	let reviewLevel: NeoBarReviewLevel | undefined;
+	let gustHoldEnabled = false;
 	let inputMode: NeoBarInputMode | undefined;
 	let displayMode: NeoBarDisplayMode = loadDisplayMode();
 	// Git dirty totals for the current cwd, collected internally. `undefined`
@@ -2301,6 +2320,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 				),
 			topLeftReview: () =>
 				reviewLevel === undefined ? undefined : formatReviewLevelLabel(reviewLevel),
+			topLeftGustHold: () =>
+				gustHoldEnabled ? activeContext().ui.theme.fg("text", `${GUST_HOLD_ICON} `) : undefined,
 			topRightGitStats: () => gitStats,
 			bottomRight: (text) =>
 				buildMessageSizeLabel(text, collectImageTokens(text, activeContext().cwd)),
@@ -2453,6 +2474,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		progressStore.deactivate();
 		subagentDepth = undefined;
 		reviewLevel = undefined;
+		gustHoldEnabled = false;
 		inputMode = undefined;
 		gitStatsWatcher.dispose();
 		gitStats = undefined;
@@ -2527,6 +2549,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.reviewLevelClear, () => {
 		reviewLevel = undefined;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.gustHoldSet, (payload) => {
+		if (!isGustHoldSetPayload(payload)) return;
+		gustHoldEnabled = payload.enabled;
 		requestRender();
 	});
 

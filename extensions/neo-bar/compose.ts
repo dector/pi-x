@@ -29,13 +29,15 @@ export function sanitizeStatusText(text: string): string {
 	return text.replace(/[\r\n\t]/g, " ").trim();
 }
 
-/** Append the review icon after model effort with a frame-colored separator. */
+/** Append review and optional Gust hold indicators after model effort. */
 export function composeTopLeftModelReview(
 	modelLabel: string,
 	reviewLabel: string | undefined,
 	borderColor: (text: string) => string,
+	gustHoldLabel?: string,
 ): string {
-	return hasVisibleText(reviewLabel) ? `${modelLabel}${borderColor(` · ${reviewLabel}`)}` : modelLabel;
+	const reviewed = hasVisibleText(reviewLabel) ? `${modelLabel}${borderColor(` · ${reviewLabel}`)}` : modelLabel;
+	return hasVisibleText(gustHoldLabel) ? `${reviewed}${borderColor(" · ")}${gustHoldLabel}` : reviewed;
 }
 
 // Border-only status icons (Nerd Font). Each keeps a trailing space so the

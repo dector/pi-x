@@ -35,8 +35,10 @@ there is no forced reload when nothing changed.
 
 The toggle stays enabled across `/new`, session switches, and `/reload` in the
 same Pi process. It is not saved to disk. Run `/gust hold` again to disable it.
-Orderly shutdown releases any pause owned by the extension. An existing manual
-Gust pause is left untouched. The footer shows `gust: hold` while enabled.
+When enabled, neo-bar also shows a white `󰖝` wind icon after the model/review
+label on the top-left editor border. Orderly shutdown releases any pause owned
+by the extension. An existing manual Gust pause is left untouched. The footer
+shows `gust: hold` while enabled.
 
 Requires Gust with `ctl status`, `pause`, and `resume` support. Uses the same
 `GUST_CMD`, `GUST_CWD`, and `GUST_SOCKET` overrides as the comment browser.

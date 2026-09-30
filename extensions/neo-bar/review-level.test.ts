@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatReviewLevelLabel, isReviewLevelSetPayload } from "./index";
+import { formatReviewLevelLabel, isGustHoldSetPayload, isReviewLevelSetPayload } from "./index";
 import type { NeoBarReviewLevel } from "./contract";
 
 const EXPECTED_ICONS: Record<NeoBarReviewLevel, string> = {
@@ -24,6 +24,14 @@ describe("neo-bar review-level indicator", () => {
 		expect(formatReviewLevelLabel("auto")).toBeUndefined();
 		for (const level of ["off", "minimal", "normal", "high"] as const) {
 			expect(formatReviewLevelLabel(level)).toBe(`${EXPECTED_ICONS[level]} `);
+		}
+	});
+
+	test("accepts Gust hold state only when enabled is boolean", () => {
+		expect(isGustHoldSetPayload({ enabled: true })).toBe(true);
+		expect(isGustHoldSetPayload({ enabled: false })).toBe(true);
+		for (const payload of [undefined, null, {}, { enabled: "yes" }, { enabled: 1 }]) {
+			expect(isGustHoldSetPayload(payload)).toBe(false);
 		}
 	});
 });

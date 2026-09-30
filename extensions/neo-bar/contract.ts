@@ -9,6 +9,7 @@ export const STATUS_BAR_EVENTS = {
 	subagentDepthClear: "px:status-bar:subagent-depth:clear",
 	reviewLevelSet: "px:status-bar:review-level:set",
 	reviewLevelClear: "px:status-bar:review-level:clear",
+	gustHoldSet: "px:status-bar:gust-hold:set",
 	inputModeSet: "px:status-bar:input-mode:set",
 	inputModeClear: "px:status-bar:input-mode:clear",
 	rowSet: "px:status-bar:row:set",
@@ -79,6 +80,10 @@ export type NeoBarReviewLevel = (typeof NEO_BAR_REVIEW_LEVELS)[number];
 
 export interface NeoBarReviewLevelSetPayload {
 	level: NeoBarReviewLevel;
+}
+
+export interface NeoBarGustHoldSetPayload {
+	enabled: boolean;
 }
 
 // Which way the editor's keyboard is routed. `insert` is ordinary pi input;

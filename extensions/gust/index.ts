@@ -124,6 +124,7 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		socket: process.env.GUST_SOCKET?.trim() || undefined,
 	});
 	const renderHold = (ctx: ExtensionContext) => {
+		pi.events.emit("px:status-bar:gust-hold:set", { enabled: hold.settings.enabled });
 		try {
 			ctx.ui.setStatus("gust-hold", hold.settings.enabled ? "gust: hold" : undefined);
 		} catch { /* Context may have been replaced. */ }
