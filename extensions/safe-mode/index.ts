@@ -24,6 +24,7 @@ import {
 	parseToolAuthorized,
 	type SafeModeStateChanged,
 } from "./contract.ts";
+import { appendApprovalInvestigation } from "./investigation.ts";
 import { withUserWait } from "./user-wait.ts";
 
 interface SafeModeState {
@@ -32,6 +33,7 @@ interface SafeModeState {
 }
 
 type ApprovalDecision = "approve-once" | "approve-all-session" | "approve-project" | "deny" | "steer";
+type ApprovalChoice = ApprovalDecision | "toggle-investigation";
 
 type AllowlistScope = "project" | "session";
 
@@ -463,65 +465,82 @@ function formatApprovalPrompt(
 
 const BASE_APPROVAL_OPTIONS = ["[Y]es", "[N]o", "[A]ll for this session", "[Esc] to steer"] as const;
 const PROJECT_APPROVAL_OPTION = "[P]ermanently allow";
+const INVESTIGATION_OPTION = (enabled: boolean): string => `[I]nvestigate: ${enabled ? "on" : "off"}`;
 
 async function confirmApproval(
 	ctx: ExtensionContext,
 	title: string,
 	message: string,
-	options?: { allowProjectApproval?: boolean },
+	options?: { allowProjectApproval?: boolean; investigation?: { enabled: boolean } },
 ): Promise<ApprovalDecision> {
 	const allowProjectApproval = options?.allowProjectApproval ?? false;
-	const controller = new AbortController();
-	let keyDecision: ApprovalDecision | undefined;
+	const investigation = options?.investigation;
 
-	const unsubscribe = ctx.ui.onTerminalInput((data) => {
-		if (data === "Y") {
-			keyDecision = "approve-once";
+	while (true) {
+		const controller = new AbortController();
+		let keyDecision: ApprovalChoice | undefined;
+
+		const unsubscribe = ctx.ui.onTerminalInput((data) => {
+			if (data === "Y") keyDecision = "approve-once";
+			else if (data === "N") keyDecision = "deny";
+			else if (data === "A") keyDecision = "approve-all-session";
+			else if (allowProjectApproval && data === "P") keyDecision = "approve-project";
+			else if (investigation && (data === "I" || data === "i")) keyDecision = "toggle-investigation";
+			else if (data === ESC) keyDecision = "steer";
+			else return undefined;
+
 			controller.abort();
 			return { consume: true };
+		});
+
+		let selected: string | undefined;
+		try {
+			const selectOptions = [
+				BASE_APPROVAL_OPTIONS[0],
+				BASE_APPROVAL_OPTIONS[1],
+				BASE_APPROVAL_OPTIONS[2],
+				...(allowProjectApproval ? [PROJECT_APPROVAL_OPTION] : []),
+				BASE_APPROVAL_OPTIONS[3],
+				...(investigation ? [INVESTIGATION_OPTION(investigation.enabled)] : []),
+			];
+			selected = await ctx.ui.select(`${title}${message}`, selectOptions, { signal: controller.signal });
+		} catch (error) {
+			if (!keyDecision) throw error;
+		} finally {
+			unsubscribe();
 		}
 
-		if (data === "N") {
-			keyDecision = "deny";
-			controller.abort();
-			return { consume: true };
+		let choice: ApprovalChoice | undefined = keyDecision;
+		if (!choice) {
+			switch (selected) {
+				case "[Y]es":
+					choice = "approve-once";
+					break;
+				case "[A]ll for this session":
+					choice = "approve-all-session";
+					break;
+				case PROJECT_APPROVAL_OPTION:
+					choice = "approve-project";
+					break;
+				case "[N]o":
+					choice = "deny";
+					break;
+				case "[Esc] to steer":
+					choice = "steer";
+					break;
+				default:
+					if (investigation && selected === INVESTIGATION_OPTION(investigation.enabled)) {
+						choice = "toggle-investigation";
+					}
+			}
 		}
 
-		if (data === "A") {
-			keyDecision = "approve-all-session";
-			controller.abort();
-			return { consume: true };
+		if (choice === "toggle-investigation") {
+			if (!investigation) return "steer";
+			investigation.enabled = !investigation.enabled;
+			continue;
 		}
-
-		if (allowProjectApproval && data === "P") {
-			keyDecision = "approve-project";
-			controller.abort();
-			return { consume: true };
-		}
-
-		if (data === ESC) {
-			keyDecision = "steer";
-			controller.abort();
-			return { consume: true };
-		}
-
-		return undefined;
-	});
-
-	try {
-		const selectOptions = allowProjectApproval
-			? [BASE_APPROVAL_OPTIONS[0], BASE_APPROVAL_OPTIONS[1], BASE_APPROVAL_OPTIONS[2], PROJECT_APPROVAL_OPTION, BASE_APPROVAL_OPTIONS[3]]
-			: [...BASE_APPROVAL_OPTIONS];
-		const selected = await ctx.ui.select(`${title}${message}`, selectOptions, { signal: controller.signal });
-		if (keyDecision) return keyDecision;
-		if (selected === "[Y]es") return "approve-once";
-		if (selected === "[A]ll for this session") return "approve-all-session";
-		if (selected === PROJECT_APPROVAL_OPTION) return "approve-project";
-		if (selected === "[N]o") return "deny";
-		if (selected === "[Esc] to steer") return "steer";
-		return "steer";
-	} finally {
-		unsubscribe();
+		return choice ?? "steer";
 	}
 }
 
@@ -1508,6 +1527,9 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const prompt = formatApprovalPrompt(ctx, event.toolName, input, decision.summary, decision.reason);
+		const investigation = { enabled: false };
+		const modeAtPrompt = mode;
+		const outerAccessAtPrompt = outerAccess;
 		// Keep the steering prompt nested inside the approval wait so the
 		// aggregate user-wait state never drops to zero across the picker ->
 		// steering transition. Hub emits a single Herdr block for the interval.
@@ -1517,6 +1539,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			async () => {
 				const picked = await confirmApproval(ctx, prompt.title, prompt.message, {
 					allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
+					investigation,
 				});
 				if (picked !== "steer") return { decision: picked };
 
@@ -1528,6 +1551,20 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				return { decision: picked, steerText };
 			},
 		);
+		if (investigation.enabled) {
+			try {
+				await appendApprovalInvestigation({
+					mode: modeAtPrompt,
+					outerAccess: outerAccessAtPrompt,
+					toolName: event.toolName,
+					command: getToolRequestText(event.toolName, input, decision.summary),
+					cwd: ctx.cwd,
+					userChoice: approval.decision,
+				});
+			} catch (error) {
+				ctx.ui.notify(`safe-mode: failed to record investigation (${String(error)})`, "warning");
+			}
+		}
 		if (approval.decision === "approve-all-session") {
 			if (exactBashCommand) {
 				autoApprovedBashCommandsForSession.add(exactBashCommand);

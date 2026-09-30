@@ -204,6 +204,7 @@ When approval is required:
 - `A` remembers the exact `bash` command line for this session and auto-approves exact repeats
 - `P` permanently allows the exact `bash` command for this project (**only shown in `smart`/`smart!`**)
 - `Esc` blocks the tool call, prompts for steering text, and sends it to the agent as a steer message
+- `[I]nvestigate` toggles recording for this approval; it does not close the dialog. If left on, the final choice is recorded with the mode, command, and working directory.
 - Existing selection navigation (arrows / j / k) remains unchanged
 
 ## Herdr blocked state
@@ -259,6 +260,9 @@ never sets wait state; only an actual open dialog does.
 - Optional global defaults from `/px:safe default ...` are stored at:
   - `~/.pi/agent/extensions/safe-mode/settings.json`
   - shape: `{ "mode": "smart", "outerAccess": true }`
+- Approval investigations are opt-in per prompt and append JSONL entries to:
+  - `~/.pi/agent/extensions/safe-mode/investigations.jsonl`
+  - Each entry includes timestamp, mode, outer access, tool, command, working directory, and final user choice. Commands are recorded only when `[I]nvestigate` is on; inspect entries before sharing because commands may contain sensitive arguments.
 - Resolution order on startup: CLI flags (`--safe-mode`, `--safe-mode-outer-access`) → session persisted state → saved defaults → built-in defaults.
 - Smart-mode project allowlist is persisted per repository at:
   - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`

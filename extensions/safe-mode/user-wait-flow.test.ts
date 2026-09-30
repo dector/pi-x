@@ -196,6 +196,7 @@ interface FakeUi {
 	waitForSelect: () => Promise<void>;
 	resolveSelect: (value: string | undefined) => void;
 	resolveSelectAt: (index: number, value: string | undefined) => void;
+	sendTerminalInput: (data: string) => void;
 	rejectSelect: (error: unknown) => void;
 	waitForInput: () => Promise<void>;
 	resolveInput: (value: string | undefined) => void;
@@ -213,12 +214,14 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 	const inputDeferreds: Array<Deferred<string | undefined>> = [];
 	const selectWaiters: Array<() => void> = [];
 	const inputWaiters: Array<() => void> = [];
+	const terminalInputHandlers = new Set<(data: string) => unknown>();
 
-	const select = (title: string, choices: string[]) => {
+	const select = (title: string, choices: string[], options?: { signal?: AbortSignal }) => {
 		selectCalls.push({ title, options: choices });
 		for (const waiter of selectWaiters.splice(0)) waiter();
 		return new Promise<string | undefined>((resolve, reject) => {
 			selectDeferreds.push({ resolve, reject });
+			options?.signal?.addEventListener("abort", () => resolve(undefined), { once: true });
 		});
 	};
 
@@ -240,7 +243,10 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 				bg: (_token: string, text: string) => text,
 				bold: (text: string) => text,
 			},
-			onTerminalInput: () => () => {},
+			onTerminalInput: (handler: (data: string) => unknown) => {
+				terminalInputHandlers.add(handler);
+				return () => terminalInputHandlers.delete(handler);
+			},
 			select,
 			input,
 			notify: () => {},
@@ -260,6 +266,9 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 		},
 		resolveSelectAt(index, value) {
 			selectDeferreds[index]?.resolve(value);
+		},
+		sendTerminalInput(data) {
+			for (const handler of [...terminalInputHandlers]) handler(data);
 		},
 		rejectSelect(error) {
 			selectDeferreds[0]?.reject(error);
@@ -593,6 +602,36 @@ describe("approval prompt surfaces the decision reason", () => {
 		expect(ui.selectCalls[0]!.title).toContain(reason);
 		ui.resolveSelect("[N]o");
 		await resultPromise;
+	});
+});
+
+describe("approval investigation toggle", () => {
+	test("I toggles investigation in place without closing the approval dialog", async () => {
+		const { bus, lifecycle } = setup({ hub: false });
+		const ui = createFakeUi();
+		const toolCallHandlers = lifecycle.get("tool_call") ?? [];
+		const resultPromise = toolCallHandlers[0]!(
+			{ toolName: "bash", toolCallId: "tc-investigate", input: { command: "rm -rf ./build" } },
+			ui.ctx,
+		);
+
+		await ui.waitForSelect();
+		expect(ui.selectCalls[0]?.options.at(-1)).toBe("[I]nvestigate: off");
+
+		ui.sendTerminalInput("i");
+		await waitFor(() => ui.selectCalls.length === 2);
+		expect(ui.selectCalls[1]?.options.at(-1)).toBe("[I]nvestigate: on");
+
+		ui.sendTerminalInput("I");
+		await waitFor(() => ui.selectCalls.length === 3);
+		expect(ui.selectCalls[2]?.options.at(-1)).toBe("[I]nvestigate: off");
+
+		ui.resolveSelectAt(2, "[N]o");
+		await resultPromise;
+		expect(herdrStates(bus)).toEqual([
+			{ active: true, label: "safe-mode approval: bash" },
+			{ active: false },
+		]);
 	});
 });
 
