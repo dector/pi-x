@@ -71,6 +71,7 @@ import {
 	FRAME_RIGHT_CORNER_CLOSE,
 	formatRewireStatusLabel,
 	hasVisibleText,
+	mergeFirstLineEntries,
 	sanitizeStatusText,
 } from "./compose";
 import {
@@ -117,9 +118,7 @@ const GIT_STATS_FIRST_LINE_PRIORITY = 100;
 // renders on the first line right section, ordered behind the other items.
 const SKILL_STATS_ID = "skill-stats";
 const SKILL_STATS_FIRST_LINE_PRIORITY = -100;
-// The standalone `repo-stats` and `skill-stats` extensions were folded in here.
-// Their ids are ignored on the first line so a stale installed copy cannot
-// duplicate the counters.
+// Ignore old producer events for counters now collected internally by neo-bar.
 const SUPERSEDED_FIRST_LINE_IDS = new Set(["repo-stats", "skill-stats"]);
 const REWIRE_STATUS_ID = "subagent-rewire";
 const REWIRE_FIRST_LINE_PRIORITY = -50; // Immediately before skill-stats (-100).
@@ -2039,7 +2038,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		attensionCoreSuffix?: string,
 		rewireContent?: string,
 	): string | undefined => {
-		const entries = [...firstLineById.entries(), ...internalFirstLineEntries()];
+		const entries = mergeFirstLineEntries(
+			firstLineById.entries(),
+			internalFirstLineEntries(),
+			SUPERSEDED_FIRST_LINE_IDS,
+		);
 		if (section === "right" && hasVisibleText(rewireContent)) {
 			entries.push([
 				REWIRE_STATUS_ID,
@@ -2052,10 +2055,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			]);
 		}
 		const items = entries
-			.filter(
-				([id, entry]) =>
-					!SUPERSEDED_FIRST_LINE_IDS.has(id) && entry.section === section && hasVisibleText(entry.content),
-			)
+			.filter(([, entry]) => entry.section === section && hasVisibleText(entry.content))
 			.sort(([, a], [, b]) => b.priority - a.priority || a.order - b.order)
 			.map(([id, entry]) => {
 				const content = sanitizeStatusText(entry.content);
@@ -2071,8 +2071,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	const hasFirstLineContent = (): boolean => {
 		if (rewireTarget) return true;
-		const entries = [...firstLineById.entries(), ...internalFirstLineEntries()];
-		return entries.some(([id, entry]) => !SUPERSEDED_FIRST_LINE_IDS.has(id) && hasVisibleText(entry.content));
+		const entries = mergeFirstLineEntries(
+			firstLineById.entries(),
+			internalFirstLineEntries(),
+			SUPERSEDED_FIRST_LINE_IDS,
+		);
+		return entries.some(([, entry]) => hasVisibleText(entry.content));
 	};
 
 	const requestRender = (): void => {

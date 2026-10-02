@@ -22,6 +22,7 @@ import {
 	FRAME_RIGHT_CORNER_CLOSE,
 	formatRewireStatusLabel,
 	hasVisibleText,
+	mergeFirstLineEntries,
 	sanitizeStatusText,
 	styleSafeModeLabel,
 	renderStatusPill,
@@ -66,6 +67,19 @@ describe("pure text helpers", () => {
 		expect(hasVisibleText(undefined)).toBe(false);
 		expect(hasVisibleText("   ")).toBe(false);
 		expect(hasVisibleText("x")).toBe(true);
+	});
+
+	test("filters superseded producers without suppressing internal entries with the same id", () => {
+		const entries = mergeFirstLineEntries(
+			[["skill-stats", "stale producer"], ["notes", "producer"]],
+			[["skill-stats", "internal counter"]],
+			new Set(["skill-stats"]),
+		);
+
+		expect(entries).toEqual([
+			["notes", "producer"],
+			["skill-stats", "internal counter"],
+		]);
 	});
 
 	test("formats the rewire target with provider and model aliases", () => {

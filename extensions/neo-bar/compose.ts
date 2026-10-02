@@ -191,6 +191,22 @@ export function hasVisibleText(value?: string): value is string {
 	return value.trim().length > 0;
 }
 
+/** Drop superseded producer entries while retaining neo-bar's internal entries. */
+export function mergeFirstLineEntries<T>(
+	producerEntries: Iterable<readonly [string, T]>,
+	internalEntries: Iterable<readonly [string, T]>,
+	supersededProducerIds: ReadonlySet<string>,
+): Array<[string, T]> {
+	const entries: Array<[string, T]> = [];
+	for (const [id, entry] of producerEntries) {
+		if (!supersededProducerIds.has(id)) entries.push([id, entry]);
+	}
+	for (const [id, entry] of internalEntries) {
+		entries.push([id, entry]);
+	}
+	return entries;
+}
+
 // Border-only first-line icons (Nerd Font). Each keeps a trailing space so the
 // glyph reads as a prefix. Legacy mode keeps the plain cwd/branch and the
 // unadorned token breakdown.
