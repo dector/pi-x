@@ -90,6 +90,31 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(1);
 	});
 
+	test("More above focus opens an empty submenu without a hotkey", async () => {
+		const ui = openDialog();
+		const lines = ui.dialog.render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+		expect(lines.join("\n")).toMatch(/More ›[^]*Focus mode/);
+		expect(lines.find((line) => line.includes("More ›"))!.indexOf("··")).toBe(
+			lines.find((line) => line.includes("Prompt stash ›"))!.indexOf("··"),
+		);
+		ui.dialog.handleInput("M");
+		expect(ui.dialog.render(80).join("\n")).not.toContain("Quick actions / More");
+		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B");
+		ui.dialog.handleInput("\r");
+		await tick();
+		const text = ui.dialog.render(80).join("\n");
+		expect(text).toContain("Quick actions / More");
+		expect(text).not.toContain("Focus mode");
+		expect(text).not.toContain("Reader mode");
+		for (const key of ["\x1b[B", "\x1b[A", "\r", "r", "/"]) ui.dialog.handleInput(key);
+		expect(ui.reader).toBe(false);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("\x1b[D");
+		expect(ui.dialog.render(80).join("\n")).toContain("Focus mode");
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
 	test("Ctrl+f toggles focus mode and closes the dialog", async () => {
 		const ui = openDialog();
 		ui.dialog.handleInput("\x06"); // Ctrl+f
@@ -100,7 +125,7 @@ describe("quick actions", () => {
 
 	test("Enter on focus mode keeps the dialog open", async () => {
 		const ui = openDialog();
-		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B"); // Focus mode
+		for (let i = 0; i < 12; i++) ui.dialog.handleInput("\x1b[B"); // Focus mode
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.focus).toBe(true);

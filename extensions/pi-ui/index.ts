@@ -1377,7 +1377,7 @@ export async function showHiDialog(
 				type DialogState = { readerOn: boolean; outerOn: boolean; yoloPlusOn: boolean; focusOn: boolean };
 				type DialogGroup = "PROMPTS & NOTES" | "AGENTS" | "ACCESS & SAFETY" | "";
 				type DialogAction = {
-					hotkey: string;
+					hotkey?: string;
 					hotkeyAliases?: string[];
 					hotkeyLabel?: string;
 					label: string;
@@ -1390,7 +1390,7 @@ export async function showHiDialog(
 					run: () => void | Promise<void>;
 					closeAfterRun?: boolean;
 				};
-				type DialogMenu = "main" | "stash";
+				type DialogMenu = "main" | "stash" | "more";
 				type SearchAction = {
 					action: DialogAction;
 					menu: DialogMenu;
@@ -1553,6 +1553,15 @@ export async function showHiDialog(
 						run: () => runAfterClose(() => void onOpenNote()),
 					},
 					{
+						label: "More…",
+						group: "",
+						showStatusBadge: false,
+						opensMenu: true,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => setMenu("more"),
+					},
+					{
 						hotkey: Key.ctrl("f"),
 						hotkeyLabel: "Ctrl+f",
 						label: "Focus mode",
@@ -1641,7 +1650,7 @@ export async function showHiDialog(
 						.map((action) => ({ action, menu: "stash" as const })),
 				];
 				const getActions = (): DialogAction[] =>
-					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "stash" ? stashActions : mainActions;
+					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "more" ? [] : activeMenu === "stash" ? stashActions : mainActions;
 				const getSearchActions = (): SearchAction[] => {
 					const query = searchQuery.trim().toLowerCase();
 					if (!query) return [];
@@ -1693,7 +1702,7 @@ export async function showHiDialog(
 							if (data === "L" || matchesKey(data, Key.shift("l"))) return action;
 							continue;
 						}
-						if (matchesActionKey(data, action.hotkey)) return action;
+						if (action.hotkey && matchesActionKey(data, action.hotkey)) return action;
 						if (action.hotkeyAliases?.some((candidate) => matchesActionKey(data, candidate))) return action;
 					}
 					return undefined;
@@ -1738,7 +1747,9 @@ export async function showHiDialog(
 							? "Quick actions / Search"
 							: activeMenu === "stash"
 								? "Quick actions / Prompt stash"
-								: "Quick actions";
+								: activeMenu === "more"
+									? "Quick actions / More"
+									: "Quick actions";
 						const titleText = truncateToWidth(` ${title} `, Math.max(1, contentWidth - 4), "");
 						const topFill = "━".repeat(Math.max(0, contentWidth - visibleWidth(titleText) - 3));
 						const top = `${border("╭━╾")}${border(theme.bold(titleText))}${border(`╼${topFill}╮`)}`;
@@ -1746,7 +1757,7 @@ export async function showHiDialog(
 						const actionLine = (action: DialogAction, isSelected: boolean): string => {
 							const enabled = action.isEnabled(state);
 							const label = action.opensMenu ? `${action.label.replace(/…$/, "")} ›` : action.label;
-							const shortcut = action.hotkeyLabel ?? action.hotkey;
+							const shortcut = action.hotkeyLabel ?? action.hotkey ?? "";
 							const statusText = action.showStatusBadge === false ? "" : enabled ? "─●" : "○─";
 							const markerText = action.opensMenu ? "··" : statusText;
 							const rightText = [shortcut, markerText].filter(Boolean).join(" ");
@@ -1773,7 +1784,7 @@ export async function showHiDialog(
 											: "success";
 								marker = enabled ? theme.fg(color, theme.bold(statusText)) : theme.fg("muted", statusText);
 							}
-							const row = `${left}${gap}${styledShortcut}${marker ? ` ${marker}` : ""}`;
+							const row = `${left}${gap}${styledShortcut}${marker ? `${shortcut ? " " : ""}${marker}` : ""}`;
 							const clippedRow = truncateToWidth(row, rowWidth, "");
 							const paddedContent = `${clippedRow}${" ".repeat(Math.max(0, rowWidth - visibleWidth(clippedRow)))}`;
 							const paddedRow = `${" ".repeat(horizontalPadding)}${paddedContent}${" ".repeat(horizontalPadding)}`;
@@ -1817,8 +1828,10 @@ export async function showHiDialog(
 						lines.push(frame(""));
 						const footer = searchMode
 							? `${searchActions.length} result${searchActions.length === 1 ? "" : "s"} · ↑/↓ · Enter · Esc`
-							: activeMenu === "stash"
-								? "← · ↑/↓ · Enter · / · Esc"
+							: activeMenu === "more"
+								? "← back · Esc close"
+								: activeMenu === "stash"
+									? "← · ↑/↓ · Enter · / · Esc"
 								: "↑/↓ · Enter · / search · Esc";
 						lines.push(frame(theme.fg("dim", ` ${footer}`)));
 						lines.push(border(`╰${"━".repeat(contentWidth)}╯`));
@@ -1871,6 +1884,10 @@ export async function showHiDialog(
 
 						if (matchesKey(data, Key.escape) || data === ESC) {
 							closeDialog();
+							return;
+						}
+						if (activeMenu === "more") {
+							if (matchesKey(data, Key.left) || matchesKey(data, Key.backspace)) setMenu("main");
 							return;
 						}
 						if (data === "/") {
