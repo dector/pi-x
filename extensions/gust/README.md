@@ -23,11 +23,16 @@ session per thread.
 - `/px:gust process` — start the worker orchestrator.
 - `/px:gust process stop` — stop it.
 - `/px:gust status` — print a one-line status.
-- `/gust hold` (also `/px:gust hold`) — toggle automatic reload coordination.
+- `/gust hold [folder]` (also `/px:gust hold [folder]`) — toggle automatic reload coordination.
 
 ## Automatic reload hold
 
-Opt in with `/gust hold`. Gust continues auto-reloading while Pi is idle.
+Opt in with `/gust hold`. Use `/gust hold docs` to discover the socket in
+`./docs` instead of the current directory. Relative folders resolve from Pi's
+cwd; absolute paths also work. The selected directory survives `/new` and
+`/reload` with the toggle. `GUST_SOCKET` still overrides socket discovery.
+Enabling without a folder uses the default directory (`GUST_CWD` or Pi's cwd).
+Gust continues auto-reloading while Pi is idle.
 When the agent starts working, the extension runs `gust ctl pause`. At
 `agent_settled` (after all model/tool rounds and automatic continuations), it
 runs `gust ctl resume`. Gust performs one catch-up reload if files changed;

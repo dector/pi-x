@@ -2,6 +2,7 @@ import type { ReloadClient, ReloadTarget } from "./gust.ts";
 
 export interface HoldSettings {
 	enabled: boolean;
+	cwd?: string;
 	ownedTarget?: ReloadTarget;
 }
 
@@ -52,6 +53,7 @@ export class ReloadHold {
 				// Validate availability without pausing an idle project.
 				await this.release();
 				await this.client.status(target);
+				this.settings.cwd = target.cwd;
 				this.settings.enabled = true;
 				if (working) await this.pause(target);
 			}

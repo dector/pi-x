@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { resolve } from "node:path";
 import { ThreadsDialog } from "./dialog.ts";
 import { detectReloadState, gustClient, reloadClient, type ReloadTarget } from "./gust.ts";
 import { processHoldSettings, ReloadHold } from "./hold.ts";
@@ -120,7 +121,7 @@ function showStatus(ctx: ExtensionCommandContext): void {
 export default function gustExtension(pi: ExtensionAPI): void {
 	const hold = new ReloadHold(reloadClient, processHoldSettings());
 	const target = (ctx: ExtensionContext): ReloadTarget => ({
-		cwd: projectRoot(ctx),
+		cwd: hold.settings.cwd ?? projectRoot(ctx),
 		socket: process.env.GUST_SOCKET?.trim() || undefined,
 	});
 	let detectorTimer: ReturnType<typeof setInterval> | undefined;
@@ -147,20 +148,22 @@ export default function gustExtension(pi: ExtensionAPI): void {
 			await renderHold(ctx);
 		}
 	};
-	const toggleHold = async (ctx: ExtensionCommandContext) => {
+	const toggleHold = async (ctx: ExtensionCommandContext, folder?: string) => {
 		await holdAction(ctx, async () => {
-			const enabled = await hold.toggle(target(ctx), !ctx.isIdle());
+			const selectedTarget = { ...target(ctx), cwd: folder ? resolve(ctx.cwd, folder) : projectRoot(ctx) };
+			const enabled = await hold.toggle(selectedTarget, !ctx.isIdle());
 			ctx.ui.notify(`gust: automatic reload hold ${enabled ? "enabled" : "disabled"}`, "info");
 		});
 	};
 
 	pi.registerCommand("gust", {
-		description: "`hold` toggles automatic reload pausing while the agent works",
+		description: "`hold [folder]` toggles automatic reload pausing while the agent works",
 		getArgumentCompletions: (prefix) =>
 			["hold"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
-			if (args.trim() === "hold") await toggleHold(ctx);
-			else ctx.ui.notify("Usage: /gust hold (toggle automatic reload hold)", "info");
+			const match = /^hold(?:\s+(.+))?$/.exec(args.trim());
+			if (match) await toggleHold(ctx, match[1]);
+			else ctx.ui.notify("Usage: /gust hold [folder] (toggle automatic reload hold)", "info");
 		},
 	});
 
@@ -196,6 +199,11 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			activeCtx = ctx;
 			const command = args.trim();
+			const holdMatch = /^hold(?:\s+(.+))?$/.exec(command);
+			if (holdMatch) {
+				await toggleHold(ctx, holdMatch[1]);
+				return;
+			}
 			switch (command) {
 				case "":
 					renderStatus();
@@ -207,9 +215,6 @@ export default function gustExtension(pi: ExtensionAPI): void {
 				case "process stop":
 				case "stop":
 					await stopProcess(ctx);
-					return;
-				case "hold":
-					await toggleHold(ctx);
 					return;
 				case "status":
 					showStatus(ctx);

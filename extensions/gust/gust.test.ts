@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { detectReloadState, gustClient, reloadClient } from "./gust.ts";
 import gustExtension from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,7 +15,7 @@ test("watch and seen parse ctl output", async () => {
 	writeFileSync(
 		script,
 		`#!/usr/bin/env bash
-echo "$@" >> ${JSON.stringify(log)}
+echo "$PWD|$@" >> ${JSON.stringify(log)}
 case "$*" in
   *"comments watch"*) echo '{"cursor":7,"comments":[${submitted}]}' ;;
   *"comments seen"*) echo '${seen}' ;;
@@ -75,14 +75,35 @@ esac
 		await events.get("session_shutdown")({ reason: "quit" }, ctx);
 		expect(emitted).toContainEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: true, running: true, paused: true } });
 		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: false, running: false, paused: false } });
+		const lifecycleCalls = (await Bun.file(log).text()).slice(controlCalls.length);
+		expect(lifecycleCalls.match(/ctl pause/g)).toHaveLength(2);
+		expect(lifecycleCalls.match(/ctl resume/g)).toHaveLength(2);
+
+		const folder = `${script}.docs`;
+		mkdirSync(folder);
+		try {
+			await commands.get("gust").handler(`hold ${folder.slice("/tmp/".length)}`, ctx);
+			await events.get("agent_start")({}, ctx);
+			await events.get("agent_settled")({}, ctx);
+			await events.get("session_shutdown")({ reason: "new" }, ctx);
+			gustExtension(pi);
+			await events.get("agent_start")({}, ctx);
+			await commands.get("gust").handler("hold", ctx);
+			await commands.get("px:gust").handler(`hold ${folder}`, ctx);
+			await events.get("agent_start")({}, ctx);
+			await events.get("session_shutdown")({ reason: "quit" }, ctx);
+			const folderCalls = (await Bun.file(log).text()).slice(controlCalls.length + lifecycleCalls.length).trim().split("\n");
+			expect(folderCalls.every((line) => line.startsWith(`${folder}|ctl `))).toBe(true);
+			expect(folderCalls.filter((line) => line.endsWith("ctl pause"))).toHaveLength(3);
+			expect(folderCalls.filter((line) => line.endsWith("ctl resume"))).toHaveLength(3);
+		} finally {
+			rmSync(folder, { recursive: true, force: true });
+		}
 		// A hung detector must not inherit the normal control timeout.
 		writeFileSync(script, '#!/usr/bin/env bash\nexec sleep 10\n');
 		const detectionStarted = Date.now();
 		expect(await detectReloadState(target)).toBeUndefined();
 		expect(Date.now() - detectionStarted).toBeLessThan(1_500);
-		const lifecycleCalls = (await Bun.file(log).text()).slice(controlCalls.length);
-		expect(lifecycleCalls.match(/ctl pause/g)).toHaveLength(2);
-		expect(lifecycleCalls.match(/ctl resume/g)).toHaveLength(2);
 	} finally {
 		delete process.env.GUST_CMD;
 		delete (globalThis as { __piXGustHold?: unknown }).__piXGustHold;
