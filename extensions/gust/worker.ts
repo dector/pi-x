@@ -20,6 +20,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Thread, ThreadMessage } from "./types.ts";
+import { parseActivity, type WorkerActivity } from "./activity.ts";
+import type { WorkerModel } from "./models.ts";
 
 export interface WorkerResult {
 	code: number;
@@ -96,6 +98,8 @@ interface RpcRecord {
 	method?: string;
 	command?: string;
 	success?: boolean;
+	error?: string;
+	message?: { role?: string; stopReason?: string; errorMessage?: string };
 }
 
 /**
@@ -109,6 +113,8 @@ export function runWorker(options: {
 	invocationHint: string;
 	socketHint: string;
 	signal: AbortSignal;
+	onActivity?: (activity: WorkerActivity) => void;
+	model?: WorkerModel;
 }): Promise<WorkerResult> {
 	const id = sessionId(options.root, options.thread.id);
 	const dir = sessionDir();
@@ -122,6 +128,7 @@ export function runWorker(options: {
 		dir,
 		"--session-id",
 		id,
+		...(options.model ? ["--provider", options.model.provider, "--model", options.model.id] : []),
 	]);
 	return new Promise((resolve) => {
 		const child = spawn(command, args, {
@@ -134,6 +141,7 @@ export function runWorker(options: {
 		let stderr = "";
 		let buffer = "";
 		let settled = false;
+		let finalAssistantError: string | undefined;
 		const requestId = `prompt-${process.pid}-${Date.now()}`;
 
 		const write = (record: unknown): void => {
@@ -161,6 +169,8 @@ export function runWorker(options: {
 			} catch {
 				return;
 			}
+			const activity = parseActivity(record);
+			if (activity) options.onActivity?.(activity);
 			if (record.type === "extension_ui_request") {
 				// Extensions are disabled, but never let a dialog hang the worker.
 				if (
@@ -174,8 +184,17 @@ export function runWorker(options: {
 				return;
 			}
 			if (record.type === "response" && record.id === requestId && record.success === false) {
+				stderr += record.error || "RPC prompt rejected";
+				child.kill("SIGKILL");
 				finish(1);
 				return;
+			}
+			if (record.type === "message_end" && record.message?.role === "assistant") {
+				const message = record.message;
+				// A later successful retry replaces an earlier assistant failure.
+				finalAssistantError = message.errorMessage ||
+					(message.stopReason === "error" || message.stopReason === "aborted"
+						? `Assistant turn ${message.stopReason}` : undefined);
 			}
 			if (record.type === "agent_settled") {
 				// Settled: ask for an orderly shutdown; `close` resolves us.
@@ -186,11 +205,6 @@ export function runWorker(options: {
 		child.stdin.on("error", () => {
 			// The child may exit before reading its prompt.
 		});
-		if (options.signal.aborted) {
-			onAbort();
-			return;
-		}
-		options.signal.addEventListener("abort", onAbort, { once: true });
 		child.stdout.on("data", (data: Buffer) => {
 			const text = data.toString();
 			stdout += text;
@@ -203,11 +217,30 @@ export function runWorker(options: {
 			}
 		});
 		child.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
+			const text = data.toString();
+			stderr += text;
+			options.onActivity?.({ kind: "error", text });
 		});
-		child.on("error", () => finish(127));
-		child.on("close", (code) => finish(code ?? 0));
+		child.on("error", (error) => {
+			stderr += error.message;
+			options.onActivity?.({ kind: "error", text: error.message });
+			finish(127);
+		});
+		child.on("close", (code) => {
+			if (buffer && !settled) handleLine(buffer);
+			if (code === 0 && finalAssistantError) {
+				stderr += finalAssistantError;
+				finish(1);
+			} else {
+				finish(code ?? 1);
+			}
+		});
 
+		if (options.signal.aborted) {
+			onAbort();
+			return;
+		}
+		options.signal.addEventListener("abort", onAbort, { once: true });
 		write({ type: "prompt", id: requestId, message: prompt });
 	});
 }

@@ -1,6 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 import { ThreadsDialog } from "./dialog.ts";
+import { ActivityMonitor } from "./monitor.ts";
+import { ModelAssignments, type WorkerModel } from "./models.ts";
 import { detectReloadState, gustClient, reloadClient, type ReloadTarget } from "./gust.ts";
 import { processHoldSettings, ReloadHold } from "./hold.ts";
 import { Orchestrator, type OrchestratorStatus } from "./orchestrator.ts";
@@ -26,7 +28,9 @@ const STATE_GLYPH: Record<ThreadState, string> = {
 };
 
 let orchestrator: Orchestrator | null = null;
-let activeCtx: ExtensionCommandContext | null = null;
+let activeCtx: ExtensionContext | null = null;
+let defaultWorkerModel: WorkerModel | undefined;
+const modelAssignments = new ModelAssignments();
 
 function projectRoot(ctx: ExtensionContext): string {
 	return process.env.GUST_CWD?.trim() || ctx.cwd;
@@ -34,7 +38,10 @@ function projectRoot(ctx: ExtensionContext): string {
 
 function ensureOrchestrator(ctx: ExtensionCommandContext): Orchestrator {
 	if (!orchestrator) {
-		orchestrator = new Orchestrator(projectRoot(ctx), gustClient);
+		const root = projectRoot(ctx);
+		orchestrator = new Orchestrator(root, gustClient, undefined, (id) =>
+			modelAssignments.resolve(root, id, () => defaultWorkerModel ?? activeCtx?.model),
+		);
 		orchestrator.subscribe(renderStatus);
 	}
 	return orchestrator;
@@ -84,6 +91,35 @@ async function openThreads(ctx: ExtensionCommandContext): Promise<void> {
 	);
 }
 
+async function openActivity(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("gust: the activity monitor requires an interactive session", "warning");
+		return;
+	}
+	const worker = ensureOrchestrator(ctx);
+	await ctx.ui.custom<null>((tui, theme, _keybindings, done) =>
+		new ActivityMonitor(tui, theme, worker, () => done(null)),
+	);
+}
+
+async function selectWorkerModel(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("gust: model selection requires an interactive session", "warning");
+		return;
+	}
+	const models = await ctx.modelRegistry.getAvailable();
+	const inherit = "Inherit chat model";
+	const choice = await ctx.ui.select("Gust model for NEW threads", [inherit, ...models.map((model) => `${model.provider}/${model.id}`)]);
+	if (!choice) return;
+	if (choice === inherit) defaultWorkerModel = undefined;
+	else {
+		const model = models.find((model) => `${model.provider}/${model.id}` === choice);
+		if (!model) return;
+		defaultWorkerModel = { provider: model.provider, id: model.id };
+	}
+	ctx.ui.notify(`gust: new threads use ${choice}`, "info");
+}
+
 async function startProcess(ctx: ExtensionCommandContext): Promise<void> {
 	const worker = ensureOrchestrator(ctx);
 	if (worker.isRunning()) {
@@ -96,7 +132,6 @@ async function startProcess(ctx: ExtensionCommandContext): Promise<void> {
 
 async function stopProcess(ctx: ExtensionCommandContext): Promise<void> {
 	if (!orchestrator?.isRunning()) {
-		orchestrator = null;
 		renderStatus();
 		ctx.ui.notify("gust: orchestrator is not running", "info");
 		return;
@@ -168,6 +203,7 @@ export default function gustExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		activeCtx = ctx;
 		if (detectorTimer) clearInterval(detectorTimer);
 		await holdAction(ctx, async () => {
 			await hold.settle(); // Retry any release whose reply was lost during replacement.
@@ -180,6 +216,7 @@ export default function gustExtension(pi: ExtensionAPI): void {
 	// before_agent_start is awaited before the loop starts. agent_start also
 	// covers automatic continuations; duplicate starts are idempotent.
 	pi.on("before_agent_start", async (_event, ctx) => {
+		activeCtx = ctx;
 		await holdAction(ctx, () => hold.start(target(ctx)));
 	});
 	pi.on("agent_start", async (_event, ctx) => {
@@ -190,10 +227,12 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		await holdAction(ctx, () => hold.settle(() => ctx.isIdle()));
 	});
 
+	pi.on("model_select", async (_event, ctx) => { activeCtx = ctx; });
+
 	pi.registerCommand("px:gust", {
-		description: "Browse Gust threads, `process` workers, or `hold` automatic reloads during agent work",
+		description: "Browse Gust threads, `list` activity, `model` for new threads, `process` workers, or `hold` reloads",
 		getArgumentCompletions: (prefix) =>
-			["process", "process stop", "status", "hold"]
+			["list", "model", "process", "process stop", "status", "hold"]
 				.filter((value) => value.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
@@ -208,6 +247,12 @@ export default function gustExtension(pi: ExtensionAPI): void {
 				case "":
 					renderStatus();
 					await openThreads(ctx);
+					return;
+				case "list":
+					await openActivity(ctx);
+					return;
+				case "model":
+					await selectWorkerModel(ctx);
 					return;
 				case "process":
 					await startProcess(ctx);

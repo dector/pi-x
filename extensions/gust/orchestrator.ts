@@ -18,6 +18,8 @@
 import type { GustClient, WatchSnapshot } from "./gust.ts";
 import type { Thread, ThreadState } from "./types.ts";
 import { runWorker } from "./worker.ts";
+import { appendActivity, type ThreadActivity, type WorkerActivity } from "./activity.ts";
+import type { WorkerModel } from "./models.ts";
 
 /** Run one worker turn; injectable so the loop is testable. */
 export type WorkerDispatch = (options: {
@@ -26,6 +28,8 @@ export type WorkerDispatch = (options: {
 	invocationHint: string;
 	socketHint: string;
 	signal: AbortSignal;
+	onActivity?: (activity: WorkerActivity) => void;
+	model?: WorkerModel;
 }) => Promise<{ code: number }>;
 
 export interface OrchestratorThread {
@@ -88,6 +92,7 @@ export class Orchestrator {
 	private queue: string[] = [];
 	private threads = new Map<string, Thread>();
 	private notes = new Map<string, string>();
+	private histories = new Map<string, ThreadActivity>();
 	private listeners = new Set<() => void>();
 	private loop: Promise<void> | undefined;
 
@@ -95,6 +100,7 @@ export class Orchestrator {
 		private readonly root: string,
 		private readonly client: GustClient,
 		private readonly dispatch: WorkerDispatch = runWorker,
+		private readonly modelForThread?: (threadId: string) => WorkerModel | undefined,
 	) {}
 
 	/** Subscribe to state changes; returns an unsubscribe function. */
@@ -111,6 +117,31 @@ export class Orchestrator {
 				// A listener must not break the orchestration loop.
 			}
 		}
+	}
+
+	/** Load the monitor list without starting workers. Retain threads with activity. */
+	async loadThreads(): Promise<void> {
+		const threads = await this.client.listThreads();
+		for (const id of this.threads.keys()) {
+			if (!this.histories.has(id) && id !== this.active) this.threads.delete(id);
+		}
+		this.record(threads);
+	}
+
+	monitorThreads(): Thread[] {
+		return [...this.threads.values()];
+	}
+
+	activity(id: string): ThreadActivity {
+		const history = this.histories.get(id);
+		return history ? { state: history.state, entries: history.entries.map((entry) => ({ ...entry })) } : { state: "idle", entries: [] };
+	}
+
+	private addActivity(id: string, activity: WorkerActivity): void {
+		const history = this.histories.get(id);
+		if (!history) return;
+		appendActivity(history, activity);
+		this.emit();
 	}
 
 	isRunning(): boolean {
@@ -203,19 +234,26 @@ export class Orchestrator {
 			this.active = id;
 			this.phase = "working";
 			this.emit();
+			const history = this.histories.get(id) ?? { state: "idle", entries: [] } as ThreadActivity;
+			history.state = "running";
+			this.histories.set(id, history);
 			try {
 				const thread = await this.client.seen(id);
 				this.threads.set(id, thread);
 				this.phase = "worker";
 				this.emit();
+				const model = this.modelForThread?.(id);
 				const result = await this.dispatch({
 					thread,
+					model,
 					root: this.root,
 					invocationHint: this.client.invocationLabel(),
 					socketHint: this.client.socketLabel(),
 					signal: this.abort.signal,
+					onActivity: (activity) => this.addActivity(id, activity),
 				});
 				if (!this.running) break;
+				history.state = result.code === 0 ? "completed" : "failed";
 				if (result.code === 0) {
 					this.processed += 1;
 					this.notes.set(id, "worker finished");
@@ -223,13 +261,17 @@ export class Orchestrator {
 					this.failed += 1;
 					this.lastError = `worker exited ${result.code}`;
 					this.notes.set(id, this.lastError);
+					this.addActivity(id, { kind: "error", text: this.lastError });
 				}
 			} catch (error) {
 				if (!this.running) break;
+				history.state = "failed";
 				this.failed += 1;
 				this.lastError = message(error);
+				this.addActivity(id, { kind: "error", text: this.lastError });
 				this.notes.set(id, this.lastError);
 			} finally {
+				if (!this.running) history.state = "stopped";
 				this.active = null;
 				this.emit();
 			}

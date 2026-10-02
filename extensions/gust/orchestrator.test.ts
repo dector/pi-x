@@ -71,8 +71,12 @@ test("dispatches one worker for a submitted thread", async () => {
 		client,
 		async (options) => {
 			dispatched.push(options.thread.id);
+			expect(options.model).toEqual({ provider: "test", id: "model" });
+			options.onActivity?.({ kind: "text", text: "working" });
+			options.onActivity?.({ kind: "result", text: "read: contents" });
 			return { code: 0 };
 		},
+		() => ({ provider: "test", id: "model" }),
 	);
 
 	orchestrator.start();
@@ -82,6 +86,9 @@ test("dispatches one worker for a submitted thread", async () => {
 	expect(dispatched).toEqual(["t1"]);
 	expect(events).toEqual(["seen:t1"]);
 	expect(orchestrator.status().running).toBe(false);
+	expect(orchestrator.activity("t1")).toEqual({ state: "completed", entries: [{ kind: "text", text: "working" }, { kind: "result", text: "read: contents" }] });
+	await orchestrator.loadThreads();
+	expect(orchestrator.monitorThreads().map((thread) => thread.id)).toContain("t1");
 });
 
 test("recovers seen threads on the first snapshot only", async () => {
@@ -141,6 +148,11 @@ rl.on("line", (line) => {
   let record; try { record = JSON.parse(line); } catch { return; }
   if (record.type === "prompt") {
     writeFileSync(${JSON.stringify(promptFile)}, record.message);
+    process.stdout.write('not-json\\n');
+    process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "visible" } }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "secret" } }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "file" } }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "tool_execution_end", toolName: "read", result: { content: [{ type: "text", text: "missing" }] }, isError: true }) + "\\n");
     process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
   }
 });
@@ -150,14 +162,17 @@ process.stdin.on("end", () => process.exit(0));
 	process.argv[1] = fakePi;
 	try {
 		const controller = new AbortController();
+		const activities: unknown[] = [];
 		const result = await runWorker({
 			thread: thread("abc", "submitted"),
 			root: "/tmp",
 			invocationHint: "gust",
 			socketHint: "(socket from cwd)",
 			signal: controller.signal,
+			onActivity: (activity) => activities.push(activity),
 		});
 		expect(result.code).toBe(0);
+		expect(activities).toEqual([{ kind: "text", text: "visible" }, { kind: "tool", text: 'read {"path":"file"}' }, { kind: "error", text: "read: missing" }]);
 		expect(await Bun.file(promptFile).text()).toContain("abc");
 	} finally {
 		process.argv[1] = original;
@@ -200,6 +215,7 @@ test("runWorker resumes a deterministic session", async () => {
 			invocationHint: "gust",
 			socketHint: "(socket from cwd)",
 			signal: controller.signal,
+			model: { provider: "chosen-provider", id: "chosen-model" },
 		});
 		expect(result.code).toBe(0);
 		const argv = await Bun.file(argsFile).text();
@@ -209,6 +225,7 @@ test("runWorker resumes a deterministic session", async () => {
 		expect(commands).toContain("--no-extensions");
 		expect(commands).toContain("--session-id");
 		expect(commands).toContain(sessionId("/tmp", "abc"));
+		expect(commands.slice(-4)).toEqual(["--provider", "chosen-provider", "--model", "chosen-model"]);
 	} finally {
 		process.argv[1] = original;
 		rmSync(fakePi, { force: true });

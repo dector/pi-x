@@ -20,6 +20,8 @@ session per thread.
 ## Commands
 
 - `/px:gust` — open the thread browser.
+- `/px:gust list` — open the live worker activity monitor.
+- `/px:gust model` — choose the default model for **new** worker threads.
 - `/px:gust process` — start the worker orchestrator.
 - `/px:gust process stop` — stop it.
 - `/px:gust status` — print a one-line status.
@@ -83,6 +85,43 @@ The footer shows the orchestrator phase and the widget lists tracked threads.
 Inside the browser the counts line shows `workers <phase>▶<id>`, and `⚙` marks
 the thread a worker is currently handling. Press `w` to start or stop workers
 without leaving the browser.
+
+## Live activity monitor
+
+`/px:gust list` loads all Gust threads, even before workers start. Each row
+shows the truncated starting/root message. `Enter` opens that thread's live
+assistant text, tool calls, results and errors. Hidden reasoning is never shown.
+Worker states are `idle`, `running`, `completed`, `failed` and `stopped`.
+Threads with activity remain available even if removed from Gust's list.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` or `↓` / `↑` | Select a thread, or scroll activity one line |
+| `Enter` | Open selected thread activity |
+| `gg` | Scroll to the start |
+| `G` | Scroll to the end and follow live output |
+| `shift+j` / `shift+k` (`J` / `K`) | Scroll activity five lines |
+| `Esc` | Activity → thread list → close |
+
+Output follows the tail while at the bottom. Scrolling up pauses following;
+returning to the bottom resumes it. History is in-memory only, capped at 500
+entries and 65,536 text characters per thread; oldest output is discarded. Closing the
+monitor does not stop workers. History survives process stop/start within the
+extension, but not extension/session shutdown.
+
+## Worker models
+
+`/px:gust model` lists available `provider/id` models plus **Inherit chat model**
+(the default). Inheritance reads the foreground chat's current model when a
+thread is first dispatched, not when the orchestrator starts. If no chat model
+is available, the thread fails explicitly; choose a model before retrying.
+
+The choice is a process-local default for **new threads only**; it is not saved
+as global configuration. Each thread's first assignment is saved as a `.model.json`
+sidecar in the worker session directory (`~/.pi/gust/sessions`, or
+`GUST_SESSION_DIR`). Reopened threads retain that model across process restarts,
+using `--provider` and `--model`. Legacy sessions without a sidecar keep their
+existing session model rather than having today's default forced onto them.
 
 ## Invocation discovery
 
