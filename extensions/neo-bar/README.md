@@ -63,7 +63,8 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
 - The first-line right section also owns two internally collected items, ordered
   like producers: the git dirty totals (priority `100`, only in `legacy` mode) and
   the skill counter `󰐱 <read>/<loaded>` (priority `-100`, both modes). The skill
-  counter tracks unique successfully-read `SKILL.md` files this session over the
+  counter moves to status line 2 after the agents indicator in compact `new` mode
+  (60 columns or less). It tracks unique successfully-read `SKILL.md` files this session over the
   skills pi loaded, refreshed before each agent run; it resets with the session.
 - If no first-line producer or internal item exists, fallback to the built-in cwd/branch/session line.
 - If producers exist but none provide left-section content, the built-in cwd/branch/session line remains on the left.
@@ -179,7 +180,7 @@ labels are rendered in the frame corners:
   sharing the top edge need only one heavy border dash between them. In `new` mode
   the totals stay on the border above 60 columns if they fit; at 60 columns or
   less they move to the first-line right section (after producer items), while
-  price takes the top-right corner. In `legacy` mode they move to the first line
+  price moves to the left of status line 3. In `legacy` mode they move to the first line
   right section as `+1 -2 M4 · +150 -200`.
 - **bottom-left** — safe-mode status followed by effective network policy, subagent depth, and context usage.
   - Format: `━╾ 󰕥 <safe-mode> · <network> · <subagents> ╼━╾ 󰊚 <percent> · <tokens> `. The
@@ -263,10 +264,10 @@ labels are rendered in the frame corners:
   differently, and the path text is counted too. The token size appears only
   at 150 tokens or above, or when a pasted image contributes tokens; the counters
   are hidden when empty. At 60 columns or less, cost (including the subagent
-  total when present) moves to the top-right corner and network and subagent
-  indicators move to the left of status line 2, while the input/output/cache
-  breakdown moves to its right. If the top-right cost cannot fit, it joins the
-  left of status line 2. On wider frames cost moves to
+  total when present) moves to the left of status line 3, opposite the optional
+  rewiring indicator. Network and subagent indicators move to the left of status
+  line 2, followed by the skill counter, while the input/output/cache breakdown
+  moves to its right. The model keeps the top border without competing with cost. On wider frames cost moves to
   status line 2 when the full bottom-right label cannot fit. Stashes then notes
   are dropped before the token size.
 - Corner labels are separated from the border by spaces; the rest of the border is

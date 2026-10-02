@@ -35,8 +35,11 @@ test("compact footer rotates git, policy, and extended token stats", () => {
 		left: "󰅟 ✓ · 󰚩 2", right: "󰊚 ↑10/↓2/5",
 	});
 	expect(placeRelocatedFrameLabels({ ...labels, cost: "COST", compact: true })).toEqual({
-		left: "󰅟 ✓ · 󰚩 2 · COST", right: "󰊚 ↑10/↓2/5",
+		left: "󰅟 ✓ · 󰚩 2", right: "󰊚 ↑10/↓2/5",
 	});
+	expect(placeRelocatedFrameLabels({ ...labels, skills: "SKILLS", compact: true }).left).toBe("󰅟 ✓ · 󰚩 2 · SKILLS");
+	expect(placeRelocatedFrameLabels({ separator: " · ", skills: "SKILLS", compact: true }).left).toBe("SKILLS");
+	expect(placeRelocatedFrameLabels({ ...labels, skills: "SKILLS", compact: false }).left).toBeUndefined();
 	expect(placeFirstLineRightIndicators({ producer: "OTHER", ...labels, compact: false })).toBe("OTHER · 󰊚 ↑10/↓2/5");
 	expect(placeRelocatedFrameLabels({ ...labels, cost: "COST", compact: false })).toEqual({
 		left: "COST", right: "GIT · 󰅟 ✓ · 󰚩 2",
@@ -51,6 +54,17 @@ test("mobile rewire indicator moves to a right-aligned third status line", () =>
 	expect(visibleWidth(mobile.thirdLine)).toBe(60);
 	expect(placeRewireStatusLabel(label, false, 80)).toEqual({ firstLine: label, thirdLine: "" });
 	expect(placeRewireStatusLabel(undefined, true, 60)).toEqual({ firstLine: undefined, thirdLine: "" });
+});
+
+test("mobile cost stays left of rewiring on line 3, even without rewiring", () => {
+	const cost = "PRICE · TOTAL";
+	const label = "REWIRE";
+	const both = placeRewireStatusLabel(label, true, 60, cost);
+	expect(both.thirdLine).toStartWith(cost);
+	expect(both.thirdLine).toEndWith(label);
+	expect(visibleWidth(both.thirdLine)).toBe(60);
+	expect(placeRewireStatusLabel(undefined, true, 60, cost).thirdLine).toStartWith(cost);
+	expect(placeRewireStatusLabel(label, false, 80, cost)).toEqual({ firstLine: label, thirdLine: "" });
 });
 
 describe("locked editor frame", () => {
@@ -113,7 +127,7 @@ describe("locked editor frame", () => {
 		expect(visibleWidth(narrow)).toBe(55);
 	});
 
-	test("shows cost (including total) in the mobile top-right and moves policy to status line 2", () => {
+	test("relocates mobile cost (including total) while preserving model and policy", () => {
 		const relocatedLabels: NonNullable<Options["relocatedLabels"]> = {};
 		const editor = new FrameStatusEditor(
 			{ requestRender() {} } as ConstructorParameters<typeof FrameStatusEditor>[0],
@@ -133,18 +147,19 @@ describe("locked editor frame", () => {
 		editor.setLocked(true);
 		const compact = editor.render(60);
 		expect(compact[0]).not.toContain("󰐖");
-		expect(compact[0]).toContain("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
+		expect(compact[0]).not.toContain("󰇁");
+		expect(compact[0]).toContain("M");
 		expect(compact.at(-1)).toContain("U");
 		expect(compact.at(-1)).not.toContain("NET");
 		expect(compact.at(-1)).not.toContain("SUB");
 		expect(relocatedLabels.gitStats).toEqual(GIT_STATS);
-		expect(relocatedLabels.contextLabel).toBeUndefined();
+		expect(relocatedLabels.contextLabel).toBe("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
 		expect(relocatedLabels.policyLabel).toBe("󰅟 NET · 󰚩 SUB");
 
 		const narrowTop = editor.render(24)[0];
-		expect(narrowTop).toContain("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
-		expect(narrowTop).not.toContain("M");
-		expect(relocatedLabels.contextLabel).toBeUndefined();
+		expect(narrowTop).not.toContain("󰇁");
+		expect(narrowTop).toContain("M");
+		expect(relocatedLabels.contextLabel).toBe("󰇁\u200b0.01 · 󰇁\u200b󰇁\u200b0.013");
 
 		const wide = editor.render(100);
 		expect(wide[0]).toContain("󰐖");
@@ -155,14 +170,14 @@ describe("locked editor frame", () => {
 		expect(relocatedLabels.policyLabel).toBeUndefined();
 	});
 
-	test("keeps counts on the bottom while showing cost on top in mobile mode", () => {
+	test("keeps counts on the bottom while relocating mobile cost", () => {
 		const { editor, relocatedLabels } = makeEditor();
 		editor.setLocked(true);
 		const lines = editor.render(43);
 		expect(lines.at(-1)).toContain("󰈙 3 · 󱊖 2");
 		expect(lines.at(-1)).not.toContain("COST");
-		expect(lines[0]).toContain("COST");
-		expect(relocatedLabels.contextLabel).toBeUndefined();
+		expect(lines[0]).not.toContain("COST");
+		expect(relocatedLabels.contextLabel).toBe("COST");
 	});
 
 	test("dims the stripes and grays the rules without dimming the lock label", () => {
@@ -188,8 +203,8 @@ describe("locked editor frame", () => {
 		expect(lines.at(-1)).toStartWith("╰");
 		expect(lines.at(-1)).toEndWith("╯");
 		expect(relocatedLabels.gitStats).toEqual(GIT_STATS);
-		expect(lines[0]).toContain("COST");
-		expect(relocatedLabels.contextLabel).toBeUndefined();
+		expect(lines[0]).not.toContain("COST");
+		expect(relocatedLabels.contextLabel).toBe("COST");
 		expect(lines.every((line) => visibleWidth(line) === 20)).toBe(true);
 		editor.renderTopBorder(5, 0);
 		expect(relocatedLabels.contextLabel).toBe("COST");

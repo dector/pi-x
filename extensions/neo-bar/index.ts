@@ -114,8 +114,8 @@ const NOTES_ID = "notes";
 // first-line right section, ordered like a producer at this priority.
 const GIT_STATS_ID = "git-stats";
 const GIT_STATS_FIRST_LINE_PRIORITY = 100;
-// Read-skill counter, also collected internally (skill-stats.ts). It always
-// renders on the first line right section, ordered behind the other items.
+// Read-skill counter, also collected internally (skill-stats.ts). Normally on
+// line 1 right; compact new mode moves it after policy on line 2 left.
 const SKILL_STATS_ID = "skill-stats";
 const SKILL_STATS_FIRST_LINE_PRIORITY = -100;
 // Ignore old producer events for counters now collected internally by neo-bar.
@@ -303,6 +303,7 @@ export function placeRelocatedFrameLabels(args: {
 	right?: string;
 	git?: string;
 	policy?: string;
+	skills?: string;
 	tokens?: string;
 	cost?: string;
 	compact: boolean;
@@ -310,8 +311,12 @@ export function placeRelocatedFrameLabels(args: {
 }): { left?: string; right?: string } {
 	return {
 		left: appendStatusLabel(
-			appendStatusLabel(args.left, args.compact ? args.policy : undefined, args.separator),
-			args.cost,
+			appendStatusLabel(
+				appendStatusLabel(args.left, args.compact ? args.policy : undefined, args.separator),
+				args.compact ? args.skills : undefined,
+				args.separator,
+			),
+			args.compact ? undefined : args.cost,
 			args.separator,
 		),
 		right: appendStatusLabel(
@@ -332,20 +337,20 @@ export function placeFirstLineRightIndicators(args: {
 	return appendStatusLabel(args.producer, args.compact ? args.git : args.tokens, args.separator);
 }
 
-export function placeRewireStatusLabel(label: string | undefined, compact: boolean, width: number): {
+export function placeRewireStatusLabel(label: string | undefined, compact: boolean, width: number, cost?: string): {
 	firstLine?: string;
 	thirdLine: string;
 } {
 	return {
 		firstLine: compact ? undefined : label,
-		thirdLine: compact && label ? renderThreeSectionLine(width, undefined, undefined, label) : "",
+		thirdLine: compact && (label || cost) ? renderThreeSectionLine(width, cost, undefined, label) : "",
 	};
 }
 
 interface FrameStatusEditorOptions {
 	/** Current display mode; `legacy` disables all border labels and the side frame. */
 	getDisplayMode: () => NeoBarDisplayMode;
-	/** Context usage and cost; compact mode shows the cost on the top-right border. */
+	/** Context usage and cost; compact mode moves cost to footer line 3 left. */
 	bottomLeft?: () => FrameContextParts | undefined;
 	/** Secondary bottom-left label (safe-mode status), rendered after `bottomLeft`. */
 	bottomLeftStatus?: FrameStatusProvider;
@@ -851,8 +856,8 @@ export class FrameStatusEditor extends CustomEditor {
 		const scrollSegment = hiddenLineCount > 0 ? this.borderColor(` ↑ ${hiddenLineCount} more `) : "";
 		const borderColor = (text: string) => this.borderColor(text);
 
-		// Compact mode (<=60 columns) gives the top-right corner to price and
-		// moves git totals to status line 2. On wider frames, move git if it cannot fit.
+		// Compact mode (<=60 columns) moves cost to footer line 3 and git to line 1.
+		// On wider frames, move git if it cannot fit.
 		const modelLabel = this.topLeftLabel();
 		const reviewLabel = this.topLeftReviewProvider?.();
 		const gustHoldLabel = this.topLeftGustHoldProvider?.();
@@ -865,27 +870,19 @@ export class FrameStatusEditor extends CustomEditor {
 			: "";
 		const compact = width <= COMPACT_FRAME_MAX_WIDTH;
 		const costLabel = compact ? this.bottomLeftProvider?.().cost : undefined;
-		const compactCostSegment = hasVisibleText(costLabel)
-			? `${this.borderColor(FRAME_LABEL_OPEN)}${sanitizeStatusText(costLabel)}${this.borderColor(FRAME_RIGHT_CORNER_CLOSE)}`
-			: "";
-		const fullRightSegment = compact ? compactCostSegment : this.topRightSegment();
-		let chosen = chooseTopBorderSegments({
+		const fullRightSegment = compact ? "" : this.topRightSegment();
+		const chosen = chooseTopBorderSegments({
 			width,
 			leftSegments: [modelPlaceholder],
 			rightSegments: [fullRightSegment],
 			minimumGap: MIN_CORNER_LABEL_GAP,
 			visibleWidth,
 		});
-		// If both cannot fit in compact mode, keep the price (including total)
-		// instead of the model whenever the price fits on its own.
-		if (compact && !chosen.right && visibleWidth(compactCostSegment) + MIN_CORNER_LABEL_GAP <= width) {
-			chosen = { left: "", right: compactCostSegment };
-		}
 		const rawGitStats = this.topRightGitStats?.();
 		if (this.relocatedLabels) {
 			this.relocatedLabels.compact = compact;
 			this.relocatedLabels.gitStats = compact || !hasVisibleText(chosen.right) ? rawGitStats : undefined;
-			if (compact) this.relocatedLabels.contextLabel = hasVisibleText(chosen.right) ? undefined : costLabel;
+			if (compact) this.relocatedLabels.contextLabel = costLabel;
 		}
 		const selectedModelLabel = chosen.left === modelPlaceholder ? modelLabel : undefined;
 		const leftSegment = selectedModelLabel ? this.topLeftSegment(selectedModelLabel, reviewLabel, gustHoldLabel) : "";
@@ -2003,7 +2000,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// published on the first line (no duplication). In `legacy` mode the frame is
 	// hidden and the counters return to the first line as an internally-owned
 	// entry, ordered like a producer at the same priority. The skill counter
-	// always lives on the first line.
+	// moves to line 2 in compact new mode.
 	const internalFirstLineEntries = (): Array<[string, FirstLineEntry]> => {
 		const entries: Array<[string, FirstLineEntry]> = [];
 		if (displayMode === "legacy" && gitStats) {
@@ -2037,6 +2034,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		joinSeparator: string = NEO_BAR_JOIN_SEPARATOR,
 		attensionCoreSuffix?: string,
 		rewireContent?: string,
+		compact = false,
 	): string | undefined => {
 		const entries = mergeFirstLineEntries(
 			firstLineById.entries(),
@@ -2055,7 +2053,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			]);
 		}
 		const items = entries
-			.filter(([, entry]) => entry.section === section && hasVisibleText(entry.content))
+			.filter(([id, entry]) => !(compact && id === SKILL_STATS_ID) && entry.section === section && hasVisibleText(entry.content))
 			.sort(([, a], [, b]) => b.priority - a.priority || a.order - b.order)
 			.map(([id, entry]) => {
 				const content = sanitizeStatusText(entry.content);
@@ -2175,7 +2173,10 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 								),
 							)
 						: undefined;
-					const rewirePlacement = placeRewireStatusLabel(rewireContent, compactFrame, width);
+					const rewirePlacement = placeRewireStatusLabel(
+						rewireContent, compactFrame, width,
+						compactFrame ? relocatedBorderLabels.contextLabel : undefined,
+					);
 					let line1: string;
 					if (hasFirstLineContent()) {
 						const firstLineJoinSeparator = theme.fg("muted", NEO_BAR_JOIN_SEPARATOR);
@@ -2189,6 +2190,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							firstLineJoinSeparator,
 							attensionCoreSuffix,
 							rewirePlacement.firstLine,
+							compactFrame,
 						);
 						const right = placeFirstLineRightIndicators({
 							producer: producerRight,
@@ -2251,7 +2253,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 					let right = renderSection(layout.right, contextOverrides, joinSeparator);
 
 					// Compact mode puts policy on the left and extended tokens on the
-					// right; git moves to line 1 right. Cost still falls back left.
+					// right; git moves to line 1 right, cost to line 3 left.
 					const relocatedContext = displayMode === "new" ? relocatedBorderLabels.contextLabel : undefined;
 					const relocatedPolicy = displayMode === "new" ? relocatedBorderLabels.policyLabel : undefined;
 					const mergeFrameLabels = (left?: string, right?: string, separator: string = joinSeparator) =>
@@ -2262,6 +2264,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							compact: compactFrame,
 							git: relocatedGit,
 							policy: relocatedPolicy,
+							skills: compactFrame && skillStats ? renderSkillStatsLabel(skillStats, true) : undefined,
 							tokens: compactFrame ? firstLineTokenLabel : undefined,
 							cost: relocatedContext,
 						});
