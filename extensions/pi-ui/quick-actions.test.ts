@@ -6,7 +6,7 @@ type Context = Parameters<typeof showHiDialog>[0];
 type Handlers = Parameters<typeof showHiDialog>[1];
 type Lifecycle = Parameters<typeof showHiDialog>[2];
 
-function openDialog(initiallyLocked = false) {
+function openDialog(initiallyLocked = false, gustAvailable = true) {
 	let dialog!: Dialog;
 	let done!: () => void;
 	let renders = 0;
@@ -41,6 +41,7 @@ function openDialog(initiallyLocked = false) {
 		isFocusEnabled: () => focus,
 		onToggleGust: () => { gust = !gust; renderFromEvent?.(); },
 		isGustEnabled: () => gust,
+		isGustAvailable: () => gustAvailable,
 		onShowPromptPreviews: () => {},
 		onPromptStashStash: () => {},
 		onPromptStashNew: () => { newPromptStashCalls++; },
@@ -123,6 +124,27 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(0);
 		ui.dialog.handleInput("\x1b[D");
 		expect(ui.dialog.render(80).join("\n")).toContain("Focus mode");
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
+	test("Gust toggle is inactive when Gust is not detected, including in search", async () => {
+		const ui = openDialog(false, false);
+		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B");
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.dialog.render(80).join("\n")).toContain("Toggle Gust");
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.gust).toBe(false);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("/");
+		for (const char of "gust") ui.dialog.handleInput(char);
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.gust).toBe(false);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("\x1b");
 		ui.dialog.handleInput("\x1b");
 		await ui.finished;
 	});

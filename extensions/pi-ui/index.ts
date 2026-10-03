@@ -1306,6 +1306,7 @@ export async function showHiDialog(
 		isFocusEnabled: () => boolean;
 		onToggleGust: () => void;
 		isGustEnabled: () => boolean;
+		isGustAvailable: () => boolean;
 		onShowPromptPreviews: () => Promise<void>;
 		onPromptStashStash: () => void;
 		onPromptStashNew: () => void;
@@ -1354,6 +1355,7 @@ export async function showHiDialog(
 					isFocusEnabled,
 					onToggleGust,
 					isGustEnabled,
+					isGustAvailable,
 					onShowPromptPreviews,
 					onPromptStashStash,
 					onPromptStashNew,
@@ -1393,6 +1395,7 @@ export async function showHiDialog(
 					opensMenu?: boolean;
 					searchable?: boolean;
 					isEnabled: (state: DialogState) => boolean;
+					isAvailable?: () => boolean;
 					run: () => void | Promise<void>;
 					closeAfterRun?: boolean;
 				};
@@ -1654,6 +1657,7 @@ export async function showHiDialog(
 						label: "Toggle Gust",
 						toggleSeverity: "none",
 						isEnabled: () => isGustEnabled(),
+						isAvailable: isGustAvailable,
 						run: onToggleGust,
 					},
 				];
@@ -1686,7 +1690,7 @@ export async function showHiDialog(
 				};
 
 				const executeAction = (action: DialogAction | undefined, viaEnter = false): void => {
-					if (!action || (isLocked() && action.hotkey !== "L")) return;
+					if (!action || action.isAvailable?.() === false || (isLocked() && action.hotkey !== "L")) return;
 					if (!(viaEnter && action.toggleSeverity)) {
 						searchMode = false;
 						searchQuery = "";
@@ -1771,6 +1775,7 @@ export async function showHiDialog(
 						const top = `${border("╭━╾")}${border(theme.bold(titleText))}${border(`╼${topFill}╮`)}`;
 
 						const actionLine = (action: DialogAction, isSelected: boolean): string => {
+							const available = action.isAvailable?.() !== false;
 							const enabled = action.isEnabled(state);
 							const label = action.opensMenu ? `${action.label.replace(/…$/, "")} ›` : action.label;
 							const shortcut = action.hotkeyLabel ?? action.hotkey ?? "";
@@ -1801,7 +1806,8 @@ export async function showHiDialog(
 								marker = enabled ? theme.fg(color, theme.bold(statusText)) : theme.fg("muted", statusText);
 							}
 							const row = `${left}${gap}${styledShortcut}${marker ? `${shortcut ? " " : ""}${marker}` : ""}`;
-							const clippedRow = truncateToWidth(row, rowWidth, "");
+							const styledRow = available ? row : theme.fg("dim", `${leftText}${gap}${rightText}`);
+							const clippedRow = truncateToWidth(styledRow, rowWidth, "");
 							const paddedContent = `${clippedRow}${" ".repeat(Math.max(0, rowWidth - visibleWidth(clippedRow)))}`;
 							const paddedRow = `${" ".repeat(horizontalPadding)}${paddedContent}${" ".repeat(horizontalPadding)}`;
 							return isSelected ? `${selectedBg}${paddedRow}\x1b[49m` : paddedRow;
@@ -2081,6 +2087,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let agentsRewireEnabled = false;
 	let focusModeEnabled = false;
 	let gustHoldEnabled = false;
+	let gustAvailable = false;
 	let locked = false;
 	let lockedTui: LockableTui | undefined;
 	let removeLockGate: (() => void) | undefined;
@@ -2121,6 +2128,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		const enabled = (payload as { enabled?: unknown }).enabled;
 		if (typeof enabled !== "boolean") return;
 		gustHoldEnabled = enabled;
+		gustAvailable = (payload as { running?: unknown }).running === true;
 		requestActionDialogRender?.();
 	});
 	// focus-mode broadcasts its state on session start and on every change.
@@ -2453,6 +2461,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 						pi.events.emit(GUST_HOLD_TOGGLE_EVENT, { ctx });
 					},
 					isGustEnabled: () => gustHoldEnabled,
+					isGustAvailable: () => gustAvailable,
 					onShowPromptPreviews: async () => {
 						await showPromptPreviewDialog(ctx);
 					},
