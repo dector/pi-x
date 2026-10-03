@@ -183,13 +183,18 @@ export default function gustExtension(pi: ExtensionAPI): void {
 			await renderHold(ctx);
 		}
 	};
-	const toggleHold = async (ctx: ExtensionCommandContext, folder?: string) => {
+	const toggleHold = async (ctx: ExtensionContext, folder?: string) => {
 		await holdAction(ctx, async () => {
 			const selectedTarget = { ...target(ctx), cwd: folder ? resolve(ctx.cwd, folder) : projectRoot(ctx) };
 			const enabled = await hold.toggle(selectedTarget, !ctx.isIdle());
 			ctx.ui.notify(`gust: automatic reload hold ${enabled ? "enabled" : "disabled"}`, "info");
 		});
 	};
+
+	pi.events.on("px:gust:hold:toggle", async (payload) => {
+		const ctx = (payload as { ctx?: ExtensionContext } | undefined)?.ctx;
+		if (ctx) await toggleHold(ctx);
+	});
 
 	pi.registerCommand("gust", {
 		description: "`hold [folder]` toggles automatic reload pausing while the agent works",

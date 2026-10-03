@@ -60,10 +60,17 @@ esac
 		const pi = {
 			registerCommand(name: string, command: unknown) { commands.set(name, command); },
 			on(name: string, handler: unknown) { events.set(name, handler); },
-			events: { emit(name: string, payload: unknown) { emitted.push({ name, payload }); } },
+			events: {
+				emit(name: string, payload: unknown) { emitted.push({ name, payload }); },
+				on(name: string, handler: unknown) { events.set(name, handler); },
+			},
 		} as unknown as ExtensionAPI;
 		const ctx = { cwd: "/tmp", isIdle: () => true, ui: { notify() {}, setStatus() {} } };
 		gustExtension(pi);
+		await events.get("px:gust:hold:toggle")({ ctx });
+		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: true, running: true, paused: false } });
+		await events.get("px:gust:hold:toggle")({ ctx });
+		expect(emitted.at(-1)).toEqual({ name: "px:status-bar:gust-hold:set", payload: { enabled: false, running: true, paused: false } });
 		await commands.get("gust").handler("hold", ctx);
 		await events.get("before_agent_start")({}, ctx);
 		await events.get("agent_start")({}, ctx);

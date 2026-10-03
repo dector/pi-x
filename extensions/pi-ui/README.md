@@ -45,7 +45,7 @@ Current dialog items:
   - `p - prompt history…` (opens the tabbed history dialog)
   - `n - browse notes…` (opens the `/px:notes:list` browser)
   - `N - new note…` (opens the `/px:notes` editor)
-- **More…** (above Focus mode, no hotkey yet) opens an empty submenu. Use `←` or Backspace to return.
+- **More…** (above Focus mode, no hotkey yet) contains **Toggle Gust**, a normal toggle for `/px:gust hold` with no hotkey. Enter toggles it without closing the dialog. Use `←` or Backspace to return.
 - **Lock** (last, unheaded group; Focus mode sits directly above it)
   - `Ctrl+f - toggle focus mode` (the focus-mode reading column)
   - `L - toggle lock mode`

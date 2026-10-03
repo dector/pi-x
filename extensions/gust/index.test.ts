@@ -4,7 +4,7 @@ import gustExtension from "./index.ts";
 
 test("model command lists available provider/id models and inherit default", async () => {
 	const commands = new Map<string, any>();
-	const pi = { registerCommand: (name: string, command: unknown) => commands.set(name, command), on() {}, events: { emit() {} } } as unknown as ExtensionAPI;
+	const pi = { registerCommand: (name: string, command: unknown) => commands.set(name, command), on() {}, events: { emit() {}, on() {} } } as unknown as ExtensionAPI;
 	gustExtension(pi);
 	const optionsSeen: string[][] = [];
 	const notices: string[] = [];

@@ -14,6 +14,7 @@ function openDialog(initiallyLocked = false) {
 	let reader = false;
 	let outer = false;
 	let focus = false;
+	let gust = false;
 	let doomCalls = 0;
 	let rewire = false;
 	let newPromptStashCalls = 0;
@@ -38,6 +39,8 @@ function openDialog(initiallyLocked = false) {
 		onSetYoloPlus: () => { doomCalls++; },
 		onToggleFocus: () => { focus = !focus; },
 		isFocusEnabled: () => focus,
+		onToggleGust: () => { gust = !gust; renderFromEvent?.(); },
+		isGustEnabled: () => gust,
 		onShowPromptPreviews: () => {},
 		onPromptStashStash: () => {},
 		onPromptStashNew: () => { newPromptStashCalls++; },
@@ -59,7 +62,7 @@ function openDialog(initiallyLocked = false) {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; }, get newPromptStashCalls() { return newPromptStashCalls; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get gust() { return gust; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; }, get newPromptStashCalls() { return newPromptStashCalls; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -90,7 +93,7 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(1);
 	});
 
-	test("More above focus opens an empty submenu without a hotkey", async () => {
+	test("More contains the Gust toggle without a hotkey", async () => {
 		const ui = openDialog();
 		const lines = ui.dialog.render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 		expect(lines.join("\n")).toMatch(/More ›[^]*Focus mode/);
@@ -102,15 +105,38 @@ describe("quick actions", () => {
 		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B");
 		ui.dialog.handleInput("\r");
 		await tick();
-		const text = ui.dialog.render(80).join("\n");
+		const text = ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 		expect(text).toContain("Quick actions / More");
 		expect(text).not.toContain("Focus mode");
 		expect(text).not.toContain("Reader mode");
-		for (const key of ["\x1b[B", "\x1b[A", "\r", "r", "/"]) ui.dialog.handleInput(key);
+		expect(text).toMatch(/Toggle Gust\s+○─/);
+		ui.dialog.handleInput("g"); // No hotkey assigned.
+		expect(ui.gust).toBe(false);
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.gust).toBe(true);
+		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Toggle Gust\s+─●/);
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.gust).toBe(false);
 		expect(ui.reader).toBe(false);
 		expect(ui.closes).toBe(0);
 		ui.dialog.handleInput("\x1b[D");
 		expect(ui.dialog.render(80).join("\n")).toContain("Focus mode");
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
+	test("Gust toggle is searchable from the main menu", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("/");
+		for (const char of "gust") ui.dialog.handleInput(char);
+		expect(ui.dialog.render(80).join("\n")).toContain("Toggle Gust");
+		ui.dialog.handleInput("\r");
+		await tick();
+		expect(ui.gust).toBe(true);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("\x1b");
 		ui.dialog.handleInput("\x1b");
 		await ui.finished;
 	});

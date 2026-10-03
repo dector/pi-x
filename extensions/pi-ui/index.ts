@@ -17,6 +17,8 @@ const SAFE_MODE_TOGGLE_OUTER_EVENT = "px:safe-mode:toggle-outer";
 const SAFE_MODE_SET_YOLO_PLUS_EVENT = "px:safe-mode:set-yolo-plus";
 const FOCUS_MODE_TOGGLE_EVENT = "px:focus-mode:toggle";
 const FOCUS_MODE_STATE_EVENT = "px:focus-mode:state";
+const GUST_HOLD_TOGGLE_EVENT = "px:gust:hold:toggle";
+const GUST_HOLD_STATE_EVENT = "px:status-bar:gust-hold:set";
 const PROMPT_STASH_STASH_EVENT = "px:prompt-stash:stash";
 const PROMPT_STASH_POP_EVENT = "px:prompt-stash:pop";
 const PROMPT_STASH_LIST_EVENT = "px:prompt-stash:list";
@@ -1302,6 +1304,8 @@ export async function showHiDialog(
 		onSetYoloPlus: () => void;
 		onToggleFocus: () => void;
 		isFocusEnabled: () => boolean;
+		onToggleGust: () => void;
+		isGustEnabled: () => boolean;
 		onShowPromptPreviews: () => Promise<void>;
 		onPromptStashStash: () => void;
 		onPromptStashNew: () => void;
@@ -1348,6 +1352,8 @@ export async function showHiDialog(
 					onSetYoloPlus,
 					onToggleFocus,
 					isFocusEnabled,
+					onToggleGust,
+					isGustEnabled,
 					onShowPromptPreviews,
 					onPromptStashStash,
 					onPromptStashNew,
@@ -1643,14 +1649,24 @@ export async function showHiDialog(
 					},
 				];
 
+				const moreActions: DialogAction[] = [
+					{
+						label: "Toggle Gust",
+						toggleSeverity: "none",
+						isEnabled: () => isGustEnabled(),
+						run: onToggleGust,
+					},
+				];
+
 				const searchableActions: SearchAction[] = [
+					...moreActions.map((action) => ({ action, menu: "more" as const })),
 					...mainActions.map((action) => ({ action, menu: "main" as const })),
 					...stashActions
 						.filter((action) => action.searchable !== false)
 						.map((action) => ({ action, menu: "stash" as const })),
 				];
 				const getActions = (): DialogAction[] =>
-					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "more" ? [] : activeMenu === "stash" ? stashActions : mainActions;
+					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "more" ? moreActions : activeMenu === "stash" ? stashActions : mainActions;
 				const getSearchActions = (): SearchAction[] => {
 					const query = searchQuery.trim().toLowerCase();
 					if (!query) return [];
@@ -1886,8 +1902,8 @@ export async function showHiDialog(
 							closeDialog();
 							return;
 						}
-						if (activeMenu === "more") {
-							if (matchesKey(data, Key.left) || matchesKey(data, Key.backspace)) setMenu("main");
+						if (activeMenu === "more" && (matchesKey(data, Key.left) || matchesKey(data, Key.backspace))) {
+							setMenu("main");
 							return;
 						}
 						if (data === "/") {
@@ -2064,6 +2080,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	let requestActionDialogRender: (() => void) | undefined;
 	let agentsRewireEnabled = false;
 	let focusModeEnabled = false;
+	let gustHoldEnabled = false;
 	let locked = false;
 	let lockedTui: LockableTui | undefined;
 	let removeLockGate: (() => void) | undefined;
@@ -2097,6 +2114,13 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 	pi.events.on(STATUS_BAR_REWIRE_CLEAR_EVENT, () => {
 		agentsRewireEnabled = false;
+		requestActionDialogRender?.();
+	});
+	pi.events.on(GUST_HOLD_STATE_EVENT, (payload) => {
+		if (!payload || typeof payload !== "object") return;
+		const enabled = (payload as { enabled?: unknown }).enabled;
+		if (typeof enabled !== "boolean") return;
+		gustHoldEnabled = enabled;
 		requestActionDialogRender?.();
 	});
 	// focus-mode broadcasts its state on session start and on every change.
@@ -2425,6 +2449,10 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 						pi.events.emit(FOCUS_MODE_TOGGLE_EVENT, { ctx });
 					},
 					isFocusEnabled: () => focusModeEnabled,
+					onToggleGust: () => {
+						pi.events.emit(GUST_HOLD_TOGGLE_EVENT, { ctx });
+					},
+					isGustEnabled: () => gustHoldEnabled,
 					onShowPromptPreviews: async () => {
 						await showPromptPreviewDialog(ctx);
 					},
