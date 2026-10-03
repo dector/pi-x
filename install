@@ -5,6 +5,22 @@ set -euo pipefail
 # Default target: ~/.pi/agent/extensions
 # Override with: PI_EXTENSIONS_DIR=/some/path ./install
 
+# Color only terminal output; respect NO_COLOR and dumb terminals.
+BOLD='' CYAN='' GREEN='' YELLOW='' DIM='' RESET=''
+if [[ -t 1 && -z "${NO_COLOR+x}" && "${TERM:-dumb}" != dumb ]]; then
+  BOLD=$'\033[1m' CYAN=$'\033[36m' GREEN=$'\033[32m'
+  YELLOW=$'\033[33m' DIM=$'\033[2m' RESET=$'\033[0m'
+fi
+
+message() {
+  printf '%s%s%s %s\n' "$1" "$2" "$RESET" "$3"
+}
+
+section() {
+  printf '\n'
+  message "$BOLD$CYAN" '==' "$1"
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./install [--skip-herdr | --replace-herdr]
@@ -118,9 +134,10 @@ else
   exit 1
 fi
 
-echo "Target extension directory: $DEST_ROOT"
-echo "Using package manager: $PKG_MGR"
-echo "Warning: rsync uses --delete and may remove files under each extension target."
+section 'Pi extension installer'
+printf '  Extensions:      %s\n  Themes:          %s\n  Package manager: %s\n' "$DEST_ROOT" "$THEMES_DEST" "$PKG_MGR"
+printf '\n'
+message "$YELLOW" 'Warning:' 'rsync uses --delete and may remove files under each extension target.'
 
 if [[ ! -t 0 ]]; then
   echo "Error: confirmation required but no interactive stdin detected." >&2
@@ -198,13 +215,14 @@ fi
 dependency_extensions=()
 lockfiles=(bun.lock bun.lockb package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock)
 
-echo "Installing extensions into: $DEST_ROOT"
+section '1/4 · Sync extensions'
+printf '  Target: %s\n' "$DEST_ROOT"
 for ext in "${extensions[@]}"; do
   src="$SRC_ROOT/$ext/"
   dest="$DEST_ROOT/$ext/"
 
   if [[ ! -d "$src" ]]; then
-    echo "Skipping missing extension: $ext"
+    message "$YELLOW" '[skip]' "Skipping missing extension: $ext"
     continue
   fi
 
@@ -212,12 +230,12 @@ for ext in "${extensions[@]}"; do
     # Install as Herdr's managed flat file so `herdr integration status` still
     # sees the integration as installed. The fork keeps the ID/version markers.
     if [[ ! -e "$dest" ]] && cmp -s "$src/index.ts" "$HERDR_FLAT_EXT"; then
-      echo "- $ext: unchanged"
+      message "$DIM" '[same]' "$ext: unchanged"
       continue
     fi
     rm -rf "$dest"
     cp "$src/index.ts" "$HERDR_FLAT_EXT"
-    echo "- $ext -> $HERDR_FLAT_EXT"
+    message "$GREEN" '[sync]' "$ext -> $HERDR_FLAT_EXT"
     continue
   fi
 
@@ -251,10 +269,10 @@ for ext in "${extensions[@]}"; do
 
   changes="$(rsync "${sync_options[@]}" --dry-run --itemize-changes "$src" "$dest")"
   if [[ -n "$changes" ]]; then
-    echo "- $ext: syncing changes"
+    message "$CYAN" '[sync]' "$ext: syncing changes"
     rsync "${sync_options[@]}" "$src" "$dest"
   else
-    echo "- $ext: unchanged"
+    message "$DIM" '[same]' "$ext: unchanged"
   fi
 
   if [[ $needs_dependencies -eq 1 ]]; then
@@ -266,10 +284,15 @@ done
 # `/reset` command and `px:reset:*` handlers cannot linger beside the new one.
 if [[ -d "$DEST_ROOT/reset" ]]; then
   rm -rf "$DEST_ROOT/reset"
-  echo "- removed legacy reset/ (renamed to renew/)"
+  message "$YELLOW" '[clean]' 'removed legacy reset/ (renamed to renew/)'
 fi
 
-echo "Installing changed or missing extension dependencies with $PKG_MGR..."
+section '2/4 · Install dependencies'
+if [[ ${#dependency_extensions[@]} -eq 0 ]]; then
+  message "$DIM" '[same]' 'Dependencies are up to date.'
+else
+  printf '  %s extension(s) need dependencies (%s).\n' "${#dependency_extensions[@]}" "$PKG_MGR"
+fi
 for ext in "${dependency_extensions[@]}"; do
   ext_dir="$DEST_ROOT/$ext"
 
@@ -283,7 +306,7 @@ for ext in "${dependency_extensions[@]}"; do
     continue
   fi
 
-  echo "- $ext: ${PKG_INSTALL_CMD[*]}"
+  message "$CYAN" '[deps]' "$ext: ${PKG_INSTALL_CMD[*]}"
   (
     cd "$ext_dir"
     "${PKG_INSTALL_CMD[@]}"
@@ -291,8 +314,9 @@ for ext in "${dependency_extensions[@]}"; do
   rm -f "$ext_dir/.pi-x-install-pending"
 done
 
+section '3/4 · Sync themes'
 if [[ -d "$THEMES_SRC" ]]; then
-  echo "Syncing themes into: $THEMES_DEST"
+  message "$CYAN" '[sync]' "Syncing themes into: $THEMES_DEST"
   mkdir -p "$THEMES_DEST"
   # No --delete: keep user themes that this repo does not manage.
   rsync -a --checksum "$THEMES_SRC"/ "$THEMES_DEST"/
@@ -306,6 +330,7 @@ fi
 AGENTS_DEST="${PI_AGENTS_DIR:-$HOME/.pi/agent/agents}"
 PROMPTS_DEST="${PI_PROMPTS_DIR:-$HOME/.pi/agent/prompts}"
 
+section '4/4 · Sync agents and prompts'
 has_agents=0
 has_prompts=0
 for ext_dir in "$SRC_ROOT"/*/; do
@@ -318,7 +343,7 @@ for ext_dir in "$SRC_ROOT"/*/; do
 done
 
 if [[ $has_agents -eq 1 ]]; then
-  echo "Syncing agent definitions into: $AGENTS_DEST"
+  message "$CYAN" '[sync]' "Syncing agent definitions into: $AGENTS_DEST"
   mkdir -p "$AGENTS_DEST"
   for ext_dir in "$SRC_ROOT"/*/; do
     if [[ -d "$ext_dir/agents" ]]; then
@@ -331,7 +356,7 @@ else
 fi
 
 if [[ $has_prompts -eq 1 ]]; then
-  echo "Syncing prompt templates into: $PROMPTS_DEST"
+  message "$CYAN" '[sync]' "Syncing prompt templates into: $PROMPTS_DEST"
   mkdir -p "$PROMPTS_DEST"
   for ext_dir in "$SRC_ROOT"/*/; do
     if [[ -d "$ext_dir/prompts" ]]; then
@@ -343,8 +368,10 @@ else
   echo "No extension prompt directories found, skipping prompts."
 fi
 
-echo "Done. Extensions and themes synced and dependencies installed. Reload pi to apply updates (/reload)."
+printf '\n'
+message "$BOLD$GREEN" '[done]' 'Install complete. Reload pi to apply updates (/reload).'
 if [[ ${#excluded_extensions[@]} -gt 0 ]]; then
-  echo "Extensions not installed (not in whitelist):"
+  printf '\n'
+  message "$DIM" '[skip]' 'Extensions not installed (not in whitelist):'
   printf '  - %s\n' "${excluded_extensions[@]}"
 fi

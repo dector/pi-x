@@ -45,6 +45,31 @@ class InstallTest(unittest.TestCase):
     def installs(self):
         return len(self.log.read_text().splitlines()) if self.log.exists() else 0
 
+    def test_terminal_formatting(self):
+        self.env["TERM"] = "xterm-256color"
+        self.env.pop("NO_COLOR", None)
+        output = self.run_install()
+        self.assertIn("\x1b[", output)
+        self.assertIn("1/4 · Sync extensions", output)
+        self.assertIn("[done]", output)
+        self.env["NO_COLOR"] = ""
+        output = self.run_install()
+        self.assertNotIn("\x1b[", output)
+        self.assertIn("[same] hub: unchanged", output)
+        self.assertIn("Dependencies are up to date.", output)
+        self.env.pop("NO_COLOR")
+        self.env["TERM"] = "dumb"
+        self.assertNotIn("\x1b[", self.run_install())
+
+    def test_redirected_output_is_plain(self):
+        self.env["TERM"] = "xterm-256color"
+        self.env.pop("NO_COLOR", None)
+        result = subprocess.run(["./install"], cwd=self.root, env=self.env,
+                                input="y\n", text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("\x1b[", result.stdout + result.stderr)
+        self.assertIn("confirmation required", result.stderr)
+
     def test_incremental_sync(self):
         self.run_install()
         self.assertEqual(self.installs(), 1)
