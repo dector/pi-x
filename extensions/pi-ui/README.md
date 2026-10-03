@@ -45,7 +45,7 @@ Current dialog items:
   - `p - prompt history…` (opens the tabbed history dialog)
   - `n - browse notes…` (opens the `/px:notes:list` browser)
   - `N - new note…` (opens the `/px:notes` editor)
-- **Tools…** (`t`, above Focus mode) contains **Gust Reload** (`r`), a normal toggle for `/px:gust hold`. Enter toggles it without closing the dialog. It is dimmed and inactive when Gust is not detected for the current directory. Use `←` or Backspace to return.
+- **Tools…** (`t`, above Focus mode) contains **Hold Gust Reload** (`r`), a normal toggle for `/px:gust hold`. Enter toggles it without closing the dialog. It is dimmed and inactive, with `──` instead of a toggle, when Gust is not detected for the current directory. Use `←` or Backspace to return.
 - **Lock** (last, unheaded group; Focus mode sits directly above it)
   - `Ctrl+f - toggle focus mode` (the focus-mode reading column)
   - `L - toggle lock mode`

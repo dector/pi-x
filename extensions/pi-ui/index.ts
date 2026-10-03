@@ -1656,7 +1656,7 @@ export async function showHiDialog(
 				const moreActions: DialogAction[] = [
 					{
 						hotkey: "r",
-						label: "Gust Reload",
+						label: "Hold Gust Reload",
 						toggleSeverity: "none",
 						isEnabled: () => isGustEnabled(),
 						isAvailable: isGustAvailable,
@@ -1781,7 +1781,7 @@ export async function showHiDialog(
 							const enabled = action.isEnabled(state);
 							const label = action.opensMenu ? `${action.label.replace(/…$/, "")} ›` : action.label;
 							const shortcut = action.hotkeyLabel ?? action.hotkey ?? "";
-							const statusText = action.showStatusBadge === false ? "" : enabled ? "─●" : "○─";
+							const statusText = action.showStatusBadge === false ? "" : !available ? "──" : enabled ? "─●" : "○─";
 							const markerText = action.opensMenu ? "··" : statusText;
 							const rightText = [shortcut, markerText].filter(Boolean).join(" ");
 							const horizontalPadding = Math.min(3, Math.floor((contentWidth - 1) / 2));

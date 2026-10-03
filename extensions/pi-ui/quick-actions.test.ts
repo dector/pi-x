@@ -94,7 +94,7 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(1);
 	});
 
-	test("Tools opens with t and contains Gust Reload", async () => {
+	test("Tools opens with t and contains Hold Gust Reload", async () => {
 		const ui = openDialog();
 		const lines = ui.dialog.render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 		expect(lines.join("\n")).toMatch(/Tools ›[^]*Focus mode/);
@@ -107,13 +107,13 @@ describe("quick actions", () => {
 		expect(text).toContain("Quick actions / Tools");
 		expect(text).not.toContain("Focus mode");
 		expect(text).not.toContain("Reader mode");
-		expect(text).toMatch(/Gust Reload\s+r ○─/);
+		expect(text).toMatch(/Hold Gust Reload\s+r ○─/);
 		ui.dialog.handleInput("g"); // Only r toggles Gust.
 		expect(ui.gust).toBe(false);
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(true);
-		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Gust Reload\s+r ─●/);
+		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Hold Gust Reload\s+r ─●/);
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(false);
@@ -129,7 +129,7 @@ describe("quick actions", () => {
 		const ui = openDialog(false, false);
 		ui.dialog.handleInput("t");
 		await tick();
-		expect(ui.dialog.render(80).join("\n")).toContain("Gust Reload");
+		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Hold Gust Reload\s+r ──/);
 		ui.dialog.handleInput("r");
 		ui.dialog.handleInput("\r");
 		await tick();
@@ -137,6 +137,7 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(0);
 		ui.dialog.handleInput("/");
 		for (const char of "gust") ui.dialog.handleInput(char);
+		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Hold Gust Reload\s+r ──/);
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(false);
@@ -160,7 +161,7 @@ describe("quick actions", () => {
 		const ui = openDialog();
 		ui.dialog.handleInput("/");
 		for (const char of "gust") ui.dialog.handleInput(char);
-		expect(ui.dialog.render(80).join("\n")).toContain("Gust Reload");
+		expect(ui.dialog.render(80).join("\n")).toContain("Hold Gust Reload");
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(true);
