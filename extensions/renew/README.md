@@ -3,7 +3,7 @@
 `/renew` (also available as `/newt`, `/newr`, `/nre`, and `/nrew`) starts a new, unnamed session with no conversation history. It retains
 the active model and thinking level, safe mode and outer access, session-approved
 exact bash commands, network policy, review level, and subagent rewire/delegation
-depth through owner-scoped handoff events. The owners apply state after the new
+depth, plus remaining prompt stashes, through owner-scoped handoff events. The owners apply state after the new
 runtime's `session_start`; model/effort changes are handled by the replacement
 renew extension instance. Pi creates a new event bus per session, so the renew
 instance exposes a process-local bridge to the replacement bus. Owner
@@ -35,7 +35,7 @@ without changing the session. Detach and finish active agents first, then
 ## Dependencies
 
 Load the relevant state owners for their settings to transfer: `safe-mode`,
-`permissions-core`, `review-level`, and `subagent`. `-proc` requires the `proc`
+`permissions-core`, `review-level`, `subagent`, and `prompt-stash`. `-proc` requires the `proc`
 extension. Missing owners only affect their own setting and produce a warning;
 the session still resets. `/renew` loads on its own and mirrors the few sibling
 constants it needs (`contract.test.ts` guards them against drift).

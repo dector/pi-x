@@ -23,6 +23,6 @@ Save and restore in-progress prompt drafts inside the current pi session.
 
 ## Notes
 
-Stashes are stored as custom session entries with type `prompt-stash`. They are session-scoped and branch-aware. When stashes exist, the neo-bar editor frame's bottom-right border shows an orange `󱊖 <count>` indicator after the draft token and notes counts; it disappears when the active branch has no stashes. In legacy display mode, it appears on the status line. Prompt text is not shown in full in non-interactive list output or custom entry rendering.
+Stashes are stored as custom session entries with type `prompt-stash`. They are session-scoped and shared across every branch: tree navigation does not hide stashes or undo pops/clears. `/renew` (and its aliases) copies remaining stashes into the replacement session, preserving their order and metadata; they survive reopening that session. Unrelated sessions do not share stashes. When stashes exist, the neo-bar editor frame's bottom-right border shows an orange `󱊖 <count>` indicator after the draft token and notes counts; it disappears when the session has no stashes. In legacy display mode, it appears on the status line. Prompt text is not shown in full in non-interactive list output or custom entry rendering.
 
 When restoring over a non-empty editor, prompt-stash asks whether to stash the current editor first, replace it, or cancel.

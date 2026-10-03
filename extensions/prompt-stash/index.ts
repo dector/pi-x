@@ -101,7 +101,10 @@ function isPromptStashEvent(value: unknown): value is PromptStashEvent {
 	const event = value as Partial<PromptStashEvent>;
 	if (event.action === "stash") return isPromptStashItem((event as { stash?: unknown }).stash);
 	if (event.action === "pop") return typeof (event as { id?: unknown }).id === "string";
-	if (event.action === "clear-all") return Array.isArray((event as { clearedIds?: unknown }).clearedIds);
+	if (event.action === "clear-all") {
+		const ids = (event as { clearedIds?: unknown }).clearedIds;
+		return Array.isArray(ids) && ids.every((id) => typeof id === "string");
+	}
 	return false;
 }
 
@@ -111,6 +114,8 @@ function newestFirst(stashes: PromptStashItem[]): PromptStashItem[] {
 
 export default function promptStashExtension(pi: ExtensionAPI): void {
 	let stashes: PromptStashItem[] = [];
+	let activeContext: ExtensionContext | undefined;
+	const appliedTransfers = new Set<string>();
 
 	const publishStatus = (ctx: ExtensionContext): void => {
 		if (stashes.length === 0) {
@@ -126,19 +131,25 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 
 	const rebuildStashes = (ctx: ExtensionContext): void => {
 		const rebuilt: PromptStashItem[] = [];
-		const branch = ctx.sessionManager.getBranch() as CustomEntry[];
+		// Stashes are session-wide, not part of a branch's conversation state.
+		const entries = ctx.sessionManager.getEntries() as CustomEntry[];
 
-		for (const entry of branch) {
+		for (const entry of entries) {
 			if (entry?.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
 			if (!isPromptStashEvent(entry.data)) continue;
 
 			if (entry.data.action === "stash") {
-				rebuilt.push(entry.data.stash);
+				const item = entry.data.stash;
+				if (!rebuilt.some((stash) => stash.id === item.id)) rebuilt.push(item);
 			} else if (entry.data.action === "pop") {
-				const index = rebuilt.findIndex((stash) => stash.id === entry.data.id);
+				const id = entry.data.id;
+				const index = rebuilt.findIndex((stash) => stash.id === id);
 				if (index !== -1) rebuilt.splice(index, 1);
 			} else if (entry.data.action === "clear-all") {
-				rebuilt.length = 0;
+				const clearedIds = new Set(entry.data.clearedIds);
+				for (let index = rebuilt.length - 1; index >= 0; index--) {
+					if (clearedIds.has(rebuilt[index]!.id)) rebuilt.splice(index, 1);
+				}
 			}
 		}
 
@@ -222,15 +233,53 @@ export default function promptStashExtension(pi: ExtensionAPI): void {
 		await restoreStash(ctx, stash);
 	};
 
+	const unsubscribeRenewRequest = pi.events.on("px:renew:settings:request", (payload) => {
+		if (!activeContext || !payload || typeof payload !== "object") return;
+		const request = payload as { id?: unknown; sourceSessionId?: unknown; cwd?: unknown };
+		if (typeof request.id !== "string" || request.sourceSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
+		rebuildStashes(activeContext);
+		pi.events.emit("px:renew:settings:response", {
+			id: request.id, owner: CUSTOM_TYPE, sourceSessionId: request.sourceSessionId,
+			cwd: request.cwd, state: { stashes: stashes.map((stash) => ({ ...stash })) },
+		});
+	});
+	const unsubscribeRenewApply = pi.events.on("px:renew:settings:apply", (payload) => {
+		if (!activeContext || !payload || typeof payload !== "object") return;
+		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
+		if (typeof request.transferId !== "string" || request.owner !== CUSTOM_TYPE || request.targetSessionId !== activeContext.sessionManager.getSessionId() || request.cwd !== activeContext.cwd) return;
+		const incoming = (request.state as { stashes?: unknown } | null)?.stashes;
+		if (!Array.isArray(incoming) || !incoming.every(isPromptStashItem)) return;
+		if (!appliedTransfers.has(request.transferId)) {
+			for (const stash of incoming) {
+				if (stashes.some((item) => item.id === stash.id)) continue;
+				appendEvent(pi, { action: "stash", stash: { ...stash } });
+				stashes.push({ ...stash });
+			}
+			appliedTransfers.add(request.transferId);
+			publishStatus(activeContext);
+		}
+		pi.events.emit("px:renew:settings:ack", {
+			transferId: request.transferId, owner: CUSTOM_TYPE,
+			targetSessionId: request.targetSessionId, cwd: request.cwd,
+		});
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
+		activeContext = ctx;
+		appliedTransfers.clear();
 		rebuildStashes(ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		activeContext = ctx;
 		rebuildStashes(ctx);
 	});
 
 	pi.on("session_shutdown", () => {
+		unsubscribeRenewRequest();
+		unsubscribeRenewApply();
+		activeContext = undefined;
+		appliedTransfers.clear();
 		pi.events.emit(STATUS_BAR_CLEAR_EVENT, { id: STATUS_BAR_ID });
 	});
 
