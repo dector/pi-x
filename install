@@ -195,7 +195,8 @@ if [[ $SKIP_HERDR -eq 1 ]]; then
   extensions=("${extensions_without_herdr[@]}")
 fi
 
-installed_extensions=()
+dependency_extensions=()
+lockfiles=(bun.lock bun.lockb package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock)
 
 echo "Installing extensions into: $DEST_ROOT"
 for ext in "${extensions[@]}"; do
@@ -210,15 +211,55 @@ for ext in "${extensions[@]}"; do
   if [[ "$ext" == "herdr-agent-state" ]]; then
     # Install as Herdr's managed flat file so `herdr integration status` still
     # sees the integration as installed. The fork keeps the ID/version markers.
+    if [[ ! -e "$dest" ]] && cmp -s "$src/index.ts" "$HERDR_FLAT_EXT"; then
+      echo "- $ext: unchanged"
+      continue
+    fi
     rm -rf "$dest"
     cp "$src/index.ts" "$HERDR_FLAT_EXT"
     echo "- $ext -> $HERDR_FLAT_EXT"
     continue
   fi
 
-  echo "- $ext"
-  rsync -a --delete "$src" "$dest"
-  installed_extensions+=("$ext")
+  # Package managers create local dependencies and sometimes a new lockfile.
+  # Keep those out of the comparison and sync unless a lockfile is supplied
+  # by the source. Normal excludes also protect these files from --delete.
+  sync_options=(-a --no-times --checksum --delete --exclude=node_modules/ --exclude=/.pi-x-install-pending)
+  for lockfile in "${lockfiles[@]}"; do
+    if [[ ! -e "$src$lockfile" ]]; then
+      sync_options+=("--exclude=/$lockfile")
+    fi
+  done
+
+  needs_dependencies=0
+  if [[ -f "$src/package.json" ]]; then
+    if [[ -f "${dest}.pi-x-install-pending" || ! -d "${dest}node_modules" ]] || ! cmp -s "$src/package.json" "${dest}package.json"; then
+      needs_dependencies=1
+    fi
+    for lockfile in "${lockfiles[@]}"; do
+      if [[ -f "$src$lockfile" ]] && ! cmp -s "$src$lockfile" "$dest$lockfile"; then
+        needs_dependencies=1
+      fi
+    done
+  fi
+
+  # Persist pending work before syncing manifests so a failed install is retried.
+  if [[ $needs_dependencies -eq 1 ]]; then
+    mkdir -p "$dest"
+    touch "${dest}.pi-x-install-pending"
+  fi
+
+  changes="$(rsync "${sync_options[@]}" --dry-run --itemize-changes "$src" "$dest")"
+  if [[ -n "$changes" ]]; then
+    echo "- $ext: syncing changes"
+    rsync "${sync_options[@]}" "$src" "$dest"
+  else
+    echo "- $ext: unchanged"
+  fi
+
+  if [[ $needs_dependencies -eq 1 ]]; then
+    dependency_extensions+=("$ext")
+  fi
 done
 
 # `reset` was renamed to `renew`. Remove a stale installed copy so the old
@@ -228,8 +269,8 @@ if [[ -d "$DEST_ROOT/reset" ]]; then
   echo "- removed legacy reset/ (renamed to renew/)"
 fi
 
-echo "Installing extension dependencies with $PKG_MGR..."
-for ext in "${installed_extensions[@]}"; do
+echo "Installing changed or missing extension dependencies with $PKG_MGR..."
+for ext in "${dependency_extensions[@]}"; do
   ext_dir="$DEST_ROOT/$ext"
 
   if [[ ! -d "$ext_dir" ]]; then
@@ -247,13 +288,14 @@ for ext in "${installed_extensions[@]}"; do
     cd "$ext_dir"
     "${PKG_INSTALL_CMD[@]}"
   )
+  rm -f "$ext_dir/.pi-x-install-pending"
 done
 
 if [[ -d "$THEMES_SRC" ]]; then
   echo "Syncing themes into: $THEMES_DEST"
   mkdir -p "$THEMES_DEST"
   # No --delete: keep user themes that this repo does not manage.
-  rsync -a "$THEMES_SRC"/ "$THEMES_DEST"/
+  rsync -a --checksum "$THEMES_SRC"/ "$THEMES_DEST"/
 else
   echo "No themes directory found, skipping themes."
 fi
@@ -281,7 +323,7 @@ if [[ $has_agents -eq 1 ]]; then
   for ext_dir in "$SRC_ROOT"/*/; do
     if [[ -d "$ext_dir/agents" ]]; then
       # No --delete: keep user agents that this repo does not manage.
-      rsync -a "$ext_dir/agents"/ "$AGENTS_DEST"/
+      rsync -a --checksum "$ext_dir/agents"/ "$AGENTS_DEST"/
     fi
   done
 else
@@ -294,7 +336,7 @@ if [[ $has_prompts -eq 1 ]]; then
   for ext_dir in "$SRC_ROOT"/*/; do
     if [[ -d "$ext_dir/prompts" ]]; then
       # No --delete: keep user prompts that this repo does not manage.
-      rsync -a "$ext_dir/prompts"/ "$PROMPTS_DEST"/
+      rsync -a --checksum "$ext_dir/prompts"/ "$PROMPTS_DEST"/
     fi
   done
 else

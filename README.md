@@ -88,6 +88,20 @@ Theme files live in [`themes/`](themes/). `./install` syncs them into `~/.pi/age
 
 also check the [skills repo](https://github.com/dector/skills).
 
+## Incremental installation
+
+`./install` compares extension contents with the installed copies and skips
+unchanged folders. It detects additions, edits, and deletions, even when file
+sizes and timestamps match. Timestamp-only changes do not trigger extension sync.
+
+`node_modules` stays local to the destination. Dependencies are installed only
+when `package.json` or a source lockfile changes, `node_modules` is missing, or a
+previous dependency install failed. Destination-only lockfiles are preserved.
+Herdr's flat integration file is copied only when it differs.
+
+Run installer regression tests with `python3 scripts/test-install.py`
+(requires `rsync` and util-linux `script`).
+
 ## Install policy for pi agents
 
 When installing extensions from this repository, pi agents should use the standard pi extension layout:
