@@ -4,11 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSIONS_DIR="$SCRIPT_DIR/extensions"
 
-if ! command -v pi >/dev/null 2>&1; then
-	echo "Error: 'pi' command not found in PATH" >&2
-	exit 1
-fi
-
 if [[ ! -d "$EXTENSIONS_DIR" ]]; then
 	echo "Error: extensions directory not found: $EXTENSIONS_DIR" >&2
 	exit 1
@@ -16,9 +11,18 @@ fi
 
 INCLUDE_ALL=0
 WITH_NVIM=0
+PI_COMMAND="pi"
 PI_ARGS=()
-for arg in "$@"; do
-	case "$arg" in
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--use)
+			if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+				echo "Error: --use requires a command" >&2
+				exit 1
+			fi
+			PI_COMMAND="$2"
+			shift
+			;;
 		--include-all)
 			INCLUDE_ALL=1
 			;;
@@ -26,10 +30,16 @@ for arg in "$@"; do
 			WITH_NVIM=1
 			;;
 		*)
-			PI_ARGS+=("$arg")
+			PI_ARGS+=("$1")
 			;;
 	esac
+	shift
 done
+
+if ! command -v "$PI_COMMAND" >/dev/null 2>&1; then
+	echo "Error: '$PI_COMMAND' command not found in PATH" >&2
+	exit 1
+fi
 
 # Always load the entrypoint file, never the extension directory. Passing a
 # directory that contains a prompts/ (or skills/, themes/) subdir makes Pi treat
@@ -107,4 +117,4 @@ fi
 : "${PI_NO_REFLECTION:=false}"
 export PI_NO_REFLECTION
 
-exec pi --no-extensions "${EXT_ARGS[@]}" "${PI_ARGS[@]}"
+exec "$PI_COMMAND" --no-extensions "${EXT_ARGS[@]}" "${PI_ARGS[@]}"
