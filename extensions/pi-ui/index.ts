@@ -1562,7 +1562,8 @@ export async function showHiDialog(
 						run: () => runAfterClose(() => void onOpenNote()),
 					},
 					{
-						label: "More…",
+						hotkey: "t",
+						label: "Tools…",
 						group: "",
 						showStatusBadge: false,
 						opensMenu: true,
@@ -1654,7 +1655,8 @@ export async function showHiDialog(
 
 				const moreActions: DialogAction[] = [
 					{
-						label: "Toggle Gust",
+						hotkey: "r",
+						label: "Gust Reload",
 						toggleSeverity: "none",
 						isEnabled: () => isGustEnabled(),
 						isAvailable: isGustAvailable,
@@ -1768,7 +1770,7 @@ export async function showHiDialog(
 							: activeMenu === "stash"
 								? "Quick actions / Prompt stash"
 								: activeMenu === "more"
-									? "Quick actions / More"
+									? "Quick actions / Tools"
 									: "Quick actions";
 						const titleText = truncateToWidth(` ${title} `, Math.max(1, contentWidth - 4), "");
 						const topFill = "━".repeat(Math.max(0, contentWidth - visibleWidth(titleText) - 3));

@@ -94,29 +94,26 @@ describe("quick actions", () => {
 		expect(ui.closes).toBe(1);
 	});
 
-	test("More contains the Gust toggle without a hotkey", async () => {
+	test("Tools opens with t and contains Gust Reload", async () => {
 		const ui = openDialog();
 		const lines = ui.dialog.render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
-		expect(lines.join("\n")).toMatch(/More ›[^]*Focus mode/);
-		expect(lines.find((line) => line.includes("More ›"))!.indexOf("··")).toBe(
+		expect(lines.join("\n")).toMatch(/Tools ›[^]*Focus mode/);
+		expect(lines.find((line) => line.includes("Tools ›"))!.indexOf("··")).toBe(
 			lines.find((line) => line.includes("Prompt stash ›"))!.indexOf("··"),
 		);
-		ui.dialog.handleInput("M");
-		expect(ui.dialog.render(80).join("\n")).not.toContain("Quick actions / More");
-		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B");
-		ui.dialog.handleInput("\r");
+		ui.dialog.handleInput("t");
 		await tick();
 		const text = ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-		expect(text).toContain("Quick actions / More");
+		expect(text).toContain("Quick actions / Tools");
 		expect(text).not.toContain("Focus mode");
 		expect(text).not.toContain("Reader mode");
-		expect(text).toMatch(/Toggle Gust\s+○─/);
-		ui.dialog.handleInput("g"); // No hotkey assigned.
+		expect(text).toMatch(/Gust Reload\s+r ○─/);
+		ui.dialog.handleInput("g"); // Only r toggles Gust.
 		expect(ui.gust).toBe(false);
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(true);
-		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Toggle Gust\s+─●/);
+		expect(ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toMatch(/Gust Reload\s+r ─●/);
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(false);
@@ -130,10 +127,10 @@ describe("quick actions", () => {
 
 	test("Gust toggle is inactive when Gust is not detected, including in search", async () => {
 		const ui = openDialog(false, false);
-		for (let i = 0; i < 11; i++) ui.dialog.handleInput("\x1b[B");
-		ui.dialog.handleInput("\r");
+		ui.dialog.handleInput("t");
 		await tick();
-		expect(ui.dialog.render(80).join("\n")).toContain("Toggle Gust");
+		expect(ui.dialog.render(80).join("\n")).toContain("Gust Reload");
+		ui.dialog.handleInput("r");
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(false);
@@ -149,11 +146,21 @@ describe("quick actions", () => {
 		await ui.finished;
 	});
 
+	test("r in Tools toggles Gust and closes without toggling Reader mode", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("t");
+		ui.dialog.handleInput("r");
+		await ui.finished;
+		expect(ui.gust).toBe(true);
+		expect(ui.reader).toBe(false);
+		expect(ui.closes).toBe(1);
+	});
+
 	test("Gust toggle is searchable from the main menu", async () => {
 		const ui = openDialog();
 		ui.dialog.handleInput("/");
 		for (const char of "gust") ui.dialog.handleInput(char);
-		expect(ui.dialog.render(80).join("\n")).toContain("Toggle Gust");
+		expect(ui.dialog.render(80).join("\n")).toContain("Gust Reload");
 		ui.dialog.handleInput("\r");
 		await tick();
 		expect(ui.gust).toBe(true);
