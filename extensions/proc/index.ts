@@ -8,6 +8,7 @@ import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@ear
 import { Type } from "typebox";
 import { parseRunCommand } from "./command.ts";
 import { BoundedLineParser } from "./output.ts";
+import { appendLogLine, LogRing, parseFrom, readLogs, type StreamKind } from "./log-buffer.ts";
 import {
 	PROC_STOP_ALL_MAX_WAIT_MS,
 	PROC_STOP_ALL_REPLY_EVENT,
@@ -79,13 +80,7 @@ const DEFAULT_CONFIG: ProcConfig = {
 	panelEnabled: true,
 };
 
-type StreamKind = "out" | "err";
 type ProcState = "running" | "stopping" | "exited";
-
-interface LogLine {
-	source: StreamKind;
-	text: string;
-}
 
 interface ProcRecord {
 	name: string;
@@ -98,8 +93,8 @@ interface ProcRecord {
 	endedAt?: number;
 	exitCode?: number | null;
 	exitSignal?: NodeJS.Signals | null;
-	lines: LogLine[];
-	/** Absolute line number of `lines[0]`; grows as the ring buffer trims the front. */
+	lines: LogRing;
+	/** Absolute line number of the first retained line; grows on eviction. */
 	baseLine: number;
 	bytes: number;
 	pending: Record<StreamKind, BoundedLineParser>;
@@ -231,14 +226,7 @@ function removeRecord(record: ProcRecord): void {
 }
 
 function pushLine(record: ProcRecord, source: StreamKind, text: string): void {
-	record.lines.push({ source, text });
-	record.bytes += text.length + 4;
-	while (record.lines.length > config().logLines || record.bytes > config().logBytes) {
-		const removed = record.lines.shift();
-		if (!removed) break;
-		record.bytes -= removed.text.length + 4;
-		record.baseLine += 1;
-	}
+	appendLogLine(record, { source, text }, config());
 	wakeWaiters(record);
 }
 
@@ -494,7 +482,7 @@ function startProcess(ctx: ExtensionContext, params: RunParams): ProcRecord {
 		pid: child.pid,
 		state: "running",
 		startedAt: Date.now(),
-		lines: [],
+		lines: new LogRing(),
 		baseLine: 0,
 		bytes: 0,
 		pending: { out: new BoundedLineParser(), err: new BoundedLineParser() },
@@ -526,69 +514,6 @@ function stopProcess(record: ProcRecord, signal: (typeof SIGNALS)[number] | unde
 			if (isRunning(record)) killGroup(pid, "SIGKILL");
 		}, STOP_ESCALATE_MS),
 	);
-}
-
-interface LogQuery {
-	from?: string;
-	lines?: number;
-	filter?: StreamKind;
-	reader: string;
-	wait?: number;
-}
-
-function parseFrom(value: string | undefined): { kind: "last" | "start" | "line"; line?: number } {
-	if (!value || value === "last") return { kind: "last" };
-	if (value === "start") return { kind: "start" };
-	const parsed = Number(value);
-	if (Number.isFinite(parsed) && parsed >= 0) return { kind: "line", line: Math.floor(parsed) };
-	throw new Error(`proc: invalid from="${value}" (expected "last", "start", or a line number).`);
-}
-
-function readLogs(record: ProcRecord, query: LogQuery): string {
-	const from = parseFrom(query.from);
-	const cursor = record.cursors.get(query.reader) ?? 0;
-
-	let start: number;
-	let dropped = 0;
-	if (from.kind === "start") {
-		start = record.baseLine;
-	} else if (from.kind === "line") {
-		start = Math.max(from.line ?? 0, record.baseLine);
-		dropped = Math.max(0, record.baseLine - (from.line ?? 0));
-	} else {
-		start = Math.max(cursor, record.baseLine);
-		dropped = Math.max(0, record.baseLine - cursor);
-	}
-
-	const limit = Math.max(1, Math.min(Math.floor(query.lines ?? DEFAULT_LOG_TAIL), MAX_LOG_TAIL));
-	const candidates: { abs: number; line: LogLine }[] = [];
-	for (let index = 0; index < record.lines.length; index += 1) {
-		const abs = record.baseLine + index;
-		if (abs < start) continue;
-		const line = record.lines[index];
-		if (!line) continue;
-		if (query.filter && line.source !== query.filter) continue;
-		candidates.push({ abs, line });
-	}
-
-	const selected = candidates.slice(0, limit);
-	const more = candidates.length > selected.length;
-	if (from.kind !== "line") {
-		const next = selected.length > 0 ? (selected[selected.length - 1]?.abs ?? start) + 1 : start;
-		record.cursors.set(query.reader, next);
-	}
-	const currentCursor = record.cursors.get(query.reader) ?? 0;
-
-	const header = [
-		`proc=${record.name}`,
-		`state=${record.state}`,
-		`pid=${record.pid ?? "-"}`,
-		`cursor=${currentCursor}`,
-		`dropped=${dropped}`,
-		`more=${more}`,
-	].join(" ");
-	if (selected.length === 0) return `${header}\n(no new output)`;
-	return [header, ...selected.map(({ line }) => `${line.source}: ${line.text}`)].join("\n");
 }
 
 function formatList(): string {
@@ -815,7 +740,7 @@ class ProcManager implements Component {
 		const start = this.follow ? maxStart : clamp(this.logOffset, 0, maxStart);
 		this.logOffset = start;
 		for (let row = 0; row < rows; row += 1) {
-			const line = record.lines[start + row];
+			const line = record.lines.get(start + row);
 			if (!line) {
 				lines.push("");
 				continue;
@@ -999,6 +924,11 @@ const ProcToolParams = Type.Object({
 
 export default function procExtension(pi: ExtensionAPI): void {
 	globalState.config = loadConfig();
+	// Global records and process data handlers survive /reload. Convert old
+	// arrays once, preserving absolute bases, bytes, cursors and process identity.
+	for (const record of globalState.records) {
+		if (Array.isArray(record.lines)) record.lines = LogRing.from(record.lines);
+	}
 
 	// Re-registering the widget on a reload would otherwise leave the previous
 	// instance's subscription alive on a shared event bus.

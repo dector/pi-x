@@ -62,6 +62,15 @@ err: warn ...
 `from:"last"` advances the `agent` cursor. `/px:proc logs` uses the separate
 `user` cursor, so viewing logs by hand does not consume what the agent sees.
 
+Retained lines use a circular queue with a head cursor, not array-front
+shifting. Evicted text references are cleared immediately; slot storage grows
+and shrinks geometrically (amortized constant-time append/eviction). Absolute
+line numbers, dropped counts, filters, and independent reader cursors survive
+wraparound. `/reload` migrates old retained arrays without changing those counts.
+Reopen any existing process log overlay after reload to use the updated viewer.
+`logBytes` keeps its historical accounting: UTF-16 text length plus four per line,
+not an exact measurement of UTF-8 or JavaScript heap bytes.
+
 ### Partial-line bounds and truncation
 
 Each stdout/stderr stream decodes UTF-8 incrementally and retains only the first
