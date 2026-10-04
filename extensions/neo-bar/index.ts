@@ -2447,7 +2447,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	pi.on("agent_start", refreshOnEvent);
 	pi.on("agent_end", refreshOnEvent);
 	pi.on("message_start", refreshOnEvent);
-	pi.on("message_update", refreshOnEvent);
+	// Streaming deltas do not change footer state; animation has its own timer.
 	pi.on("message_end", refreshOnEvent);
 	pi.on("input", refreshOnEvent);
 	pi.on("user_bash", refreshOnEvent);
