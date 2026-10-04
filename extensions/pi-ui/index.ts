@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, Loader, Text, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { cycleModelPresets, cycleRewireModelPresets, openModelPresets } from "./model-presets.ts";
+import { cycleMainModel, cycleMainThinkingLevel, cycleReviewerModel, cycleReviewerThinkingLevel } from "./model-hotkeys.ts";
+import { openModelPresets } from "./model-presets.ts";
 import { pickStartupMotto } from "./startup-mottos.ts";
 
 const PATCH_FLAG = "__pi_ui_working_loader_patch_v6";
@@ -33,10 +34,14 @@ const SUBAGENT_MODELS_MENU_EVENT = "px:subagent:models:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
-const CYCLE_FAVORITE_MODEL_SHORTCUT = Key.ctrl("9");
-const CYCLE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrl("8");
-const CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT = Key.ctrl("7");
-const CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT = Key.ctrl("6");
+const PREVIOUS_MODEL_SHORTCUT = Key.ctrl("7");
+const NEXT_MODEL_SHORTCUT = Key.ctrl("8");
+const PREVIOUS_THINKING_LEVEL_SHORTCUT = Key.ctrl("6");
+const NEXT_THINKING_LEVEL_SHORTCUT = Key.ctrl("9");
+const PREVIOUS_REVIEWER_MODEL_SHORTCUT = Key.ctrl("3");
+const NEXT_REVIEWER_MODEL_SHORTCUT = Key.ctrl("4");
+const PREVIOUS_REVIEWER_THINKING_LEVEL_SHORTCUT = Key.ctrl("2");
+const NEXT_REVIEWER_THINKING_LEVEL_SHORTCUT = Key.ctrl("5");
 const LOCK_STATE_EVENT = "px:pi-ui:lock-state";
 type LockableTui = {
 	addInputListener: (listener: (data: string) => { consume: boolean } | undefined) => () => void;
@@ -2430,21 +2435,37 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(CYCLE_FAVORITE_MODEL_SHORTCUT, {
-		description: "Cycle favorite model configurations (model and thinking level)",
-		handler: async (ctx) => { await cycleModelPresets(pi, ctx); },
+	pi.registerShortcut(PREVIOUS_MODEL_SHORTCUT, {
+		description: "Select previous available model",
+		handler: async (ctx) => { await cycleMainModel(pi, ctx, -1); },
 	});
-	pi.registerShortcut(CYCLE_FAVORITE_MODEL_BACKWARD_SHORTCUT, {
-		description: "Cycle favorite model configurations backwards (model and thinking level)",
-		handler: async (ctx) => { await cycleModelPresets(pi, ctx, -1); },
+	pi.registerShortcut(NEXT_MODEL_SHORTCUT, {
+		description: "Select next available model",
+		handler: async (ctx) => { await cycleMainModel(pi, ctx, 1); },
 	});
-	pi.registerShortcut(CYCLE_REWIRE_FAVORITE_MODEL_SHORTCUT, {
-		description: "Cycle favorite subagent rewire targets (model and thinking level)",
-		handler: (ctx) => { cycleRewireModelPresets(pi, ctx); },
+	pi.registerShortcut(PREVIOUS_THINKING_LEVEL_SHORTCUT, {
+		description: "Select previous thinking level for the active model",
+		handler: (ctx) => { cycleMainThinkingLevel(pi, ctx, -1); },
 	});
-	pi.registerShortcut(CYCLE_REWIRE_FAVORITE_MODEL_BACKWARD_SHORTCUT, {
-		description: "Cycle favorite subagent rewire targets backwards (model and thinking level)",
-		handler: (ctx) => { cycleRewireModelPresets(pi, ctx, -1); },
+	pi.registerShortcut(NEXT_THINKING_LEVEL_SHORTCUT, {
+		description: "Select next thinking level for the active model",
+		handler: (ctx) => { cycleMainThinkingLevel(pi, ctx, 1); },
+	});
+	pi.registerShortcut(PREVIOUS_REVIEWER_MODEL_SHORTCUT, {
+		description: "Select previous available reviewer model",
+		handler: (ctx) => { cycleReviewerModel(pi, ctx, -1); },
+	});
+	pi.registerShortcut(NEXT_REVIEWER_MODEL_SHORTCUT, {
+		description: "Select next available reviewer model",
+		handler: (ctx) => { cycleReviewerModel(pi, ctx, 1); },
+	});
+	pi.registerShortcut(PREVIOUS_REVIEWER_THINKING_LEVEL_SHORTCUT, {
+		description: "Select previous thinking level for the reviewer model",
+		handler: (ctx) => { cycleReviewerThinkingLevel(pi, ctx, -1); },
+	});
+	pi.registerShortcut(NEXT_REVIEWER_THINKING_LEVEL_SHORTCUT, {
+		description: "Select next thinking level for the reviewer model",
+		handler: (ctx) => { cycleReviewerThinkingLevel(pi, ctx, 1); },
 	});
 
 	pi.registerShortcut(ACTION_DIALOG_TOGGLE_SHORTCUT, {

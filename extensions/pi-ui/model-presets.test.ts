@@ -50,7 +50,7 @@ describe("model presets", () => {
 		ui.view.handleInput("\x1b");
 		expect(await ui.result).toEqual({ type: "cancel" });
 	});
-	test("Ctrl+9 cycles favorite model and thinking level, skipping unavailable entries and wrapping", async () => {
+	test("cycles favorite model configurations, skipping unavailable entries and wrapping", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let model = { provider: "provider", id: "other", reasoning: true };
@@ -76,7 +76,7 @@ describe("model presets", () => {
 		});
 	});
 
-	test("Ctrl+8 cycles main favorites backwards, skipping unavailable entries and wrapping", async () => {
+	test("cycles favorite model configurations backwards, skipping unavailable entries and wrapping", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let model = { provider: "provider", id: "other", reasoning: true };
@@ -111,7 +111,7 @@ describe("model presets", () => {
 			expect(notices).toEqual(["No favorite models. Add one with Ctrl+, then m.", "No favorite models are available."]);
 		});
 	});
-	test("Ctrl+7 cycles rewire targets without changing main model or enabling rewiring", async () => {
+	test("cycles favorite rewire targets without changing main model or enabling rewiring", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let target: (typeof presets)[number] | undefined;
@@ -140,7 +140,7 @@ describe("model presets", () => {
 		});
 	});
 
-	test("Ctrl+6 cycles rewire targets backwards, skipping unavailable favorites", async () => {
+	test("cycles favorite rewire targets backwards, skipping unavailable favorites", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);
 			let target: (typeof presets)[number] | undefined;
