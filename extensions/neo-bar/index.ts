@@ -255,8 +255,7 @@ export function buildFrameContextParts(
 	const rawTokens = usage?.tokens;
 	const tokens = typeof rawTokens === "number" && Number.isFinite(rawTokens) ? formatTokens(rawTokens) : "--";
 
-	const cost = collectUsage(ctx).cost;
-	const subagentCost = collectSubagentCost(ctx);
+	const { cost, subagentCost } = getCachedUsage(ctx);
 	const totalCost = cost + subagentCost;
 	// Show session | total only when the extra precision actually differs.
 	const costLabel =
@@ -1021,13 +1020,37 @@ export class FrameStatusEditor extends CustomEditor {
 	}
 }
 
-function collectUsage(ctx: ExtensionContext): { input: number; output: number; cacheRead: number; cost: number } {
+type UsageTotals = { input: number; output: number; cacheRead: number; cost: number; subagentCost: number };
+type UsageCacheEntry = { sessionId: string | undefined; leafId: string | null | undefined; totals: UsageTotals };
+const usageCache = new WeakMap<ExtensionContext["sessionManager"], UsageCacheEntry>();
+
+function invalidateUsage(ctx: ExtensionContext): void {
+	usageCache.delete(ctx.sessionManager);
+}
+
+function getCachedUsage(ctx: ExtensionContext): UsageTotals {
+	const manager = ctx.sessionManager;
+	const sessionId = manager.getSessionId?.();
+	const leafId = manager.getLeafId?.();
+	const cached = usageCache.get(manager);
+	if (cached && cached.sessionId === sessionId && cached.leafId === leafId) return cached.totals;
+
+	// message_end extensions run before persistence. The leaf check catches that
+	// later append, including idle/queued async subagent custom messages, without
+	// traversing the branch on every footer/editor/animation render.
+	const entries = manager.getBranch() as unknown as Array<Record<string, unknown>>;
+	const totals = { ...collectUsage(entries), subagentCost: collectSubagentCost(entries) };
+	usageCache.set(manager, { sessionId, leafId, totals });
+	return totals;
+}
+
+function collectUsage(entries: Array<Record<string, unknown>>): Omit<UsageTotals, "subagentCost"> {
 	let input = 0;
 	let output = 0;
 	let cacheRead = 0;
 	let cost = 0;
 
-	for (const entry of ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>) {
+	for (const entry of entries) {
 		if (entry.type !== "message") continue;
 		const message = entry.message as Record<string, unknown> | undefined;
 		if (!message || message.role !== "assistant") continue;
@@ -1056,9 +1079,9 @@ function readCost(value: unknown): number {
 // persisted as `custom_message` entries (`customType: "subagent-completion"`),
 // so both shapes must be read. Children may spawn their own subagents, so recurse
 // through the child messages as well.
-function collectSubagentCost(ctx: ExtensionContext): number {
+function collectSubagentCost(entries: Array<Record<string, unknown>>): number {
 	let cost = 0;
-	for (const entry of ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>) {
+	for (const entry of entries) {
 		if (entry.type === "message") {
 			cost += collectSubagentCostFromMessage(entry.message);
 			continue;
@@ -1141,7 +1164,7 @@ function buildBorderModelLabel(
 }
 
 function buildContextTokenLabel(ctx: ExtensionContext, includeCost: boolean): string {
-	const usage = collectUsage(ctx);
+	const usage = getCachedUsage(ctx);
 	let label = `↑${formatTokens(usage.input)}/↓${formatTokens(usage.output)}/${formatTokens(usage.cacheRead)}`;
 	if (includeCost && ctx.model?.provider && COST_DISPLAY_PROVIDERS.has(ctx.model.provider)) {
 		const costLabel = formatCost(usage.cost);
@@ -2413,6 +2436,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		}
 		requestRender();
 	};
+
+	// Invalidate before render handlers; session_start covers switch and fork.
+	// Model selection only changes presentation, not historical usage totals.
+	const invalidateOnEvent = async (_event: unknown, ctx: ExtensionContext): Promise<void> => {
+		invalidateUsage(ctx);
+	};
+	pi.on("session_start", invalidateOnEvent);
+	pi.on("session_tree", invalidateOnEvent);
+	pi.on("session_compact", invalidateOnEvent);
+	pi.on("message_end", invalidateOnEvent);
+	pi.on("session_shutdown", invalidateOnEvent);
 
 	pi.on("session_start", async (_event, ctx) => {
 		// Only an active session may apply live network/progress `changed` events.
