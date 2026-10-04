@@ -36,6 +36,7 @@ subagent/
 ├── agents.ts            # Agent discovery logic
 ├── agent-parse.ts       # Pure frontmatter parsing (function/level, legacy model/thinking)
 ├── model-mapping.ts     # Function/level -> alias/thinking mapping + user config merge
+├── models-table.ts      # Read-only current-session agent -> model table (px:subagent:models:menu)
 ├── prepare.ts           # Validation, permission, and ID allocation before execution
 ├── restricted-agent-policy.ts # Pure pattern matching, tier ranking, and config parsing
 ├── restricted-agent-config.ts # Loads the global ~/.pi/agent/subagent.json policy
@@ -401,6 +402,39 @@ Rewire presets are stored globally in `~/.pi/agent/subagent-rewire-presets.json`
 When enabled, the configured values override the function/level mapping for every agent. Select `Inherit model` to keep the configured effort while detecting the parent's active model, or `Inherit All` to detect both the parent's model and effort at the moment each subagent starts. This is resolved per child, so queued chain steps and parallel work can follow model changes made after the dispatch was accepted. The status bar shows a red `󰚩 ⇢<provider>/<model> · <effort>` before the skills counter and applies the status bar's provider/model aliases; `Inherit model` keeps the configured effort in the status label, while `Inherit All` displays only `󰚩 ⇢Inherit`. Agent identity, prompt, tools, permissions, and routing are unchanged. A fresh session starts disabled; its process-local setting survives `/reload` but not a Pi restart, and agent definitions are never modified. A dispatch snapshots the setting when it is accepted, so later menu changes affect only later dispatches.
 
 Changing only the target from the pi-ui model picker (`Ctrl+Enter`) or its rewire-cycle shortcuts (`Ctrl+7`/`Ctrl+6`) publishes a 1.5-second muted-gray preview on the status bar instead of an info toast. The preview never changes the Enabled state: when rewiring is on the red indicator returns after the timeout, and when it is off the label disappears.
+
+## Models table (`px:subagent:models:menu`)
+
+A read-only table of the current session's effective agent-to-model
+assignments, opened from the pi-ui quick-action dialog with `M` (it is a ghost
+action: search `models table` to reach it). The event name is
+`px:subagent:models:menu` with payload `{ ctx }`; the subagent extension also
+exposes `/px:agents:models` directly. The table never edits anything.
+
+The first row is the main agent's current model and effort, so the subagent
+rows have a baseline. Each subagent row shows its `function`, default `level`,
+the concrete `provider/model`, effort, and where the assignment came from:
+
+- `mapping` — the function/level matrix (or user override) selected the cell;
+- `rewired` — a fixed session rewire target;
+- `inherit model` — the parent's current model with the configured effort;
+- `inherit all` — the parent's current model and effort.
+
+The table reflects the **current effective configuration**: the live mapping,
+the current rewire state, and the parent's model at open time. It is not a
+record of what an already-running or completed child actually used, because an
+inherited rewire re-reads the parent model when each child starts. An alias
+whose targets are all unavailable is shown as an error row rather than silently
+substituting a different model.
+
+At narrow widths the less important `Function`, `Level`, and `Source` columns
+are dropped so `Agent`, `Model`, and `Effort` stay readable; at 80 columns the
+model column still gets roughly 30 characters. Scroll with `↑`/`↓` or `j`/`k`,
+scroll by 5 rows with `Shift+j`/`Shift+k`, and close with `esc`, `enter`, or `q`.
+
+In TUI mode the table is a custom read-only component. In non-TUI modes with a
+UI (for example RPC) there is no custom viewer, so the same table is delivered
+as a plain-text notification instead of opening an editable buffer.
 
 ## Runtime manager
 

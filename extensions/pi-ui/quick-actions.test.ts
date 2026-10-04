@@ -18,6 +18,8 @@ function openDialog(initiallyLocked = false, gustAvailable = true) {
 	let doomCalls = 0;
 	let rewire = false;
 	let newPromptStashCalls = 0;
+	let modelsTableCalls = 0;
+	let modelPresetsCalls = 0;
 	let locked = initiallyLocked;
 	let renderFromEvent: (() => void) | undefined;
 	const ctx = {
@@ -53,7 +55,8 @@ function openDialog(initiallyLocked = false, gustAvailable = true) {
 		onToggleAgentsRewire: () => { rewire = !rewire; renderFromEvent?.(); },
 		onOpenAgentsRewire: () => {},
 		onOpenAgentsManager: () => {},
-		onOpenModelPresets: () => {},
+		onOpenModelPresets: () => { modelPresetsCalls++; },
+		onOpenModelsTable: () => { modelsTableCalls++; },
 		isAgentsRewireEnabled: () => rewire,
 	} satisfies Handlers;
 	const lifecycle = {
@@ -63,12 +66,75 @@ function openDialog(initiallyLocked = false, gustAvailable = true) {
 		onHidden: () => { renderFromEvent = undefined; },
 	} satisfies Lifecycle;
 	const finished = showHiDialog(ctx, handlers, lifecycle);
-	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get gust() { return gust; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; }, get newPromptStashCalls() { return newPromptStashCalls; } };
+	return { dialog, finished, get closes() { return closes; }, get renders() { return renders; }, get reader() { return reader; }, get outer() { return outer; }, get focus() { return focus; }, get gust() { return gust; }, get doomCalls() { return doomCalls; }, get rewire() { return rewire; }, get locked() { return locked; }, get newPromptStashCalls() { return newPromptStashCalls; }, get modelsTableCalls() { return modelsTableCalls; }, get modelPresetsCalls() { return modelPresetsCalls; } };
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 
 describe("quick actions", () => {
+	test("ghost Models table is hidden but uppercase M opens it", async () => {
+		const ui = openDialog();
+		expect(ui.dialog.render(80).join("\n")).not.toContain("Models table");
+		ui.dialog.handleInput("M");
+		await ui.finished;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ui.modelsTableCalls).toBe(1);
+		expect(ui.modelPresetsCalls).toBe(0);
+	});
+
+	test("shift+m in Kitty keyboard encoding also opens the ghost table", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("\x1b[109;2u");
+		await ui.finished;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ui.modelsTableCalls).toBe(1);
+		expect(ui.modelPresetsCalls).toBe(0);
+	});
+
+	test("ghost Models table remains searchable and Enter opens it", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("/");
+		for (const char of "models table") ui.dialog.handleInput(char);
+		expect(ui.dialog.render(80).join("\n")).toContain("Models table");
+		ui.dialog.handleInput("\r");
+		await ui.finished;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ui.modelsTableCalls).toBe(1);
+	});
+
+	test("arrow navigation skips the ghost entry between favorites and subagents", async () => {
+		const ui = openDialog();
+		for (let i = 0; i < 4; i++) ui.dialog.handleInput("\x1b[B");
+		const text = ui.dialog.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text).toMatch(/›\s+Subagents/);
+		expect(text).not.toContain("Models table");
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
+	test("lowercase m still opens favorites, not the ghost table", async () => {
+		const ui = openDialog();
+		ui.dialog.handleInput("m");
+		await ui.finished;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(ui.modelPresetsCalls).toBe(1);
+		expect(ui.modelsTableCalls).toBe(0);
+	});
+
+	test("locked dialog blocks ghost actions and their search results", async () => {
+		const ui = openDialog(true);
+		ui.dialog.handleInput("M");
+		await tick();
+		expect(ui.modelsTableCalls).toBe(0);
+		expect(ui.closes).toBe(0);
+		ui.dialog.handleInput("/");
+		for (const char of "models table") ui.dialog.handleInput(char);
+		expect(ui.dialog.render(80).join("\n")).not.toContain("Models table");
+		ui.dialog.handleInput("\x1b");
+		ui.dialog.handleInput("\x1b");
+		await ui.finished;
+	});
+
 	test("Enter toggles without closing; a hotkey still closes", async () => {
 		const ui = openDialog();
 		// Reader mode is the first access & safety action.

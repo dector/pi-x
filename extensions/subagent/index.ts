@@ -180,6 +180,13 @@ import {
 	type ResolvedAliasTarget,
 } from "./model-mapping.ts";
 import {
+	buildModelsTableRows,
+	formatModelsTableText,
+	modelsModeLabel,
+	ModelsTableView,
+	type ModelsTableResult,
+} from "./models-table.ts";
+import {
 	canDelegate,
 	childSubagentDepth,
 	formatSubagentDepth,
@@ -241,6 +248,7 @@ const STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT = "px:status-bar:subagent-depth:clea
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
 const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
+const SUBAGENT_MODELS_MENU_EVENT = "px:subagent:models:menu";
 
 function newHubRequestId(): string {
 	return `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -2296,6 +2304,56 @@ export default function (pi: ExtensionAPI) {
 		pi.events.on(SUBAGENT_MANAGER_MENU_EVENT, (payload) => {
 			const ctx = eventContext(payload);
 			if (ctx) void openAgentManager(ctx);
+		});
+
+		/**
+		 * Read-only current-session table of effective agent -> model assignments.
+		 * Resolves against the live mapping, rewire state, and parent model; it does
+		 * not read running/completed child snapshots.
+		 */
+		const openModelsMenu = async (ctx: ExtensionContext): Promise<void> => {
+			if (!ctx.hasUI) return;
+			const agents = discoverAgents(ctx.cwd, "user").agents;
+			const parentDefaults = readCurrentDispatchDefaults(ctx);
+			const rewire = rewireConfig?.enabled ? { ...rewireConfig } : undefined;
+			const rows = buildModelsTableRows({
+				agents,
+				mapping: readModelMapping(),
+				...(rewire ? { rewire } : {}),
+				parentDefaults,
+				resolveAlias: (targets) => resolveAliasTargets(ctx, targets),
+				clampInheritedThinking: (model, level) => clampInheritedThinkingLevel(ctx, model, level),
+			});
+			const mode = modelsModeLabel(rewire, parentDefaults);
+			if (ctx.mode === "tui") {
+				await ctx.ui.custom<ModelsTableResult>((tui, theme, keybindings, done) =>
+					new ModelsTableView({
+						rows,
+						mode,
+						theme: {
+							fg: (color, text) => theme.fg(color as Parameters<typeof theme.fg>[0], text),
+							bold: (text) => theme.bold(text),
+						},
+						keybindings,
+						requestRender: () => tui.requestRender(),
+						done,
+					}),
+				);
+				return;
+			}
+			// No custom read-only viewer in RPC/print modes: publish the same table as
+			// plain text rather than falling back to an editable buffer.
+			ctx.ui.notify(formatModelsTableText(rows, mode), "info");
+		};
+
+		pi.events.on(SUBAGENT_MODELS_MENU_EVENT, (payload) => {
+			const ctx = eventContext(payload);
+			if (ctx) void openModelsMenu(ctx);
+		});
+
+		pi.registerCommand("px:agents:models", {
+			description: "Show the effective agent-to-model assignments for this session",
+			handler: async (_args, ctx) => openModelsMenu(ctx),
 		});
 
 		pi.registerCommand("px:agents", {

@@ -29,6 +29,7 @@ const NOTES_LIST_EVENT = "px:notes:list";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
 const SUBAGENT_REWIRE_MENU_EVENT = "px:subagent:rewire:menu";
 const SUBAGENT_MANAGER_MENU_EVENT = "px:subagent:manager:menu";
+const SUBAGENT_MODELS_MENU_EVENT = "px:subagent:models:menu";
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
 const ACTION_DIALOG_TOGGLE_SHORTCUT = Key.ctrl(",");
@@ -1319,6 +1320,7 @@ export async function showHiDialog(
 		onOpenAgentsRewire: () => void;
 		onOpenAgentsManager: () => void;
 		onOpenModelPresets: () => void;
+		onOpenModelsTable: () => void;
 		isAgentsRewireEnabled: () => boolean;
 	},
 	dialogLifecycle: {
@@ -1368,6 +1370,7 @@ export async function showHiDialog(
 					onOpenAgentsRewire,
 					onOpenAgentsManager,
 					onOpenModelPresets,
+					onOpenModelsTable,
 					isAgentsRewireEnabled,
 				} = handlers;
 				let selectedIndex = 0;
@@ -1394,6 +1397,8 @@ export async function showHiDialog(
 					showStatusBadge?: boolean;
 					opensMenu?: boolean;
 					searchable?: boolean;
+					/** Hidden from menu rows and navigation, but still searchable and bound to its hotkey. */
+					ghost?: boolean;
 					isEnabled: (state: DialogState) => boolean;
 					isAvailable?: () => boolean;
 					run: () => void | Promise<void>;
@@ -1470,6 +1475,18 @@ export async function showHiDialog(
 						isEnabled: () => true,
 						closeAfterRun: false,
 						run: () => runAfterClose(onOpenModelPresets),
+					},
+					{
+						hotkey: Key.shift("m"),
+						hotkeyLabel: "M",
+						label: "Models table…",
+						group: "AGENTS",
+						ghost: true,
+						showStatusBadge: false,
+						opensMenu: true,
+						isEnabled: () => true,
+						closeAfterRun: false,
+						run: () => runAfterClose(onOpenModelsTable),
 					},
 					{
 						hotkey: "a",
@@ -1671,8 +1688,9 @@ export async function showHiDialog(
 						.filter((action) => action.searchable !== false)
 						.map((action) => ({ action, menu: "stash" as const })),
 				];
-				const getActions = (): DialogAction[] =>
+				const getMenuActions = (): DialogAction[] =>
 					isLocked() ? mainActions.filter((action) => action.hotkey === "L") : activeMenu === "more" ? moreActions : activeMenu === "stash" ? stashActions : mainActions;
+				const getActions = (): DialogAction[] => getMenuActions().filter((action) => !action.ghost);
 				const getSearchActions = (): SearchAction[] => {
 					const query = searchQuery.trim().toLowerCase();
 					if (!query) return [];
@@ -1719,7 +1737,7 @@ export async function showHiDialog(
 
 				const matchesActionKey = (data: string, key: string): boolean => data === key || matchesKey(data, key);
 				const matchActionForInput = (data: string): DialogAction | undefined => {
-					for (const action of getActions()) {
+					for (const action of getMenuActions()) {
 						if (action.hotkey === "L" && action.label === "Lock") {
 							if (data === "L" || matchesKey(data, Key.shift("l"))) return action;
 							continue;
@@ -2498,6 +2516,9 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 						pi.events.emit(SUBAGENT_MANAGER_MENU_EVENT, { ctx });
 					},
 					onOpenModelPresets: () => { void openModelPresets(pi, ctx); },
+					onOpenModelsTable: () => {
+						pi.events.emit(SUBAGENT_MODELS_MENU_EVENT, { ctx });
+					},
 					isAgentsRewireEnabled: () => agentsRewireEnabled,
 				},
 				{

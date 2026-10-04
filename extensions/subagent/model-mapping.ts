@@ -217,6 +217,30 @@ function clampThinking(
 const THINKING_ORDER: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /**
+ * The effective effort level for an agent with an optional task-level override:
+ * task level → agent level → function default → global default, raised to the
+ * function floor.
+ *
+ * Kept separate from cell resolution so a read-only view can show the same
+ * level a dispatch would use without needing an available alias target.
+ */
+export function effectiveAgentLevel(
+	mapping: ModelMapping,
+	agent: { function?: SubagentFunction; level?: SubagentLevel },
+	taskLevel?: SubagentLevel,
+): { level: SubagentLevel; warning?: string } {
+	const fn = agent.function ?? "general";
+	const fnMapping = mapping.functions[fn] ?? {};
+	let level: SubagentLevel = taskLevel ?? agent.level ?? fnMapping.defaultLevel ?? DEFAULT_LEVEL;
+	let warning: string | undefined;
+	if (fnMapping.floor && levelRank(level) < levelRank(fnMapping.floor)) {
+		warning = `Level \`${level}\` raised to \`${fnMapping.floor}\` (floor for \`${fn}\`).`;
+		level = fnMapping.floor;
+	}
+	return warning ? { level, warning } : { level };
+}
+
+/**
  * Resolve the effective model and thinking level for one dispatch item.
  *
  * Order: task level → agent level → function default → global default, then a
@@ -235,11 +259,8 @@ export function resolveMappedModel(
 	if (!agent.function) warnings.push("Agent has no `function`; using `general`.");
 	const fnMapping = mapping.functions[fn] ?? {};
 
-	let level: SubagentLevel = taskLevel ?? agent.level ?? fnMapping.defaultLevel ?? DEFAULT_LEVEL;
-	if (fnMapping.floor && levelRank(level) < levelRank(fnMapping.floor)) {
-		warnings.push(`Level \`${level}\` raised to \`${fnMapping.floor}\` (floor for \`${fn}\`).`);
-		level = fnMapping.floor;
-	}
+	const { level, warning: levelWarning } = effectiveAgentLevel(mapping, agent, taskLevel);
+	if (levelWarning) warnings.push(levelWarning);
 
 	const cell = fnMapping.cells?.[level] ?? mapping.general[level];
 	if (!cell) {
