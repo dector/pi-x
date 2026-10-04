@@ -7,6 +7,7 @@ import { detectReloadState, gustClient, reloadClient, type ReloadTarget } from "
 import { processHoldSettings, ReloadHold } from "./hold.ts";
 import { Orchestrator, type OrchestratorStatus } from "./orchestrator.ts";
 import type { ThreadState } from "./types.ts";
+import { GustPresentation } from "./presentation.ts";
 
 /**
  * Gust comment browser and worker orchestrator.
@@ -31,6 +32,7 @@ let orchestrator: Orchestrator | null = null;
 let activeCtx: ExtensionContext | null = null;
 let defaultWorkerModel: WorkerModel | undefined;
 const modelAssignments = new ModelAssignments();
+const presentation = new GustPresentation();
 
 function projectRoot(ctx: ExtensionContext): string {
 	return process.env.GUST_CWD?.trim() || ctx.cwd;
@@ -65,16 +67,16 @@ function renderStatus(): void {
 	try {
 		const status = orchestrator?.status();
 		if (!status || (!status.running && !status.started)) {
-			ctx.ui.setStatus("gust", undefined);
-			ctx.ui.setWidget("gust", undefined);
+			presentation.setStatus(ctx, "gust", undefined);
+			presentation.setWidget(ctx, "gust", undefined);
 			return;
 		}
 		const parts = [status.running ? status.phase : "stopped"];
 		if (status.active) parts.push(`▶ ${status.active.slice(0, 8)}`);
 		parts.push(`${status.processed} done`);
 		if (status.failed) parts.push(`${status.failed} failed`);
-		ctx.ui.setStatus("gust", `gust: ${parts.join(" · ")}`);
-		ctx.ui.setWidget("gust", widgetLines(status));
+		presentation.setStatus(ctx, "gust", `gust: ${parts.join(" · ")}`);
+		presentation.setWidget(ctx, "gust", widgetLines(status));
 	} catch {
 		// The session may be gone; ignore late UI updates.
 	}
@@ -154,6 +156,7 @@ function showStatus(ctx: ExtensionCommandContext): void {
 }
 
 export default function gustExtension(pi: ExtensionAPI): void {
+	presentation.reset();
 	const hold = new ReloadHold(reloadClient, processHoldSettings());
 	const target = (ctx: ExtensionContext): ReloadTarget => ({
 		cwd: hold.settings.cwd ?? projectRoot(ctx),
@@ -169,7 +172,7 @@ export default function gustExtension(pi: ExtensionAPI): void {
 			enabled: hold.settings.enabled, running: state !== undefined, paused: state === "paused",
 		});
 		try {
-			ctx.ui.setStatus("gust-hold", hold.settings.enabled ? "gust: hold" : undefined);
+			presentation.setStatus(ctx, "gust-hold", hold.settings.enabled ? "gust: hold" : undefined);
 		} catch { /* Context may have been replaced. */ }
 	};
 	const holdAction = async (ctx: ExtensionContext, work: () => Promise<unknown>) => {
@@ -208,7 +211,9 @@ export default function gustExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		presentation.reset();
 		activeCtx = ctx;
+		renderStatus();
 		if (detectorTimer) clearInterval(detectorTimer);
 		await holdAction(ctx, async () => {
 			await hold.settle(); // Retry any release whose reply was lost during replacement.
@@ -285,5 +290,11 @@ export default function gustExtension(pi: ExtensionAPI): void {
 		await orchestrator?.stop().catch(() => {});
 		orchestrator = null;
 		activeCtx = null;
+		// Explicit clears must reach RPC clients too, even if already empty.
+		presentation.reset();
+		try { presentation.setStatus(ctx, "gust", undefined); } catch { /* Session gone. */ }
+		try { presentation.setWidget(ctx, "gust", undefined); } catch { /* Session gone. */ }
+		try { presentation.setStatus(ctx, "gust-hold", undefined); } catch { /* Session gone. */ }
+		presentation.reset();
 	});
 }
