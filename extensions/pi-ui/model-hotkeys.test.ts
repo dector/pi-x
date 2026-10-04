@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { modelPresetsPath, saveModelPresets } from "./model-presets.ts";
 import { cycleMainModel, cycleMainThinkingLevel, cycleReviewerModel, cycleReviewerThinkingLevel } from "./model-hotkeys.ts";
 
 const models = [
@@ -44,14 +48,35 @@ function setup(activeId = "beta", thinkingLevel = "medium", reviewer: Preset = {
 }
 
 describe("model hotkeys", () => {
-	test("cycles all available main models and preserves a supported thinking level", async () => {
-		const state = setup("beta", "high");
-		await cycleMainModel(state.pi, state.ctx, -1);
-		expect(state.active.id).toBe("alpha");
-		expect(state.thinking).toBe("high");
+	let dir: string;
+	let previousAgentDir: string | undefined;
+	beforeEach(() => {
+		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-model-hotkeys-"));
+		process.env.PI_CODING_AGENT_DIR = dir;
+		saveModelPresets([
+			{ model: "provider/alpha", thinkingLevel: "low" },
+			{ model: "provider/alpha", thinkingLevel: "medium" },
+			{ model: "provider/missing", thinkingLevel: "high" },
+			{ model: "provider/beta", thinkingLevel: "off" },
+		]);
+	});
+	afterEach(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("cycles complete main presets including different efforts for the same model", async () => {
+		const state = setup("beta", "off");
 		await cycleMainModel(state.pi, state.ctx, 1);
-		expect(state.active.id).toBe("beta");
-		expect(state.thinking).toBe("off");
+		expect([state.active.id, state.thinking]).toEqual(["alpha", "low"]);
+		await cycleMainModel(state.pi, state.ctx, 1);
+		expect([state.active.id, state.thinking]).toEqual(["alpha", "medium"]);
+		await cycleMainModel(state.pi, state.ctx, 1);
+		expect([state.active.id, state.thinking]).toEqual(["beta", "off"]);
+		await cycleMainModel(state.pi, state.ctx, -1);
+		expect([state.active.id, state.thinking]).toEqual(["alpha", "medium"]);
 	});
 
 	test("cycles thinking levels supported by the active main model with wrapping", () => {
@@ -62,14 +87,45 @@ describe("model hotkeys", () => {
 		expect(state.thinking).toBe("xhigh");
 	});
 
-	test("cycles reviewer models without changing the main model or enabling rewiring", () => {
-		const state = setup("gamma", "low", { model: "provider/alpha", thinkingLevel: "high", enabled: false });
+	test("cycles complete reviewer presets without changing the main model or enabling rewiring", () => {
+		const state = setup("gamma", "high", { model: "provider/beta", thinkingLevel: "off", enabled: false });
+		cycleReviewerModel(state.pi, state.ctx, 1);
+		expect(state.reviewer).toEqual({ model: "provider/alpha", thinkingLevel: "low", enabled: false });
+		cycleReviewerModel(state.pi, state.ctx, 1);
+		expect(state.reviewer.thinkingLevel).toBe("medium");
 		cycleReviewerModel(state.pi, state.ctx, 1);
 		expect(state.reviewer).toEqual({ model: "provider/beta", thinkingLevel: "off", enabled: false });
+		cycleReviewerModel(state.pi, state.ctx, -1);
+		expect(state.reviewer).toEqual({ model: "provider/alpha", thinkingLevel: "medium", enabled: false });
 		expect(state.active.id).toBe("gamma");
+		expect(state.thinking).toBe("high");
+	});
+
+	test("favorite order controls cycling and a non-favorite starts at either end", async () => {
+		saveModelPresets([
+			{ model: "provider/beta", thinkingLevel: "off" },
+			{ model: "provider/alpha", thinkingLevel: "low" },
+		]);
+		const state = setup("gamma", "high", { model: "provider/gamma", thinkingLevel: "high" });
+		await cycleMainModel(state.pi, state.ctx, 1);
+		expect(state.active.id).toBe("beta");
 		cycleReviewerModel(state.pi, state.ctx, -1);
 		expect(state.reviewer.model).toBe("provider/alpha");
-		expect(state.reviewer.thinkingLevel).toBe("off");
+	});
+
+	test("empty, unavailable, and malformed favorites do not fall back to all models", async () => {
+		const state = setup("gamma", "high");
+		for (const presets of [[], [{ model: "provider/missing", thinkingLevel: "high" as const }]]) {
+			saveModelPresets(presets);
+			await cycleMainModel(state.pi, state.ctx, 1);
+			cycleReviewerModel(state.pi, state.ctx, 1);
+		}
+		fs.writeFileSync(modelPresetsPath(), "invalid json");
+		await cycleMainModel(state.pi, state.ctx, 1);
+		cycleReviewerModel(state.pi, state.ctx, 1);
+		expect(state.active.id).toBe("gamma");
+		expect(state.reviewer.model).toBe("provider/alpha");
+		expect(state.notices).toHaveLength(6);
 	});
 
 	test("cycles reviewer thinking levels independently of main-model thinking", () => {

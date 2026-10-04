@@ -2436,11 +2436,11 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerShortcut(PREVIOUS_MODEL_SHORTCUT, {
-		description: "Select previous available model",
+		description: "Select previous favorite main preset (model and thinking level)",
 		handler: async (ctx) => { await cycleMainModel(pi, ctx, -1); },
 	});
 	pi.registerShortcut(NEXT_MODEL_SHORTCUT, {
-		description: "Select next available model",
+		description: "Select next favorite main preset (model and thinking level)",
 		handler: async (ctx) => { await cycleMainModel(pi, ctx, 1); },
 	});
 	pi.registerShortcut(PREVIOUS_THINKING_LEVEL_SHORTCUT, {
@@ -2452,11 +2452,11 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 		handler: (ctx) => { cycleMainThinkingLevel(pi, ctx, 1); },
 	});
 	pi.registerShortcut(PREVIOUS_REVIEWER_MODEL_SHORTCUT, {
-		description: "Select previous available reviewer model",
+		description: "Select previous favorite reviewer preset (model and thinking level)",
 		handler: (ctx) => { cycleReviewerModel(pi, ctx, -1); },
 	});
 	pi.registerShortcut(NEXT_REVIEWER_MODEL_SHORTCUT, {
-		description: "Select next available reviewer model",
+		description: "Select next favorite reviewer preset (model and thinking level)",
 		handler: (ctx) => { cycleReviewerModel(pi, ctx, 1); },
 	});
 	pi.registerShortcut(PREVIOUS_REVIEWER_THINKING_LEVEL_SHORTCUT, {
