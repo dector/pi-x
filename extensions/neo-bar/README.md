@@ -246,8 +246,9 @@ labels are rendered in the frame corners:
     shown: `off` → `✘`, `minimal` → `🡻🡻`, `low` → `🡻`, `medium` → `🡺`,
     `high` → `🢁`, `xhigh` → `🢁🢁`, `max` → `🢁🢁🢁` (for example
     `󰙴 cdx/5.6-sol · 🡺`).
-  - While streaming, the label runs one of two animations (no spinner is shown and
-    the word `Working` never appears):
+  - While streaming, the model/effort label is static green by default, with no
+    animation timer. Start pi with `PIX_ANIMATE_PROGRESS=1` to opt into one of
+    two animations (no spinner is shown and the word `Working` never appears):
     - `comet` — a leading character is highlighted in the theme `text` color
       (bold) and bounces back and forth across the label. A fading 3-character
       trail follows behind the direction of motion, blending from `text` into the
@@ -262,7 +263,8 @@ labels are rendered in the frame corners:
 
     The active style is set in source (`WORKING_ANIMATION` in `index.ts`, default
     `comet`) and can be overridden for a quick preview with
-    `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch`. A TUI setting is planned.
+    `PI_STATUS_BAR_WORKING_ANIMATION=comet|glitch` (this selects the style only;
+    it does not enable animation). Idle label styling is unchanged. A TUI setting is planned.
 - **bottom-right** — the git-red unsent-message token size (`󰦨 1.2k`), followed
   by optional muted-purple available-notes (`󰈙 <count>`, current project plus global)
   and orange prompt-stash (`󱊖 <count>`) counts. Text uses pi's conservative

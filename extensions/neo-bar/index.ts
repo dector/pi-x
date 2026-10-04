@@ -135,7 +135,7 @@ const GUST_HOLD_ICON = "󰖝"; // Nerd Font MDI weather-windy.
 const STATUS_BAR_SETTINGS_PATH = join(homedir(), ".pi", "agent", "status-bar.json");
 // Minimum horizontal dash kept between labels (or beside a lone label).
 const MIN_CORNER_LABEL_GAP = 1;
-// While streaming, the top-left model label is animated. Two styles are available:
+// With PIX_ANIMATE_PROGRESS=1, the streaming model label animates. Available styles:
 // - `comet`: a single character is highlighted and bounces back and forth across
 //   the label. A short fading trail follows behind it (in the direction of motion).
 // - `glitch`: a few random characters are replaced with matrix-like blocks
@@ -374,7 +374,9 @@ interface FrameStatusEditorOptions {
 	bottomRight?: (text: string) => string | undefined;
 	/** Sink for labels relocated off the border on narrow frames (status line 2). */
 	relocatedLabels?: RelocatedBorderLabels;
-	/** Streaming animation style for the top-left model label. */
+	/** Static green color for the model/effort label while working. */
+	workingColor?: (text: string) => string;
+	/** Streaming animation style (only used with PIX_ANIMATE_PROGRESS=1). */
 	getWorkingAnimation: () => WorkingAnimation;
 	/** Confirmation guard used before an active agent operation is interrupted. */
 	interruptConfirmation: InterruptConfirmationGuard;
@@ -491,8 +493,8 @@ export function stripEditorCursor(lines: readonly string[]): string[] {
  * rendered in the frame corners. In `new` display mode the top-left corner shows
  * the active provider/model plus effort (abbreviation, or arrows-only on narrow screens)
  * and the top-right corner shows the git dirty totals. While streaming, the
- * label runs the configured animation
- * (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
+ * label is static green unless PIX_ANIMATE_PROGRESS=1 enables the configured
+ * animation (`comet` or `glitch`; no spinner, no `Working` word). Editor content is inset
  * by one column on each side
  * (`┃ <input> ┃`):
  *
@@ -533,6 +535,8 @@ export class FrameStatusEditor extends CustomEditor {
 	/** Current vim input mode; `undefined` when vim-mode is off. */
 	private inputMode: NeoBarInputMode | undefined;
 	private readonly frameTui: TUI;
+	private readonly animateProgress = process.env.PIX_ANIMATE_PROGRESS === "1";
+	private readonly workingColor: (text: string) => string;
 	private working = false;
 	private workingTick = 0;
 	private workingTimer?: ReturnType<typeof setInterval>;
@@ -564,6 +568,7 @@ export class FrameStatusEditor extends CustomEditor {
 		this.lockedStripeColor = options.lockedStripeColor ?? ((text) => this.borderColor(text));
 		this.lockedRuleColor = options.lockedRuleColor ?? ((text) => this.borderColor(text));
 		this.highlightColor = options.highlightColor;
+		this.workingColor = options.workingColor ?? ((text) => `\x1b[32m${text}\x1b[39m`);
 		this.dimColor = options.dimColor ?? theme.borderColor;
 	}
 
@@ -597,7 +602,7 @@ export class FrameStatusEditor extends CustomEditor {
 	setWorkingStatusIndicator(indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]): void {
 		super.setWorkingStatusIndicator(indicator);
 		this.working = indicator !== undefined && indicator !== null;
-		if (this.working) {
+		if (this.working && this.animateProgress) {
 			this.startWorkingAnimation();
 		} else {
 			this.stopWorkingAnimation();
@@ -664,6 +669,8 @@ export class FrameStatusEditor extends CustomEditor {
 		if (chars.length === 0) return "";
 		this.lastModelLabelLength = chars.length;
 
+		if (this.working && !this.animateProgress) return this.workingColor(chars.join(""));
+
 		const highlight = this.highlightColor ?? ((text: string) => this.labelColor(text));
 
 		if (this.working && this.getWorkingAnimation() === "glitch") {
@@ -698,7 +705,7 @@ export class FrameStatusEditor extends CustomEditor {
 
 	/**
 	 * Top-left corner label: model plus effort inset from the corner by `━━ `.
-	 * While streaming the label runs the configured animation.
+	 * While streaming the label is green, or animated with PIX_ANIMATE_PROGRESS=1.
 	 */
 	private topLeftSegment(label: string, reviewLabel?: string, gustHoldLabel?: string): string {
 		const body = composeTopLeftModelReview(
@@ -2357,6 +2364,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			dimColor: (text) => activeContext().ui.theme.fg("dim", text),
 			lockedStripeColor: (text) => activeContext().ui.theme.fg("dim", text),
 			lockedRuleColor: (text) => activeContext().ui.theme.fg("muted", text),
+			workingColor: (text) => activeContext().ui.theme.fg("success", text),
 			highlightColor: (text, depth) => {
 				const theme = activeContext().ui.theme;
 				if (depth <= 0) return theme.bold(theme.fg("text", text));
