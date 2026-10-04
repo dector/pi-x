@@ -6,7 +6,7 @@
 // No pi runtime or TUI imports: the watcher is driven by the host extension, so
 // tests can collect and format without a session.
 
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -37,6 +37,8 @@ export interface GitSnapshot {
 	branch: string;
 	isDirty: boolean;
 	stats: GitStats;
+	/** Untracked line totals are a lower bound when content scanning hit a limit. */
+	untrackedLinesCapped?: boolean;
 }
 
 const CLEAN_STATS: GitStats = {
@@ -57,26 +59,28 @@ function runGit(cwd: string, args: string[]): GitResult {
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "ignore"],
+		timeout: 5_000,
+		maxBuffer: 16 * 1024 * 1024,
 	});
 
 	return {
-		ok: result.status === 0,
-		stdout: (result.stdout ?? "").trim(),
+		ok: result.status === 0 && !result.error,
+		stdout: result.stdout ?? "",
 	};
 }
 
 function getRepoRoot(cwd: string): string | undefined {
 	const root = runGit(cwd, ["rev-parse", "--show-toplevel"]);
 	if (!root.ok || !root.stdout) return undefined;
-	return root.stdout;
+	return root.stdout.trim();
 }
 
 function getBranchName(cwd: string): string | undefined {
 	const symbolic = runGit(cwd, ["symbolic-ref", "--short", "HEAD"]);
-	if (symbolic.ok && symbolic.stdout) return symbolic.stdout;
+	if (symbolic.ok && symbolic.stdout) return symbolic.stdout.trim();
 
 	const detached = runGit(cwd, ["rev-parse", "--short", "HEAD"]);
-	if (detached.ok && detached.stdout) return detached.stdout;
+	if (detached.ok && detached.stdout) return detached.stdout.trim();
 
 	return undefined;
 }
@@ -85,9 +89,12 @@ function parseNumstat(stdout: string): { additions: number; removals: number } {
 	let additions = 0;
 	let removals = 0;
 
-	for (const line of stdout.split("\n")) {
+	const records = stdout.split("\0");
+	for (let index = 0; index < records.length; index++) {
+		const line = records[index];
 		if (!line) continue;
-		const [addRaw, removeRaw] = line.split("\t");
+		const [addRaw, removeRaw, path] = line.split("\t");
+		if (path === "") index += 2; // NUL-delimited rename source/destination
 		if (!addRaw || !removeRaw) continue;
 
 		const add = Number.parseInt(addRaw, 10);
@@ -99,53 +106,66 @@ function parseNumstat(stdout: string): { additions: number; removals: number } {
 	return { additions, removals };
 }
 
-function countLines(filePath: string): number {
-	let buffer: Buffer;
-	try {
-		buffer = readFileSync(filePath);
-	} catch {
-		return 0;
-	}
+/** Bound content I/O, not Git's enumeration (file counters remain exact). */
+export const UNTRACKED_SCAN_LIMITS = { files: 100, fileBytes: 256 * 1024, totalBytes: 1024 * 1024 } as const;
 
-	if (buffer.length === 0) return 0;
-
-	let newlines = 0;
-	for (const byte of buffer) {
-		if (byte === 10) newlines += 1; // \n
-	}
-
-	if (newlines === 0) return 1;
-	const endsWithNewline = buffer[buffer.length - 1] === 10;
-	return endsWithNewline ? newlines : newlines + 1;
-}
-
-function getUntrackedAdditions(repoRoot: string): number {
-	const untracked = runGit(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
-	if (!untracked.ok || !untracked.stdout) return 0;
-
+function getUntrackedAdditions(repoRoot: string, paths: string[]): { additions: number; capped: boolean } {
+	if (paths.length === 0) return { additions: 0, capped: false };
 	let additions = 0;
-	for (const relative of untracked.stdout.split("\0")) {
-		if (!relative) continue;
-		additions += countLines(join(repoRoot, relative));
+	let bytesLeft: number = UNTRACKED_SCAN_LIMITS.totalBytes;
+	let capped = paths.length > UNTRACKED_SCAN_LIMITS.files;
+	const buffer = Buffer.alloc(UNTRACKED_SCAN_LIMITS.fileBytes);
+	for (const relative of paths.slice(0, UNTRACKED_SCAN_LIMITS.files)) {
+		if (bytesLeft <= 0) { capped = true; break; }
+		let fd: number | undefined;
+		try {
+			// Never follow symlinks or block on special files such as FIFOs.
+			fd = openSync(join(repoRoot, relative), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+			const stat = fstatSync(fd);
+			if (!stat.isFile()) { capped = true; continue; }
+			const limit = Math.min(stat.size, buffer.length, bytesLeft);
+			let length = 0;
+			while (length < limit) {
+				const read = readSync(fd, buffer, length, limit - length, length);
+				if (!read) break;
+				length += read;
+			}
+			bytesLeft -= length;
+			const complete = length === stat.size;
+			if (!complete) capped = true;
+			for (let i = 0; i < length; i++) if (buffer[i] === 10) additions++;
+			if (complete && length > 0 && buffer[length - 1] !== 10) additions++;
+		} catch {
+			capped = true;
+		} finally {
+			if (fd !== undefined) closeSync(fd);
+		}
 	}
-	return additions;
+	return { additions, capped };
 }
 
 function parseFileCountersFromPorcelain(stdout: string): {
 	filesAdded: number;
 	filesRemoved: number;
 	filesModified: number;
+	untracked: string[];
 } {
+	const untracked: string[] = [];
 	let filesAdded = 0;
 	let filesRemoved = 0;
 	let filesModified = 0;
 
-	for (const line of stdout.split("\n")) {
+	const records = stdout.split("\0");
+	for (let index = 0; index < records.length; index++) {
+		const line = records[index];
 		if (!line) continue;
 		const x = line[0] ?? " ";
 		const y = line[1] ?? " ";
+		// In -z mode rename/copy records have a second (source) path.
+		if (x === "R" || y === "R" || x === "C" || y === "C") index++;
 
 		if (x === "?" && y === "?") {
+			untracked.push(line.slice(3));
 			filesAdded += 1;
 			continue;
 		}
@@ -165,7 +185,7 @@ function parseFileCountersFromPorcelain(stdout: string): {
 		}
 	}
 
-	return { filesAdded, filesRemoved, filesModified };
+	return { filesAdded, filesRemoved, filesModified, untracked };
 }
 
 /**
@@ -173,7 +193,8 @@ function parseFileCountersFromPorcelain(stdout: string): {
  * `cwd` is not inside a git repo (or has no resolvable branch).
  *
  * tracked changes: `git diff --numstat HEAD`
- * untracked files: `git ls-files --others --exclude-standard -z` + line counting
+ * untracked files: reuse NUL-delimited status paths + bounded content reads.
+ * Failed/timed-out Git commands return undefined, never false clean/zero totals.
  */
 export function collectGitSnapshot(cwd: string): GitSnapshot | undefined {
 	const repoRoot = getRepoRoot(cwd);
@@ -182,28 +203,33 @@ export function collectGitSnapshot(cwd: string): GitSnapshot | undefined {
 	const branch = getBranchName(repoRoot);
 	if (!branch) return undefined;
 
-	const status = runGit(repoRoot, ["status", "--porcelain"]);
-	const isDirty = status.ok && status.stdout.length > 0;
+	const status = runGit(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+	if (!status.ok) return undefined;
+	const isDirty = status.stdout.length > 0;
 	if (!isDirty) {
 		return { repoRoot, branch, isDirty: false, stats: { ...CLEAN_STATS } };
 	}
 
-	const trackedNumstat = runGit(repoRoot, ["diff", "--numstat", "HEAD"]);
-	const tracked = trackedNumstat.ok ? parseNumstat(trackedNumstat.stdout) : { additions: 0, removals: 0 };
-	const untrackedAdditions = getUntrackedAdditions(repoRoot);
-	const counters = status.ok
-		? parseFileCountersFromPorcelain(status.stdout)
-		: { filesAdded: 0, filesRemoved: 0, filesModified: 0 };
+	let trackedNumstat = runGit(repoRoot, ["diff", "--numstat", "-z", "HEAD"]);
+	if (!trackedNumstat.ok && !runGit(repoRoot, ["rev-parse", "--verify", "HEAD"]).ok) {
+		// An unborn branch compares against Git's empty tree instead of HEAD.
+		trackedNumstat = runGit(repoRoot, ["diff", "--numstat", "-z", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]);
+	}
+	if (!trackedNumstat.ok) return undefined;
+	const tracked = parseNumstat(trackedNumstat.stdout);
+	const counters = parseFileCountersFromPorcelain(status.stdout);
+	const untracked = getUntrackedAdditions(repoRoot, counters.untracked);
 
 	return {
 		repoRoot,
 		branch,
 		isDirty,
+		untrackedLinesCapped: untracked.capped,
 		stats: {
 			filesAdded: counters.filesAdded,
 			filesRemoved: counters.filesRemoved,
 			filesModified: counters.filesModified,
-			linesAdded: tracked.additions + untrackedAdditions,
+			linesAdded: tracked.additions + untracked.additions,
 			linesRemoved: tracked.removals,
 		},
 	};
@@ -247,6 +273,7 @@ export function formatGitStatsText(stats: GitStats): string {
 }
 
 const REFRESH_DEBOUNCE_MS = 120;
+export const GIT_STATS_CACHE_MS = 1_000;
 
 /**
  * Debounced dirty-counter refresh for the host extension. The host binds it to
@@ -257,12 +284,22 @@ export class GitStatsWatcher {
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private pendingCwd: string | undefined;
 	private signature: string | undefined;
+	private cached: { cwd: string; at: number; snapshot: GitSnapshot | undefined } | undefined;
 	/** Live totals, or `undefined` while the repo is clean/absent. */
 	current: GitStats | undefined;
 
-	constructor(private readonly onChange: (stats: GitStats | undefined) => void) {}
+	constructor(
+		private readonly onChange: (stats: GitStats | undefined) => void,
+		private readonly collect = collectGitSnapshot,
+		private readonly now = Date.now,
+	) {}
 
-	/** Queue a refresh; repeated calls inside the debounce window collapse into one. */
+	/** Known mutations/session changes bypass TTL on the next refresh. */
+	invalidate(): void {
+		this.cached = undefined;
+	}
+
+	/** Debounce bursts; cached requests collect at TTL expiry rather than being lost. */
 	schedule(cwd: string): void {
 		this.pendingCwd = cwd;
 		if (this.timer) return;
@@ -271,12 +308,17 @@ export class GitStatsWatcher {
 			const target = this.pendingCwd;
 			this.pendingCwd = undefined;
 			if (target !== undefined) this.refresh(target);
-		}, REFRESH_DEBOUNCE_MS);
+		}, Math.max(REFRESH_DEBOUNCE_MS, this.cached?.cwd === cwd
+			? GIT_STATS_CACHE_MS - (this.now() - this.cached.at) : 0));
 	}
 
-	/** Collect now; notifies only when the counters actually changed. */
+	/** Reuse a one-second same-cwd snapshot; notify only when counters change. */
 	refresh(cwd: string): void {
-		const stats = dirtyStats(collectGitSnapshot(cwd));
+		const now = this.now();
+		if (!this.cached || this.cached.cwd !== cwd || now - this.cached.at >= GIT_STATS_CACHE_MS) {
+			this.cached = { cwd, at: now, snapshot: this.collect(cwd) };
+		}
+		const stats = dirtyStats(this.cached.snapshot);
 		const signature = stats ? JSON.stringify(stats) : "";
 		if (signature === this.signature) return;
 		this.signature = signature;
@@ -290,5 +332,8 @@ export class GitStatsWatcher {
 			this.timer = undefined;
 		}
 		this.pendingCwd = undefined;
+		this.invalidate();
+		this.signature = undefined;
+		this.current = undefined;
 	}
 }

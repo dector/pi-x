@@ -317,6 +317,30 @@ Set it with:
 - `~/.pi/agent/status-bar.json`: `{ "displayMode": "new" }`
 - env override: `PI_STATUS_BAR_DISPLAY_MODE=new|legacy` (takes precedence over the file)
 
+### Git totals: refresh and scan limits
+
+Automatic refreshes debounce bursts for 120 ms and reuse a same-cwd snapshot for
+up to **1 second**. A queued event during that window collects at expiry, so the
+last change is not lost. Cwd changes bypass the cache. Session start/tree changes,
+turn end, and user-bash events invalidate it; shutdown/reload drops it entirely.
+External edits appear on the next refresh event (there is no filesystem watcher).
+`/px:status-bar-git-stats` always collects fresh, without using the watcher cache.
+These conservative limits are fixed constants, not new settings-file keys.
+
+File counters include **all** untracked files (including those inside directories).
+Tracked line counts remain Git's full `diff --numstat HEAD` totals. Only untracked
+content scanning is approximate: at most **100 files**, **256 KiB per file**, and
+**1 MiB total** per collection, in Git status order. Truncated files contribute
+complete newline-terminated lines from the scanned prefix; unreadable files,
+symlinks, and special files are skipped. Thus the added-line total is a lower
+bound when capped/skipped, not an extrapolation. The compact footer retains its
+normal numeric format; the diagnostic command explicitly reports the cap.
+
+Git enumeration is not truncated because that would make file counters wrong.
+Each Git process has a 5-second timeout and a 16-MiB output limit; failure returns
+unavailable stats, never a fabricated clean/zero snapshot. Collection is still
+synchronous and is not an atomic snapshot of a concurrently changing worktree.
+
 ### Aliases
 
 Short labels for the border `provider/model` text come from two exact-name tables

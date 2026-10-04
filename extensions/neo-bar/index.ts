@@ -2492,12 +2492,16 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		gitStatsWatcher.schedule(ctx.cwd);
 	};
 
-	pi.on("session_start", refreshGitStats);
-	pi.on("session_tree", refreshGitStats);
+	const invalidateGitStats = async (event: unknown, ctx: ExtensionContext): Promise<void> => {
+		gitStatsWatcher.invalidate();
+		await refreshGitStats(event, ctx);
+	};
+	pi.on("session_start", invalidateGitStats);
+	pi.on("session_tree", invalidateGitStats);
 	pi.on("turn_start", refreshGitStats);
-	pi.on("turn_end", refreshGitStats);
+	pi.on("turn_end", invalidateGitStats);
 	pi.on("input", refreshGitStats);
-	pi.on("user_bash", refreshGitStats);
+	pi.on("user_bash", invalidateGitStats);
 
 	// Skill reads arrive as read tool results; the denominator is refreshed
 	// before each agent run from the skills pi assembled for that run.
@@ -2715,12 +2719,12 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 			const snapshot = collectGitSnapshot(ctx.cwd);
 			if (!ctx.hasUI) return;
 			if (!snapshot) {
-				ctx.ui.notify("git stats: current cwd is not a git repo", "warning");
+				ctx.ui.notify("git stats: unavailable (not a repo or Git collection failed)", "warning");
 				return;
 			}
 			const summary = dirtyStats(snapshot) ? formatGitStatsText(snapshot.stats) : "(clean)";
 			ctx.ui.notify(
-				`git stats: ${summary} (repo=${snapshot.repoRoot}, branch=${snapshot.branch}, dirty=${snapshot.isDirty})`,
+				`git stats: ${summary}${snapshot.untrackedLinesCapped ? " (untracked lines capped: lower bound)" : ""} (repo=${snapshot.repoRoot}, branch=${snapshot.branch}, dirty=${snapshot.isDirty})`,
 				"info",
 			);
 		},
