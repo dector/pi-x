@@ -2,6 +2,18 @@
 
 Centralized neo-bar renderer for producer extensions.
 
+## Runtime modes
+
+Footer/editor setup, working-indicator changes, the contract screen, automatic
+Git refreshes, and rewire-preview timers require `ctx.mode === "tui"` and
+`ctx.hasUI`. Missing mode information is treated as non-terminal; `hasUI` alone
+is not enough because RPC also supports dialogs and notifications.
+
+RPC keeps producer contracts (including ping/pong), network/progress observers,
+skill tracking, and notification-based commands. It does not install terminal
+components or run terminal-only timers. Explicit Git stats commands still collect
+fresh stats. Other extensions' RPC statuses/widgets are untouched.
+
 ## Dependency role
 
 `neo-bar` is a shared dependency for other extensions in this repository.

@@ -96,6 +96,12 @@ import {
 	SkillStatsTracker,
 } from "./skill-stats";
 
+// Pi 1.x exposes mode at runtime; older published context types omit it.
+// hasUI also includes RPC dialogs, so it is not a terminal capability check.
+function isTuiContext(ctx: ExtensionContext | undefined): boolean {
+	return ctx?.hasUI === true && (ctx as ExtensionContext & { mode?: string }).mode === "tui";
+}
+
 const SECTION_DELIMITER = "  ";
 const SECTION_GAP = visibleWidth(SECTION_DELIMITER);
 const COMPACT_ITEM_JOIN_SEPARATOR = "·";
@@ -1763,7 +1769,7 @@ async function showNeoBarContractUI(
 	displayMode: NeoBarDisplayMode,
 	aliases: NeoBarAliasConfig,
 ): Promise<void> {
-	if (!ctx.hasUI) return;
+	if (!isTuiContext(ctx)) return;
 
 	const layout = displayMode === "new" ? BORDER_PRIORITY_NEO_BAR_LAYOUT : DEFAULT_NEO_BAR_LAYOUT;
 
@@ -2152,7 +2158,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	const installFooter = (ctx: ExtensionContext): void => {
-		if (!ctx.hasUI) return;
+		if (!isTuiContext(ctx)) return;
 		if (footerOwnerContext === ctx) return;
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
@@ -2341,7 +2347,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	};
 
 	const installEditorFrameStatus = (ctx: ExtensionContext): void => {
-		if (!ctx.hasUI) return;
+		if (!isTuiContext(ctx)) return;
 		if (editorOwnerContext === ctx) return;
 
 		previousEditorFactory = ctx.ui.getEditorComponent();
@@ -2423,13 +2429,13 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	 * animation; other modes keep pi's default animated spinner.
 	 */
 	const applyWorkingIndicator = (ctx: ExtensionContext): void => {
-		if (!ctx.hasUI) return;
+		if (!isTuiContext(ctx)) return;
 		ctx.ui.setWorkingIndicator(displayMode === "new" ? { frames: [] } : undefined);
 	};
 
 	const bindContextAndRender = (ctx: ExtensionContext): void => {
 		lastContext = ctx;
-		if (ctx.hasUI) {
+		if (isTuiContext(ctx)) {
 			installFooter(ctx);
 			installEditorFrameStatus(ctx);
 			applyWorkingIndicator(ctx);
@@ -2489,6 +2495,9 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	// The working tree can change at any of these points; the watcher debounces
 	// and only re-renders when the counters actually changed.
 	const refreshGitStats = async (_event: unknown, ctx: ExtensionContext): Promise<void> => {
+		// Automatic collection only feeds terminal labels. Explicit stats commands
+		// remain available in RPC, without a background debounce timer.
+		if (!isTuiContext(ctx)) return;
 		gitStatsWatcher.schedule(ctx.cwd);
 	};
 
@@ -2520,7 +2529,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		lockMode = false;
-		if (ctx.hasUI) {
+		if (isTuiContext(ctx)) {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setWorkingIndicator();
 		}
@@ -2530,7 +2539,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		if (editorOwnerContext === ctx) {
 			frameEditor?.stopWorkingAnimation();
 			frameEditor = undefined;
-			if (ctx.hasUI) ctx.ui.setEditorComponent(previousEditorFactory);
+			if (isTuiContext(ctx)) ctx.ui.setEditorComponent(previousEditorFactory);
 			editorOwnerContext = undefined;
 			previousEditorFactory = undefined;
 			requestEditorRender = undefined;
@@ -2607,7 +2616,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.events.on(STATUS_BAR_EVENTS.rewirePreview, (payload) => {
-		if (!isRewireSetPayload(payload)) return;
+		if (!isTuiContext(lastContext) || !isRewireSetPayload(payload)) return;
 		rewirePreview.show({
 			model: payload.model.trim(),
 			thinkingLevel: payload.thinkingLevel.trim(),
