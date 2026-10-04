@@ -62,6 +62,24 @@ err: warn ...
 `from:"last"` advances the `agent` cursor. `/px:proc logs` uses the separate
 `user` cursor, so viewing logs by hand does not consume what the agent sees.
 
+### Partial-line bounds and truncation
+
+Each stdout/stderr stream decodes UTF-8 incrementally and retains only the first
+16,384 decoded UTF-16 code units of a pending line (including ANSI escapes).
+Further characters are discarded until CR, LF, or process exit. That boundary
+emits **one** line with `…[truncated N raw code units]`; it does not invent lines
+or advance cursors while output is still newline-free. The counter saturates at
+`Number.MAX_SAFE_INTEGER`. Even discarded whitespace produces a truncation notice.
+The retained prefix still has ANSI escapes stripped, blank lines skipped, and
+clean text shortened to 4,096 code units with the existing `…(+N)` marker.
+The two markers count different things: clean-prefix shortening versus discarded
+raw input. Partial fragments are not included in `logLines` / `logBytes`.
+
+After updating this extension, `/reload` affects newly launched processes.
+Processes already running with older data handlers keep those handlers; relaunch
+those processes to apply the new partial-output bounds. No processes are stopped
+by installation or reload.
+
 ## Processes widget (panels)
 
 `proc` publishes its non-interactive Processes content to the [`panels`](../panels/README.md)

@@ -7,6 +7,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type Component, Key, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { parseRunCommand } from "./command.ts";
+import { BoundedLineParser } from "./output.ts";
 import {
 	PROC_STOP_ALL_MAX_WAIT_MS,
 	PROC_STOP_ALL_REPLY_EVENT,
@@ -39,7 +40,6 @@ const ANSI_YELLOW = "\u001b[38;5;220m";
 const ANSI_RED = "\u001b[38;5;196m";
 const ANSI_GRAY = "\u001b[38;5;245m";
 
-const MAX_LINE_LENGTH = 4096;
 const STOP_ESCALATE_MS = 3000;
 const DEFAULT_LOG_LINES = 5000;
 const DEFAULT_LOG_BYTES = 2_000_000;
@@ -102,7 +102,7 @@ interface ProcRecord {
 	/** Absolute line number of `lines[0]`; grows as the ring buffer trims the front. */
 	baseLine: number;
 	bytes: number;
-	pending: Record<StreamKind, string>;
+	pending: Record<StreamKind, BoundedLineParser>;
 	cursors: Map<string, number>;
 	stopTimers: ReturnType<typeof setTimeout>[];
 	retentionTimer?: ReturnType<typeof setTimeout>;
@@ -153,20 +153,6 @@ function loadConfig(): ProcConfig {
 
 function config(): ProcConfig {
 	return globalState.config;
-}
-
-function stripAnsi(text: string): string {
-	return text
-		.replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-		.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-		.replace(/\u001b[@-Z\\-_]/g, "");
-}
-
-function normalizeLine(raw: string): string | undefined {
-	const clean = stripAnsi(raw);
-	if (clean.trim().length === 0) return undefined;
-	if (clean.length <= MAX_LINE_LENGTH) return clean;
-	return `${clean.slice(0, MAX_LINE_LENGTH)}…(+${clean.length - MAX_LINE_LENGTH})`;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -257,22 +243,12 @@ function pushLine(record: ProcRecord, source: StreamKind, text: string): void {
 }
 
 function feed(record: ProcRecord, source: StreamKind, chunk: Buffer | string): void {
-	const buffer = record.pending[source] + chunk.toString("utf8");
-	const parts = buffer.split(/\r\n|\n|\r/);
-	record.pending[source] = parts.pop() ?? "";
-	for (const part of parts) {
-		const line = normalizeLine(part);
-		if (line !== undefined) pushLine(record, source, line);
-	}
+	record.pending[source].feed(chunk, (line) => pushLine(record, source, line));
 }
 
 function flushPending(record: ProcRecord): void {
 	for (const source of ["out", "err"] as const) {
-		const pending = record.pending[source];
-		record.pending[source] = "";
-		if (!pending) continue;
-		const line = normalizeLine(pending);
-		if (line !== undefined) pushLine(record, source, line);
+		record.pending[source].flush((line) => pushLine(record, source, line));
 	}
 }
 
@@ -521,7 +497,7 @@ function startProcess(ctx: ExtensionContext, params: RunParams): ProcRecord {
 		lines: [],
 		baseLine: 0,
 		bytes: 0,
-		pending: { out: "", err: "" },
+		pending: { out: new BoundedLineParser(), err: new BoundedLineParser() },
 		cursors: new Map(),
 		stopTimers: [],
 		waiters: new Set(),
