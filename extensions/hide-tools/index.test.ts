@@ -271,3 +271,121 @@ test("compact status changes from dot to check or x as results arrive", async ()
 	await command("full -s", { mode: "tui", hasUI: true, ui });
 	expect(lines()).toHaveLength(0);
 });
+
+function setupChat(children: any[]) {
+	const chat = { children };
+	let frames = 0;
+	const tui: any = { layoutRoot: { children: [chat] }, doRender() { frames++; }, requestRender() { this.doRender(); } };
+	let command!: (args: string, ctx: any) => Promise<void>;
+	let session!: (event: any, ctx: any) => Promise<void>;
+	const ui = {
+		theme: { fg: (_color: string, text: string) => text },
+		setWidget: (_key: string, factory: any) => factory(tui, ui.theme),
+		notify() {},
+	};
+	const api: any = {
+		registerShortcut() {},
+		registerCommand: (_name: string, options: any) => { command = options.handler; },
+		on: (_name: string, handler: any) => { session = handler; },
+	};
+	hideToolsExtension(api);
+	const ctx = { mode: "tui", hasUI: true, ui };
+	return { chat, tui, ctx, frames: () => frames, command: (args: string) => command(args, ctx),
+		session: (reason: string) => session({ reason }, ctx), reload: () => hideToolsExtension(api) };
+}
+
+test("unchanged frames preserve tree and lines but still render live tool details", async () => {
+	const tool = new ToolExecutionComponent("tool");
+	const h = setupChat([tool]);
+	await h.command("compact -s");
+	const tree = h.chat.children;
+	const line = tree[0];
+	const frames = h.frames();
+	for (let i = 0; i < 10; i++) h.tui.doRender();
+	expect(h.frames()).toBe(frames + 10);
+	expect(h.chat.children).toBe(tree);
+	expect(h.chat.children[0]).toBe(line);
+	tool.args.command = "echo updated";
+	tool.result = { isError: false };
+	h.tui.doRender();
+	expect(h.chat.children[0]).toBe(line);
+	expect(line.render(80)[0]).toContain("✓ bash echo updated");
+	line.handleMouse({ type: "click", button: "left" });
+	h.tui.doRender();
+	expect(tool.hideComponent).toBe(false);
+	expect(h.chat.children[0]).not.toBe(line);
+	await h.command("peek off -s");
+	expect(h.chat.children[0].handleMouse).toBeUndefined();
+	tool.hideComponent = true; // Upstream reset of our visibility must be repaired.
+	h.tui.doRender();
+	expect(tool.hideComponent).toBe(false);
+	const replacement = new ToolExecutionComponent("replacement");
+	h.chat.children = [replacement];
+	h.tui.doRender();
+	expect(replacement.hideComponent).toBe(true);
+	expect(h.chat.children[0].render(80)[0]).toContain("bash");
+});
+
+test("streaming assistant visibility and regenerated thinking invalidate unchanged messages", async () => {
+	class MouseRegion {}
+	class Spacer {}
+	const assistant: any = new AssistantMessageComponent();
+	assistant.lastMessage = { content: [{ type: "thinking", thinking: "hmm" }] };
+	assistant.contentContainer = { children: [new MouseRegion(), new Spacer()] };
+	assistant.invalidate = () => { assistant.contentContainer.children = [new MouseRegion(), new Spacer(), "text"]; };
+	const tool = new ToolExecutionComponent("tool");
+	const h = setupChat([assistant, tool]);
+	await h.command("hidden -s");
+	expect(assistant.render()).toEqual([]);
+	assistant.lastMessage.content.push({ type: "text", text: "Streaming" });
+	h.tui.doRender();
+	expect(assistant.render()).not.toEqual([]);
+	expect(assistant.contentContainer.children).toEqual([]);
+	assistant.contentContainer.children = [new MouseRegion(), new Spacer(), "updated text"];
+	h.tui.doRender();
+	expect(assistant.contentContainer.children).toEqual(["text"]); // invalidate rebuilt the mock's latest message
+	const summary = h.chat.children.find((child) => child.__px_hide_tools_line === "summary");
+	summary.handleMouse({ type: "click", button: "left" });
+	h.tui.doRender();
+	expect(tool.hideComponent).toBe(false);
+	assistant.lastMessage.content = [];
+	assistant.lastMessage.stopReason = "aborted";
+	h.tui.doRender();
+	expect(assistant.render()).not.toEqual([]);
+	await h.command("full -s");
+	expect(assistant.contentContainer.children[0]).toBeInstanceOf(MouseRegion);
+	expect(h.chat.children.some((child) => child.__px_hide_tools_line)).toBe(false);
+});
+
+test("running reveal timer invalidates an otherwise unchanged frame", async () => {
+	process.env.PI_HIDE_TOOLS_RUNNING_DELAY_MS = "10";
+	const tool = new ToolExecutionComponent("tool");
+	tool.executionStarted = tool.isPartial = true;
+	const h = setupChat([tool]);
+	await h.command("compact-running -s");
+	expect(tool.hideComponent).toBe(true);
+	await new Promise((resolve) => setTimeout(resolve, 60));
+	expect(tool.hideComponent).toBe(false);
+	expect(h.chat.children).toEqual([tool]);
+	tool.isPartial = false;
+	tool.result = { isError: false };
+	h.tui.doRender();
+	expect(tool.hideComponent).toBe(true);
+	expect((globalThis as any)[stateKey].runningTimers.size).toBe(0);
+});
+
+test("reload and session start discard snapshots without stacking render wrappers", async () => {
+	const h = setupChat([new ToolExecutionComponent("tool")]);
+	await h.command("compact -s");
+	const oldLine = h.chat.children[0];
+	const wrapped = h.tui.doRender;
+	h.reload();
+	await h.command("compact -s");
+	expect(h.tui.doRender).toBe(wrapped);
+	expect(h.chat.children[0]).not.toBe(oldLine);
+	const reloadLine = h.chat.children[0];
+	await h.session("reload");
+	h.tui.doRender();
+	expect(h.chat.children[0]).not.toBe(reloadLine);
+	expect((globalThis as any)[stateKey].mode).toBe("compact");
+});

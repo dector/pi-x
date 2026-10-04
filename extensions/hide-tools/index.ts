@@ -449,10 +449,47 @@ function showAssistant(component: AnyRecord): void {
 	}
 }
 
-/** Re-apply the current mode to the chat container. Runs before every frame. */
+/** Module-local so reloads cannot reuse a snapshot made by older logic. */
+let chatSnapshots = new WeakMap<object, unknown[]>();
+
+/**
+ * Only capture inputs that affect transcript structure/visibility. Compact lines
+ * read args and status live, and the original TUI still renders every frame.
+ * Include our output identities too: pi can replace children or reset visibility
+ * in place while streaming, even when the message/component itself is unchanged.
+ */
+function chatSnapshot(container: AnyRecord): unknown[] {
+	const current = state();
+	const snapshot: unknown[] = [current.mode, current.peek, ...current.revealedTools, null, ...current.revealedRuns];
+	for (const child of container.children) {
+		snapshot.push(child);
+		if (isToolEntry(child)) {
+			snapshot.push(
+				toolId(child), child.executionStarted, child.isPartial, isToolError(child),
+				child.hideComponent,
+				current.mode === "compact-running" && isRunningLongEnough(child),
+			);
+		} else if (isAssistant(child)) {
+			snapshot.push(hasVisibleText(child), child.render, child.contentContainer);
+			const content = child.contentContainer?.children;
+			if (Array.isArray(content)) snapshot.push(...content);
+			// Delimit content lists so adjacent assistant entries cannot alias.
+			snapshot.push(null);
+		}
+	}
+	return snapshot;
+}
+
+/** Re-apply the mode only when transcript structure/visibility has changed. */
 function sync(tui: AnyRecord | undefined): void {
 	const container = findChat(tui);
 	if (!container) return;
+
+	const snapshot = chatSnapshot(container);
+	const previous = chatSnapshots.get(container);
+	if (previous?.length === snapshot.length && snapshot.every((value, index) => value === previous[index])) return;
+	// Do not retain a successful snapshot if rebuilding throws halfway through.
+	chatSnapshots.delete(container);
 
 	if (container.children.some(isInsertedLine)) {
 		container.children = container.children.filter((child: unknown) => !isInsertedLine(child));
@@ -534,6 +571,8 @@ function sync(tui: AnyRecord | undefined): void {
 			previousTool = true;
 		}
 	}
+	// Capture after our own mutations, not the unfiltered input tree.
+	chatSnapshots.set(container, chatSnapshot(container));
 }
 
 /**
@@ -658,6 +697,7 @@ function handleCommand(args: string, ctx: ExtensionContext): void {
 
 export default function hideToolsExtension(pi: ExtensionAPI): void {
 	globalRecord()[SYNC_KEY] = (target: AnyRecord) => sync(target);
+	chatSnapshots = new WeakMap();
 
 	// Adopt the saved settings before the first frame is drawn.
 	const loaded = loadConfig();
@@ -699,6 +739,7 @@ export default function hideToolsExtension(pi: ExtensionAPI): void {
 		for (const timer of current.runningTimers.values()) clearTimeout(timer);
 		current.runningTimers.clear();
 		current.runningSince.clear();
+		chatSnapshots = new WeakMap();
 		// Keep the peek flags (and the mode on reload); re-resolve the chat.
 		state().chat = undefined;
 		capture(ctx);
