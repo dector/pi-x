@@ -2462,7 +2462,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 					onToggleGust: () => {
 						pi.events.emit(GUST_HOLD_TOGGLE_EVENT, { ctx });
 					},
-					isGustEnabled: () => !gustHoldEnabled,
+					isGustEnabled: () => gustHoldEnabled,
 					isGustAvailable: () => gustAvailable,
 					onShowPromptPreviews: async () => {
 						await showPromptPreviewDialog(ctx);
