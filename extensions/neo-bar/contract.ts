@@ -5,6 +5,7 @@ export const STATUS_BAR_EVENTS = {
 	firstLineClear: "px:status-bar:first-line:clear",
 	rewireSet: "px:status-bar:rewire:set",
 	rewireClear: "px:status-bar:rewire:clear",
+	rewirePreview: "px:status-bar:rewire:preview",
 	subagentDepthSet: "px:status-bar:subagent-depth:set",
 	subagentDepthClear: "px:status-bar:subagent-depth:clear",
 	reviewLevelSet: "px:status-bar:review-level:set",
@@ -70,6 +71,16 @@ export interface NeoBarRewireSetPayload {
 	/** The parent model and thinking level are both resolved when true. */
 	inheritAll?: boolean;
 }
+
+/**
+ * A short-lived preview of a rewire target change. It uses its own channel so it
+ * never marks rewiring enabled: consumers that infer the persistent enabled state
+ * from {@link STATUS_BAR_EVENTS.rewireSet} and
+ * {@link STATUS_BAR_EVENTS.rewireClear} stay untouched. `neo-bar` shows it in the
+ * usual rewire location in muted gray for one second, then falls back to the
+ * persistent state.
+ */
+export type NeoBarRewirePreviewPayload = NeoBarRewireSetPayload;
 
 export interface NeoBarSubagentDepthSetPayload {
 	depth: number;

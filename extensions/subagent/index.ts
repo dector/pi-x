@@ -232,6 +232,9 @@ const HUB_PERMISSION_TIMEOUT_MS = 10 * 60_000;
 
 const STATUS_BAR_REWIRE_SET_EVENT = "px:status-bar:rewire:set";
 const STATUS_BAR_REWIRE_CLEAR_EVENT = "px:status-bar:rewire:clear";
+// A separate channel from set/clear: neo-bar shows a one-second muted preview and
+// consumers (like pi-ui) that infer the enabled state from set/clear stay untouched.
+const STATUS_BAR_REWIRE_PREVIEW_EVENT = "px:status-bar:rewire:preview";
 const STATUS_BAR_SUBAGENT_DEPTH_SET_EVENT = "px:status-bar:subagent-depth:set";
 const STATUS_BAR_SUBAGENT_DEPTH_CLEAR_EVENT = "px:status-bar:subagent-depth:clear";
 const SUBAGENT_REWIRE_TOGGLE_EVENT = "px:subagent:rewire:toggle";
@@ -2125,7 +2128,7 @@ export default function (pi: ExtensionAPI) {
 				model,
 				thinkingLevel: thinkingLevel as ThinkingLevel,
 			});
-			ctx.ui.notify(`Rewire target set to ${model} · ${thinkingLevel} (rewiring ${rewireConfig?.enabled ? "on" : "off"}).`, "info");
+			pi.events.emit(STATUS_BAR_REWIRE_PREVIEW_EVENT, { model, thinkingLevel });
 			if (typeof onApplied === "function") (onApplied as (enabled: boolean) => void)(rewireConfig!.enabled);
 		});
 

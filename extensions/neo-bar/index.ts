@@ -74,6 +74,7 @@ import {
 	mergeFirstLineEntries,
 	sanitizeStatusText,
 } from "./compose";
+import { RewirePreview, resolveRewireDisplay } from "./rewire-preview";
 import {
 	collectGitSnapshot,
 	dirtyStats,
@@ -1290,7 +1291,7 @@ function isFirstLineClearPayload(value: unknown): value is NeoBarFirstLineClearP
 	return typeof maybe.id === "string";
 }
 
-function isRewireSetPayload(value: unknown): value is NeoBarRewireSetPayload {
+export function isRewireSetPayload(value: unknown): value is NeoBarRewireSetPayload {
 	if (!value || typeof value !== "object") return false;
 	const maybe = value as Partial<NeoBarRewireSetPayload>;
 	return (
@@ -2067,8 +2068,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		return items.join(joinSeparator);
 	};
 
-	const hasFirstLineContent = (): boolean => {
-		if (rewireTarget) return true;
+	const hasFirstLineContent = (hasRewire: boolean): boolean => {
+		if (hasRewire) return true;
 		const entries = mergeFirstLineEntries(
 			firstLineById.entries(),
 			internalFirstLineEntries(),
@@ -2081,6 +2082,11 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		requestFooterRender?.();
 		requestEditorRender?.();
 	};
+
+	// One-shot muted preview of a rewire-target change. Its own channel keeps it
+	// separate from the persistent enabled indicator, and it is only touched by
+	// preview/state/session events, never by a render or model refresh.
+	const rewirePreview = new RewirePreview({ onExpire: requestRender });
 
 	// Git dirty totals live inside the status bar (single consumer), so the
 	// watcher feeds local state instead of a first-line producer contract.
@@ -2160,16 +2166,17 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 							})
 						: undefined;
 
-					const rewireContent = rewireTarget
+					const rewireDisplay = resolveRewireDisplay(rewireTarget, rewirePreview.current);
+					const rewireContent = rewireDisplay
 						? theme.fg(
-								"error",
+								rewireDisplay.colorToken,
 								formatRewireStatusLabel(
-									rewireTarget.model,
-									rewireTarget.thinkingLevel,
+									rewireDisplay.target.model,
+									rewireDisplay.target.thinkingLevel,
 									providerAliases,
 									modelAliases,
-									rewireTarget.inherit,
-									rewireTarget.inheritAll,
+									rewireDisplay.target.inherit,
+									rewireDisplay.target.inheritAll,
 								),
 							)
 						: undefined;
@@ -2178,7 +2185,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 						compactFrame ? relocatedBorderLabels.contextLabel : undefined,
 					);
 					let line1: string;
-					if (hasFirstLineContent()) {
+					if (hasFirstLineContent(rewireDisplay !== undefined)) {
 						const firstLineJoinSeparator = theme.fg("muted", NEO_BAR_JOIN_SEPARATOR);
 						const hasAttensionCore = hasVisibleText(firstLineById.get(ATTENSION_CORE_ID)?.content);
 						const attensionCoreSuffix = hasAttensionCore ? defaultFirstLine : undefined;
@@ -2401,6 +2408,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		// Only an active session may apply live network/progress `changed` events.
+		rewirePreview.cancel();
 		networkStore.activate();
 		progressStore.activate();
 		skillStatsTracker.startSession(countSessionSkills(ctx));
@@ -2411,6 +2419,7 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
+		rewirePreview.cancel();
 		networkStore.activate();
 		progressStore.activate();
 		bindContextAndRender(ctx);
@@ -2497,6 +2506,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 		skillStatsTracker.reset();
 		skillStats = undefined;
 		requestFooterRender = undefined;
+		// Drop a pending preview so a shutdown cannot leave a stale muted label.
+		rewirePreview.cancel();
 	});
 
 	pi.events.on(STATUS_BAR_EVENTS.set, (payload) => {
@@ -2532,6 +2543,8 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(STATUS_BAR_EVENTS.rewireSet, (payload) => {
 		if (!isRewireSetPayload(payload)) return;
+		// A real state update replaces any in-flight preview immediately.
+		rewirePreview.cancel();
 		rewireTarget = {
 			model: payload.model.trim(),
 			thinkingLevel: payload.thinkingLevel.trim(),
@@ -2542,7 +2555,19 @@ export default function statusBarExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.events.on(STATUS_BAR_EVENTS.rewireClear, () => {
+		rewirePreview.cancel();
 		rewireTarget = undefined;
+		requestRender();
+	});
+
+	pi.events.on(STATUS_BAR_EVENTS.rewirePreview, (payload) => {
+		if (!isRewireSetPayload(payload)) return;
+		rewirePreview.show({
+			model: payload.model.trim(),
+			thinkingLevel: payload.thinkingLevel.trim(),
+			...(payload.inherit ? { inherit: true } : {}),
+			...(payload.inheritAll ? { inheritAll: true } : {}),
+		});
 		requestRender();
 	});
 
