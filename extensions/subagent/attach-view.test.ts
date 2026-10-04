@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { ATTACH_POLL_INTERVAL_MS, AttachView, type AttachEditor, type AttachViewTimers } from "./attach-view.ts";
 import type { SingleResult } from "./types.ts";
@@ -165,6 +165,71 @@ function makeView(options: {
 }
 
 describe("AttachView", () => {
+	test("reuses finalized blocks but always renders the streaming tail", () => {
+		const { view, result } = makeView({ timers: makeFakeTimers().timers });
+		const render = spyOn(view as any, "renderBlock");
+		view.render(80);
+		expect(render).toHaveBeenCalledTimes(3);
+		view.render(80);
+		expect(render).toHaveBeenCalledTimes(3);
+		result.liveText = "live one";
+		view.render(80);
+		result.liveText = "live two";
+		expect(view.render(80).join("\n")).toContain("live two");
+		expect(render).toHaveBeenCalledTimes(5);
+		view.handleInput(UP);
+		view.render(80);
+		expect(render).toHaveBeenCalledTimes(6); // only the streaming tail
+		view.dispose();
+	});
+
+	test("cached output matches a fresh view after mutations and layout changes", () => {
+		const result = makeResult();
+		const { view } = makeView({ result, timers: makeFakeTimers().timers });
+		let expanded = false;
+		const check = (width = 80) => {
+			const fresh = makeView({ result, timers: makeFakeTimers().timers }).view;
+			if (expanded) fresh.handleInput(CTRL_O);
+			expect(view.render(width)).toEqual(fresh.render(width));
+			fresh.dispose();
+		};
+		check();
+		result.toolRuns![0].status = "running";
+		result.toolRuns![0].summary = "waiting";
+		check();
+		(result.messages[1] as any).content[0].arguments.path = "changed.ts";
+		check();
+		view.handleInput(CTRL_O);
+		expanded = true;
+		check();
+		check(24);
+		result.messages.push({ role: "assistant", content: [{ type: "text", text: "final answer" }] } as never);
+		result.liveText = "final answer"; // duplicate tail suppression
+		check();
+		result.state = "settled";
+		result.exitCode = 0;
+		check();
+		result.messages.splice(0, 2);
+		check();
+		view.dispose();
+	});
+
+	test("invalidate refreshes styled cached lines on an in-place theme change", () => {
+		let marker = "old";
+		const result = makeResult();
+		const view = new AttachView({
+			getResult: () => result,
+			getRun: () => ({ runId: "test", agentName: "worker", startedAt: 0 }),
+			theme: { fg: (_color, text) => `${marker}:${text}`, bold: (text) => text },
+			requestRender: () => {}, done: () => {}, timers: makeFakeTimers().timers,
+		});
+		view.render(80);
+		marker = "new";
+		view.invalidate();
+		expect(view.render(80).join("\n")).toContain("new:assistant");
+		expect(view.render(80).join("\n")).not.toContain("old:");
+		view.dispose();
+	});
 	test("renders a header, task, transcript, and follows the tail initially", () => {
 		const { view } = makeView();
 		const lines = view.render(100);

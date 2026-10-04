@@ -135,6 +135,10 @@ export interface AttachViewOptions {
 export class AttachView implements Component, Focusable {
 	private readonly viewport = new TranscriptViewport();
 	private expanded = false;
+	// One entry per transcript position, not an ever-growing map of revisions.
+	private blockCache: Array<{ key: unknown[]; lines: string[] } | undefined> = [];
+	private cacheWidth = 0;
+	private cacheExpanded = false;
 	private pollTimer: ReturnType<typeof setInterval> | undefined;
 	private disposed = false;
 	private closed = false;
@@ -226,7 +230,14 @@ export class AttachView implements Component, Focusable {
 
 		const taskLines = this.renderTask(result.task, w);
 		const body: string[] = [];
-		for (const block of buildTranscript(result, { includeTask: false })) body.push(...this.renderBlock(block, w));
+		const blocks = buildTranscript(result, { includeTask: false });
+		if (this.cacheWidth !== w || this.cacheExpanded !== this.expanded) this.blockCache = [];
+		this.cacheWidth = w;
+		this.cacheExpanded = this.expanded;
+		for (let index = 0; index < blocks.length; index++) {
+			body.push(...this.renderCachedBlock(blocks[index], index, w));
+		}
+		this.blockCache.length = blocks.length;
 
 		const statusLines = this.renderStatusLines(w, readOnly);
 		const editorLines = this.renderEditor(w, readOnly);
@@ -470,7 +481,9 @@ export class AttachView implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		// Rendering is recomputed from live state on every frame; nothing cached.
+		// Theme objects can be mutated in place; the host calls invalidate on
+		// theme changes. Never retain styled lines across that boundary.
+		this.blockCache = [];
 	}
 
 	/**
@@ -614,6 +627,29 @@ export class AttachView implements Component, Focusable {
 		const last = clipped[maxLines - 1] ?? "";
 		clipped[maxLines - 1] = truncateToWidth(last, width, "…");
 		return clipped;
+	}
+
+	private renderCachedBlock(block: TranscriptBlock, index: number, width: number): string[] {
+		if ((block.type === "assistant" || block.type === "thinking") && block.streaming) {
+			this.blockCache[index] = undefined;
+			return this.renderBlock(block, width);
+		}
+		// Blocks are rebuilt each poll. Compare their scalar content, and snapshot
+		// tool arguments so in-place mutations cannot reuse stale rendered lines.
+		let key: unknown[];
+		try {
+			key = Object.entries(block).map(([name, value]) => name === "args" ? JSON.stringify(value) : value);
+		} catch {
+			this.blockCache[index] = undefined;
+			return this.renderBlock(block, width);
+		}
+		const cached = this.blockCache[index];
+		if (cached && cached.key.length === key.length && key.every((value, i) => Object.is(value, cached.key[i]))) {
+			return cached.lines;
+		}
+		const lines = this.renderBlock(block, width);
+		this.blockCache[index] = { key, lines };
+		return lines;
 	}
 
 	private renderBlock(block: TranscriptBlock, width: number): string[] {
