@@ -46,6 +46,15 @@ Producers publish content to the shared event bus:
   - omitted `section` defaults to `left`
 - `px:status-bar:first-line:clear`
   - payload: `{ id: string }`
+- `px:status-bar:rewire:set`
+  - payload: `{ model: string, thinkingLevel: string, inherit?: boolean, inheritAll?: boolean }`
+  - shows the persistent red rewire indicator
+- `px:status-bar:rewire:clear`
+  - payload: `{}`
+  - removes the persistent rewire indicator
+- `px:status-bar:rewire:preview`
+  - payload: same shape as `rewire:set`
+  - shows a muted-gray preview in the usual rewire location for 1.5 seconds; it never marks rewiring enabled, repeated previews restart the timeout, and the persistent state returns when it expires
 - `px:status-bar:ping`
   - payload: `{ id: string }`
 - `px:status-bar:pong`

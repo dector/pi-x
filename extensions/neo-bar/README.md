@@ -77,6 +77,16 @@ When `neo-bar` receives a valid ping payload, it emits a pong payload echoing th
   third status line. Provider and model aliases are applied, for example
   `󰚩 ⇢cdx/5.6-sol · high`. Inherited `Inherit model` shows
   `󰚩 ⇢Inherit · <effort>` with the configured effort, while `Inherit All` shows only `󰚩 ⇢Inherit`.
+- Rewire events:
+  - `px:status-bar:rewire:set` with `{ model, thinkingLevel, inherit?, inheritAll? }`
+    shows the persistent red indicator.
+  - `px:status-bar:rewire:clear` removes it.
+  - `px:status-bar:rewire:preview` with the same payload shows a muted-gray
+    preview in the same location for 1.5 seconds. It is a distinct channel, so it
+    never marks rewiring enabled; after the timeout the persistent state returns
+    (red when enabled, hidden when disabled). Repeated previews restart the
+    timeout, and a real set/clear or session start/tree/shutdown cancels a pending
+    preview. Renders and model refreshes do not touch it.
 - `new` display mode appends the context token breakdown to the first-line right
   section above 60 columns, after the producer items (including the skill counter).
   In compact mode it moves to the second-line right, and git stats take its first-line
