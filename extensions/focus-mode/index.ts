@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { basename } from "node:path";
 import { FocusModeConfigDialog, type LiveMode } from "./config";
 import { USAGE, focusModeCompletions, parseFocusModeCommand } from "./command";
 import { loadGlobalState, saveGlobalState, type FocusModeStateV1 } from "./state";
@@ -13,6 +14,27 @@ function isInteractiveTerminal(): boolean {
 	const stdout = process.stdout as { isTTY?: boolean };
 	const stdin = process.stdin as { isTTY?: boolean };
 	return stdout.isTTY === true && stdin.isTTY === true;
+}
+
+/** The factory has no context; exclude protocol/one-shot CLI launches before the first frame. */
+function allowsEarlyTerminalSetup(): boolean {
+	// Unknown embedded hosts must wait for an authoritative session context.
+	const entry = basename(process.argv[1] ?? "");
+	if (entry !== "pi" && entry !== "pi.exe" && !/^(pi|cli)\.[cm]?[jt]s$/.test(entry)) return false;
+	const args = process.argv.slice(2);
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--") break;
+		if (arg === "-p" || arg === "--print") return false;
+		if (arg === "--mode" && args[++i] !== "text") return false;
+		if (arg.startsWith("--mode=") && arg !== "--mode=text") return false;
+	}
+	return isInteractiveTerminal();
+}
+
+// Installed Pi exposes mode; older repository declarations do not yet include it.
+function isTuiTerminal(ctx: ExtensionContext): boolean {
+	return ctx.hasUI === true && (ctx as ExtensionContext & { mode?: string }).mode === "tui" && isInteractiveTerminal();
 }
 
 function notify(ctx: ExtensionContext, message: string, type: "info" | "warning" | "error"): void {
@@ -35,12 +57,12 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 	};
 
 	/** Push a configuration into the terminal, and persist it unless it is session only. */
-	const applyState = (next: FocusModeStateV1, persist = true): { message: string; type: "info" | "warning" } => {
+	const applyState = (ctx: ExtensionContext, next: FocusModeStateV1, persist = true): { message: string; type: "info" | "warning" } => {
 		current = next;
 		publishState();
 		const saved = persist ? saveGlobalState(next) : { ok: true as const };
 
-		if (!isInteractiveTerminal()) {
+		if (!isTuiTerminal(ctx)) {
 			// The preference is still recorded, it just has nothing to apply to.
 			return { message: "focus: needs an interactive terminal, saved but not applied", type: "warning" };
 		}
@@ -54,7 +76,7 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 
 	/** `/px:focus config`: the settings dialog, which applies as you edit. */
 	const openConfig = async (ctx: ExtensionContext): Promise<void> => {
-		if (ctx.mode !== "tui" || !ctx.hasUI) {
+		if (!isTuiTerminal(ctx)) {
 			notify(ctx, "focus: config needs an interactive terminal", "warning");
 			return;
 		}
@@ -68,10 +90,10 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 					// A preview is the dialog moving the column under itself: applied
 					// to the terminal, never written, and undone if the dialog closes.
 					if (mode === "preview") {
-						if (isInteractiveTerminal()) viewport.configure({ enabled: next.enabled, target: next.width, bias: next.bias });
+						if (isTuiTerminal(ctx)) viewport.configure({ enabled: next.enabled, target: next.width, bias: next.bias });
 						return;
 					}
-					const { message, type } = applyState(next, mode === "persist");
+					const { message, type } = applyState(ctx, next, mode === "persist");
 					notify(ctx, message, type);
 				},
 				() => done(null),
@@ -83,8 +105,9 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 		});
 	};
 
-	// Applied at load time, before pi renders its first frame.
-	if (isInteractiveTerminal()) {
+	// Pi starts rendering before session_start. Preserve the initial TUI column,
+	// but never wrap protocol stdio merely because RPC was launched under a PTY.
+	if (allowsEarlyTerminalSetup()) {
 		viewport.configure({ enabled: current.enabled, target: current.width, bias: current.bias });
 	}
 
@@ -92,7 +115,11 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 		// Let listeners (the pi-ui quick actions dialog) sync their badge even
 		// when this terminal cannot show the reading column.
 		publishState();
-		if (!isInteractiveTerminal()) return;
+		if (!isTuiTerminal(ctx)) {
+			// Defensive cleanup if a host selected a different mode than its argv.
+			viewport.restore();
+			return;
+		}
 
 		// Idempotent: only repaints when the screen moved since the last apply.
 		viewport.configure({ enabled: current.enabled, target: current.width, bias: current.bias });
@@ -102,6 +129,8 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 			if (ctx.hasUI) ctx.ui.notify(loadError, "warning");
 		}
 	});
+
+	pi.on("session_shutdown", () => viewport.restore());
 
 	const command = {
 		description: "Limit pi to a reading column (/px:focus [on [N]|off|set N|bias [N]|status])",
@@ -121,10 +150,10 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 			if (parsed.kind === "status") {
 				notify(
 					ctx,
-					isInteractiveTerminal()
+					isTuiTerminal(ctx)
 						? viewport.describe()
 						: `focus: on=${current.enabled} width=${current.width} bias=${current.bias} (not applied: no interactive terminal)`,
-					isInteractiveTerminal() ? "info" : "warning",
+					isTuiTerminal(ctx) ? "info" : "warning",
 				);
 				return;
 			}
@@ -151,7 +180,7 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 							: { ...current, enabled: false };
 
 			// `-s` applies it for this session and leaves the saved config alone.
-			const { message, type } = applyState(next, parsed.session !== true);
+			const { message, type } = applyState(ctx, next, parsed.session !== true);
 			notify(ctx, message, type);
 		},
 	};
@@ -168,7 +197,7 @@ export default function focusModeExtension(pi: ExtensionAPI): void {
 		if (!payload || typeof payload !== "object") return;
 		const ctx = (payload as { ctx?: ExtensionContext }).ctx;
 		if (!ctx) return;
-		const { message, type } = applyState({ ...current, enabled: !current.enabled });
+		const { message, type } = applyState(ctx, { ...current, enabled: !current.enabled });
 		notify(ctx, message, type);
 	});
 }

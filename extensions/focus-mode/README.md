@@ -37,7 +37,12 @@ saving it:
 
 The width, the bias and the on/off state are global and persist in
 `~/.pi/agent/space.dector-focus-mode.json`, so the choice applies from the first
-frame of the next session. `PI_FOCUS_MODE_STATE_PATH` overrides the location.
+frame of the next TUI CLI session. `PI_FOCUS_MODE_STATE_PATH` overrides the location.
+
+RPC, JSON and print mode never apply the column, even under a PTY. Commands
+still update preferences and broadcast state; `/px:focus config` remains TUI-only.
+Early setup checks the CLI entry point and mode/print arguments because Pi renders
+before `session_start`. Other embedded hosts wait for a TUI session context.
 
 Defaults are `on` at 100 columns, centered. On a screen that is already 100
 columns wide or narrower there is no margin at all: pi is told the real width
@@ -166,7 +171,9 @@ addresses columns with a small, fixed set of escape sequences. So:
 
 This deliberately avoids pi internals: it keeps working across
 regular/fullscreen mode switches, `/clear`, theme changes, and pi recreating its
-renderer. A `/reload` shares the same patch instead of stacking a second one.
+renderer. Repeated setup shares the same patch instead of stacking a second one.
+Session shutdown (including `/reload`) restores the original streams and cancels
+pending repaint timers; the next TUI load applies the saved preference again.
 
 ## Caveats
 
