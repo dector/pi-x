@@ -251,9 +251,10 @@ function setGlobalLastBellRingMs(ms: number): void {
 	(globalThis as Record<string, unknown>)[GLOBAL_BELL_LAST_RING_MS_KEY] = ms;
 }
 
-function ringBell(force = false): void {
+function ringBell(ctx: ExtensionContext, force = false): void {
+	// RPC hasUI can be true even under a PTY. Force only bypasses debounce.
+	if (!isTuiContext(ctx) || !ctx.hasUI || !process.stdout.isTTY) return;
 	if (!getGlobalBellEnabled()) return;
-	if (!process.stdout.isTTY) return;
 
 	const now = Date.now();
 	if (!force) {
@@ -960,7 +961,7 @@ type BellPatchableUIContext = ExtensionContext["ui"] & {
 };
 
 function patchUiInputBell(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
+	if (!isTuiContext(ctx) || !ctx.hasUI) return;
 
 	const ui = ctx.ui as BellPatchableUIContext;
 	if (ui[UI_INPUT_PATCH_FLAG]) return;
@@ -968,7 +969,7 @@ function patchUiInputBell(ctx: ExtensionContext): void {
 	const wrapPromptMethod = (methodName: "select" | "confirm" | "input" | "editor" | "custom") => {
 		const original = ui[methodName];
 		ui[methodName] = (async (...args: unknown[]) => {
-			ringBell();
+			ringBell(ctx);
 			return await (original as (...innerArgs: unknown[]) => Promise<unknown>).apply(ui, args);
 		}) as BellPatchableUIContext[typeof methodName];
 	};
@@ -982,13 +983,13 @@ function patchUiInputBell(ctx: ExtensionContext): void {
 }
 
 function notifyInputExpected(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
+	if (!isTuiContext(ctx) || !ctx.hasUI) return;
 	patchUiInputBell(ctx);
-	ringBell();
+	ringBell(ctx);
 }
 
 function notifyInputExpectedIfReady(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
+	if (!isTuiContext(ctx) || !ctx.hasUI) return;
 	if (!ctx.isIdle()) return;
 	if (ctx.hasPendingMessages()) return;
 	notifyInputExpected(ctx);
@@ -2166,7 +2167,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 	});
 
 	const ensureUiBellPatched = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
+		if (!isTuiContext(ctx) || !ctx.hasUI) return;
 		patchUiInputBell(ctx);
 	};
 
@@ -2348,7 +2349,7 @@ export default function piUiExtension(pi: ExtensionAPI): void {
 
 			setGlobalBellEnabled(bellEnabled);
 			notify(ctx, `pi-ui bell ${bellEnabled ? "enabled" : "disabled"}`);
-			if (bellEnabled) ringBell(true);
+			if (bellEnabled) ringBell(ctx, true);
 		},
 	});
 

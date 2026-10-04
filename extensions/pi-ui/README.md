@@ -19,11 +19,15 @@ Features:
 
 ### 2) Bell when user input is expected (default: on)
 
-Triggers a terminal bell (`\a`) whenever pi is waiting for user input, including:
+Triggers a terminal bell (`\a`) in TUI mode with a TTY stdout whenever pi is waiting for user input, including:
 
 - when the agent finishes and returns to input mode
 - extension-driven prompts (`select`, `confirm`, `input`, `editor`, `custom`)
 - session transitions that return to input mode (`session_start`, `session_switch`, `session_fork`, `session_tree`)
+
+RPC (even under a PTY), JSON, and print modes do not ring or wrap prompt methods.
+`/px:pi-ui-bell` still changes settings and sends supported notifications in RPC;
+forced bells do not bypass the TUI guard.
 
 ### 3) Ctrl+, action dialog (extensible command palette shell)
 
