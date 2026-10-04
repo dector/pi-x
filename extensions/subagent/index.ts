@@ -143,6 +143,7 @@ import { DEFAULT_STOP_ESCALATION_MS, RunStopController } from "./run-stop.ts";
 import { getFinalOutput, getRunningOutput, isFailedResult } from "./result-output.ts";
 import { formatSubagentError, subagentErrorEntry, SUBAGENT_ERROR_CUSTOM_TYPE, type SubagentErrorEntry } from "./subagent-error.ts";
 import { createRunIdGenerator } from "./run-id.ts";
+import { SessionInheritedRewireToggle } from "./rewire-inherit-toggle.ts";
 import { RewirePresetListView, type RewirePresetListResult } from "./rewire-preset-list.ts";
 import { formatRewireMenuToggle, RewireMenuView, type RewireMenuResult } from "./rewire-menu.ts";
 import {
@@ -1010,6 +1011,7 @@ export default function (pi: ExtensionAPI) {
 	// keep the snapshot they were prepared with. Inherited rewires intentionally
 	// re-read only the model when each child starts.
 	let rewireConfig: SubagentRewireConfig | undefined;
+	const inheritedRewireToggle = new SessionInheritedRewireToggle();
 	const presetFilePath = rewirePresetsPath(getAgentDir());
 	// Function/level mapping. Loaded per dispatch (like agents) so edits apply
 	// mid-session; a malformed user file falls back to the built-in default
@@ -2095,6 +2097,20 @@ export default function (pi: ExtensionAPI) {
 		pi.events.on(SUBAGENT_REWIRE_TOGGLE_EVENT, (payload) => {
 			const ctx = eventContext(payload);
 			if (ctx) void toggleRewire(ctx);
+		});
+		pi.events.on("px:subagent:rewire:inherit-all:toggle", (payload) => {
+			const ctx = eventContext(payload);
+			if (!ctx) return;
+			const config = rewireConfig ?? defaultRewireConfig(ctx);
+			if (!config) {
+				ctx.ui.notify("No active model is available for subagent rewiring.", "warning");
+			} else {
+				setRewireConfig(ctx, inheritedRewireToggle.toggle(
+					ctx.sessionManager.getSessionId(), config, readCurrentDispatchDefaults(ctx).model,
+				));
+			}
+			const { onApplied } = payload as { onApplied?: unknown };
+			if (typeof onApplied === "function") onApplied();
 		});
 		pi.events.on(SUBAGENT_REWIRE_MENU_EVENT, (payload) => {
 			const ctx = eventContext(payload);

@@ -30,6 +30,26 @@ const withTempAgentDir = async (run: () => Promise<void>) => {
 };
 
 describe("model presets", () => {
+	test("i toggles inherited rewiring without closing, but remains text during search", async () => {
+		let toggles = 0;
+		const ui = picker({
+			getMain: () => undefined,
+			getRewire: () => undefined,
+			onUse: async () => {},
+			onRewire: () => {},
+			onToggleInheritedRewire: () => { toggles++; },
+		});
+		ui.view.handleInput("i");
+		ui.view.handleInput("i");
+		expect(toggles).toBe(2);
+		ui.view.handleInput("/");
+		ui.view.handleInput("i");
+		expect(toggles).toBe(2);
+		expect(ui.view.render(200).join("\n")).toContain("/ i");
+		ui.view.handleInput("\x1b");
+		ui.view.handleInput("\x1b");
+		expect(await ui.result).toEqual({ type: "cancel" });
+	});
 	test("Ctrl+9 cycles favorite model and thinking level, skipping unavailable entries and wrapping", async () => {
 		await withTempAgentDir(async () => {
 			saveModelPresets([presets[0]!, { model: "provider/unavailable", thinkingLevel: "high" }, presets[1]!]);

@@ -41,6 +41,7 @@ type PickerActions = {
 	getRewire: () => ModelPreset | undefined;
 	onUse: (preset: ModelPreset) => Promise<void>;
 	onRewire: (preset: ModelPreset) => void;
+	onToggleInheritedRewire?: () => void;
 };
 export async function showModelPresetList(ctx: ExtensionContext, presets: ModelPreset[], initialIndex = 0, actions?: PickerActions, temporary: ModelPreset[] = []): Promise<PickerResult> {
 	return ctx.ui.custom<PickerResult>((tui, theme, kb, done) => {
@@ -92,7 +93,7 @@ export async function showModelPresetList(ctx: ExtensionContext, presets: ModelP
 				if (indices.length > count) lines.push(truncateToWidth(` ${selected + 1}/${indices.length}`, w));
 				lines.push("", truncateToWidth(theme.fg("dim", " 󰙴 main · ⇢rewire"), w), truncateToWidth(theme.fg("dim", searching
 					? " Type to filter · ↑/↓ move · Enter use · Ctrl+Enter rewire (Alt+Enter fallback) · Backspace edit · Esc clear"
-					: " / search · j/k navigate · Shift+j/k reorder · Enter use · Ctrl+Enter rewire (Alt+Enter fallback) · n new · d delete · Esc back"), w), "");
+					: " / search · j/k navigate · Shift+j/k reorder · Enter use · Ctrl+Enter rewire (Alt+Enter fallback) · i inherit all / restore rewire · n new · d delete · Esc back"), w), "");
 				return lines;
 			},
 			handleInput(data: string) {
@@ -118,6 +119,11 @@ export async function showModelPresetList(ctx: ExtensionContext, presets: ModelP
 					return;
 				}
 				if (applying) return;
+				if (!searching && data === "i" && actions?.onToggleInheritedRewire) {
+					actions.onToggleInheritedRewire();
+					tui.requestRender();
+					return;
+				}
 				const { items } = display();
 				const indices = searching ? matches(items) : items.map((_preset, index) => index);
 				const index = indices[selected];
@@ -268,6 +274,11 @@ export async function openModelPresets(pi: ExtensionAPI, ctx: ExtensionContext):
 			// with the newly applied thinking level.
 			getMain: () => selectedMain ?? (ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinkingLevel: pi.getThinkingLevel() } : undefined),
 			getRewire: rewireState,
+			onToggleInheritedRewire: () => {
+				let applied = false;
+				pi.events.emit("px:subagent:rewire:inherit-all:toggle", { ctx, onApplied: () => { applied = true; } });
+				if (!applied) ctx.ui.notify("Could not toggle rewiring. Is the subagent extension loaded?", "warning");
+			},
 			onUse: async (preset) => {
 				const model = availableModels().find((item) => `${item.provider}/${item.id}` === preset.model);
 				if (!model || !availableThinkingLevels(model).includes(preset.thinkingLevel)) { ctx.ui.notify(`Preset unavailable: ${label(preset)}`, "warning"); return; }
