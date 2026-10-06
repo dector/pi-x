@@ -1154,18 +1154,22 @@ export default function (pi: ExtensionAPI) {
 			owner: "subagent",
 			sourceSessionId: request.sourceSessionId,
 			cwd: request.cwd,
-			state: { rewire: rewireConfig ? { ...rewireConfig } : undefined, delegationDepth },
+			state: {
+				rewire: rewireConfig ? { ...rewireConfig } : undefined,
+				previousRewire: inheritedRewireToggle.snapshot(request.sourceSessionId as string),
+				delegationDepth,
+			},
 		});
 	});
 	const unsubscribeRenewApply = pi.events.on("px:renew:settings:apply", (payload) => {
 		if (!payload || typeof payload !== "object" || !sessionContext) return;
 		const request = payload as { transferId?: unknown; owner?: unknown; targetSessionId?: unknown; cwd?: unknown; state?: unknown };
 		if (typeof request.transferId !== "string" || request.owner !== "subagent" || request.targetSessionId !== sessionContext.sessionManager.getSessionId() || request.cwd !== sessionContext.cwd) return;
-		const state = request.state as { rewire?: unknown; delegationDepth?: unknown } | undefined;
+		const state = request.state as { rewire?: unknown; previousRewire?: unknown; delegationDepth?: unknown } | undefined;
 		if (!state || typeof state.delegationDepth !== "number" || !Number.isInteger(state.delegationDepth)) return;
 		if (state.delegationDepth < -1 || state.delegationDepth > MAX_SUBAGENT_DEPTH) return;
-		const config = state.rewire;
-		if (config !== undefined) {
+		const ctx = sessionContext;
+		const parseConfig = (config: unknown): SubagentRewireConfig | undefined => {
 			if (!config || typeof config !== "object") return;
 			const value = config as {
 				enabled?: unknown;
@@ -1192,21 +1196,26 @@ export default function (pi: ExtensionAPI) {
 			const inheritAll = value.inheritAll === true || (value.inheritAll === undefined && isAllSentinel);
 			const inherit = !inheritAll && (value.inherit === true || (value.inherit === undefined && isModelSentinel));
 			const inherited = inherit || inheritAll;
-			const current = inherited || isModelSentinel || isAllSentinel ? readCurrentDispatchDefaults(sessionContext) : undefined;
+			const current = inherited || isModelSentinel || isAllSentinel ? readCurrentDispatchDefaults(ctx) : undefined;
 			const model = current?.model ?? configuredModel;
 			// A sentinel is retained when no live model exists. It is safe for an
 			// inherited dispatch (the dispatch snapshot supplies a fallback), and
 			// preserves an explicitly-disabled legacy state across /renew.
 			const invalidFixedSentinel =
 				(isModelSentinel || isAllSentinel) && !inherited && !current?.model;
-			setRewireConfig(sessionContext, {
+			return {
 				enabled: invalidFixedSentinel ? false : value.enabled,
 				model,
 				thinkingLevel: value.thinkingLevel as SubagentRewireConfig["thinkingLevel"],
 				inherit,
 				inheritAll,
-			});
-		}
+			};
+		};
+		const config = parseConfig(state.rewire);
+		const previous = parseConfig(state.previousRewire);
+		if ((state.rewire !== undefined && !config) || (state.previousRewire !== undefined && !previous)) return;
+		if (config) setRewireConfig(sessionContext, config);
+		inheritedRewireToggle.restore(request.targetSessionId as string, previous);
 		setDelegationDepth(sessionContext, state.delegationDepth);
 		pi.events.emit("px:renew:settings:ack", {
 			transferId: request.transferId,

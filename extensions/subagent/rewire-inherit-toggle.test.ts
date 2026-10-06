@@ -27,6 +27,19 @@ describe("session inherited rewire toggle", () => {
 		expect(fresh.toggle("first", first)).toEqual({ ...first, enabled: false });
 	});
 
+	test("transfers a copied return target to a replacement session", () => {
+		const old = new SessionInheritedRewireToggle();
+		const inherited = old.toggle("old", target, "provider/main");
+		const snapshot = old.snapshot("old")!;
+		snapshot.model = "provider/transferred";
+		expect(old.snapshot("old")).toEqual(target);
+		const fresh = new SessionInheritedRewireToggle();
+		fresh.restore("new", snapshot);
+		snapshot.model = "provider/mutated";
+		expect(fresh.toggle("new", inherited)).toEqual({ ...target, model: "provider/transferred" });
+		expect(fresh.snapshot("new")).toBeUndefined();
+	});
+
 	test("a newly chosen fixed target becomes the next return target", () => {
 		const toggle = new SessionInheritedRewireToggle();
 		toggle.toggle("session", target, "provider/main");
