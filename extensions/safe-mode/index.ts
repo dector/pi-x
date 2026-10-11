@@ -26,14 +26,12 @@ import {
 } from "./contract.ts";
 import { appendApprovalInvestigation } from "./investigation.ts";
 import { withUserWait } from "./user-wait.ts";
+import { confirmApproval, createApprovalQueue, promptSteering } from "./approval-ui.ts";
 
 interface SafeModeState {
 	mode: SafeMode;
 	outerAccess: boolean;
 }
-
-type ApprovalDecision = "approve-once" | "approve-all-session" | "approve-project" | "deny" | "steer";
-type ApprovalChoice = ApprovalDecision | "toggle-investigation";
 
 type AllowlistScope = "project" | "session";
 
@@ -463,87 +461,6 @@ function formatApprovalPrompt(
 	};
 }
 
-const BASE_APPROVAL_OPTIONS = ["[Y]es", "[N]o", "[A]ll for this session", "[Esc] to steer"] as const;
-const PROJECT_APPROVAL_OPTION = "[P]ermanently allow";
-const INVESTIGATION_OPTION = (enabled: boolean): string => `[I]nvestigate: ${enabled ? "on" : "off"}`;
-
-async function confirmApproval(
-	ctx: ExtensionContext,
-	title: string,
-	message: string,
-	options?: { allowProjectApproval?: boolean; investigation?: { enabled: boolean } },
-): Promise<ApprovalDecision> {
-	const allowProjectApproval = options?.allowProjectApproval ?? false;
-	const investigation = options?.investigation;
-
-	while (true) {
-		const controller = new AbortController();
-		let keyDecision: ApprovalChoice | undefined;
-
-		const unsubscribe = ctx.ui.onTerminalInput((data) => {
-			if (data === "Y") keyDecision = "approve-once";
-			else if (data === "N") keyDecision = "deny";
-			else if (data === "A") keyDecision = "approve-all-session";
-			else if (allowProjectApproval && data === "P") keyDecision = "approve-project";
-			else if (investigation && (data === "I" || data === "i")) keyDecision = "toggle-investigation";
-			else if (data === ESC) keyDecision = "steer";
-			else return undefined;
-
-			controller.abort();
-			return { consume: true };
-		});
-
-		let selected: string | undefined;
-		try {
-			const selectOptions = [
-				BASE_APPROVAL_OPTIONS[0],
-				BASE_APPROVAL_OPTIONS[1],
-				BASE_APPROVAL_OPTIONS[2],
-				...(allowProjectApproval ? [PROJECT_APPROVAL_OPTION] : []),
-				BASE_APPROVAL_OPTIONS[3],
-				...(investigation ? [INVESTIGATION_OPTION(investigation.enabled)] : []),
-			];
-			selected = await ctx.ui.select(`${title}${message}`, selectOptions, { signal: controller.signal });
-		} catch (error) {
-			if (!keyDecision) throw error;
-		} finally {
-			unsubscribe();
-		}
-
-		let choice: ApprovalChoice | undefined = keyDecision;
-		if (!choice) {
-			switch (selected) {
-				case "[Y]es":
-					choice = "approve-once";
-					break;
-				case "[A]ll for this session":
-					choice = "approve-all-session";
-					break;
-				case PROJECT_APPROVAL_OPTION:
-					choice = "approve-project";
-					break;
-				case "[N]o":
-					choice = "deny";
-					break;
-				case "[Esc] to steer":
-					choice = "steer";
-					break;
-				default:
-					if (investigation && selected === INVESTIGATION_OPTION(investigation.enabled)) {
-						choice = "toggle-investigation";
-					}
-			}
-		}
-
-		if (choice === "toggle-investigation") {
-			if (!investigation) return "steer";
-			investigation.enabled = !investigation.enabled;
-			continue;
-		}
-		return choice ?? "steer";
-	}
-}
-
 async function showSafeModeListManager(args: {
 	ctx: ExtensionContext;
 	sessionCommands: Set<string>;
@@ -786,6 +703,7 @@ async function showSafeModeListManager(args: {
 }
 
 export default function safeModeExtension(pi: ExtensionAPI): void {
+	const queueApproval = createApprovalQueue();
 	let mode: SafeMode = DEFAULT_SAFE_MODE;
 	let outerAccess = false;
 	let activeProjectRoot = "";
@@ -1447,12 +1365,11 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 			const decision = await withUserWait(
 				pi.events,
 				{ owner: "safe-mode", label: "safe-mode approval: perm:agent", kind: "approval" },
-				() =>
-					confirmApproval(
-						ctx,
-						"Run project-local agents?",
-						`\nAgents: ${agents}\nSource: ${source}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					),
+				() => queueApproval(() => confirmApproval(
+					ctx,
+					"Run project-local agents?",
+					`\nAgents: ${agents}\nSource: ${source}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+				)),
 			);
 
 			if (decision === "approve-once" || decision === "approve-all-session" || decision === "approve-project") {
@@ -1536,7 +1453,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		const approval = await withUserWait(
 			pi.events,
 			{ owner: "safe-mode", label: `safe-mode approval: ${event.toolName}`, kind: "approval" },
-			async () => {
+			() => queueApproval(async () => {
 				const picked = await confirmApproval(ctx, prompt.title, prompt.message, {
 					allowProjectApproval: mode === "smart" && Boolean(exactBashCommand),
 					investigation,
@@ -1546,10 +1463,10 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 				const steerText = await withUserWait(
 					pi.events,
 					{ owner: "safe-mode", label: "safe-mode steering", kind: "input" },
-					() => ctx.ui.input("How should I proceed instead?", "Describe the safer approach"),
+					() => promptSteering(ctx),
 				);
 				return { decision: picked, steerText };
-			},
+			}),
 		);
 		if (investigation.enabled) {
 			try {

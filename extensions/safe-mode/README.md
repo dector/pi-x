@@ -198,6 +198,11 @@ This covers normal skill loading via `read` of `SKILL.md` plus sibling/reference
 
 ## Approval dialog
 
+In the terminal, approval and steering dialogs open as overlays. Your current note
+or menu stays open, with its draft and selection preserved. Concurrent approval
+requests are queued, including any steering input. Long requests can be scrolled
+with `PgUp` / `PgDn`.
+
 When approval is required:
 - `Y` confirms once (allow this tool call)
 - `N` rejects (block tool call)

@@ -203,8 +203,8 @@ interface FakeUi {
 }
 
 /**
- * The only Pi runtime faked is the approval UI. Each `select`/`input` returns
- * a deferred so the test decides when and how the user answers.
+ * Run the real overlay factories and components. Destructive select/input
+ * APIs throw, so these tests cannot silently pass using the old UI path.
  */
 function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 	const hasUI = options.hasUI ?? true;
@@ -214,22 +214,42 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 	const inputDeferreds: Array<Deferred<string | undefined>> = [];
 	const selectWaiters: Array<() => void> = [];
 	const inputWaiters: Array<() => void> = [];
-	const terminalInputHandlers = new Set<(data: string) => unknown>();
-
-	const select = (title: string, choices: string[], options?: { signal?: AbortSignal }) => {
-		selectCalls.push({ title, options: choices });
-		for (const waiter of selectWaiters.splice(0)) waiter();
-		return new Promise<string | undefined>((resolve, reject) => {
-			selectDeferreds.push({ resolve, reject });
-			options?.signal?.addEventListener("abort", () => resolve(undefined), { once: true });
-		});
-	};
-
-	const input = (title: string, placeholder?: string) => {
-		inputCalls.push({ title, placeholder });
-		for (const waiter of inputWaiters.splice(0)) waiter();
-		return new Promise<string | undefined>((resolve, reject) => {
-			inputDeferreds.push({ resolve, reject });
+	let active: { handleInput(data: string): void; render(width: number): string[] } | undefined;
+	const custom = (factory: Function, options: { overlay?: boolean }) => {
+		expect(options.overlay).toBe(true);
+		return new Promise((resolve, reject) => {
+			const theme = {
+				fg: (_token: string, text: string) => text,
+				bg: (_token: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			let record: FakeUi["selectCalls"][number] | undefined;
+			const refresh = () => {
+				if (!record || !active) return;
+				const lines = active.render(120);
+				record.title = lines.join("\n");
+				record.options = lines.map((line) => line.trim().replace(/^→\s*/, "")).filter((line) => line.startsWith("["));
+			};
+			active = factory({ terminal: { rows: 40 }, requestRender: refresh }, theme, {}, (value: unknown) => {
+				active = undefined;
+				resolve(value);
+			});
+			const lines = active!.render(120);
+			if (lines[0]?.includes("How should I proceed")) {
+				inputCalls.push({ title: "How should I proceed instead?", placeholder: "Describe the safer approach" });
+				inputDeferreds.push({ resolve: (value) => resolve(value), reject });
+				for (const waiter of inputWaiters.splice(0)) waiter();
+			} else {
+				record = { title: "", options: [] };
+				selectCalls.push(record);
+				refresh();
+				const component = active!;
+				selectDeferreds.push({ resolve: (value) => {
+					const keys: Record<string, string> = { "[Y]es": "Y", "[N]o": "N", "[A]ll for this session": "A", "[P]ermanently allow": "P" };
+					component.handleInput(value ? keys[value] ?? "\u001b" : "\u001b");
+				}, reject });
+				for (const waiter of selectWaiters.splice(0)) waiter();
+			}
 		});
 	};
 
@@ -243,12 +263,9 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 				bg: (_token: string, text: string) => text,
 				bold: (text: string) => text,
 			},
-			onTerminalInput: (handler: (data: string) => unknown) => {
-				terminalInputHandlers.add(handler);
-				return () => terminalInputHandlers.delete(handler);
-			},
-			select,
-			input,
+			custom,
+			select: () => { throw new Error("destructive select called"); },
+			input: () => { throw new Error("destructive input called"); },
 			notify: () => {},
 		},
 	};
@@ -268,7 +285,7 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 			selectDeferreds[index]?.resolve(value);
 		},
 		sendTerminalInput(data) {
-			for (const handler of [...terminalInputHandlers]) handler(data);
+			active?.handleInput(data);
 		},
 		rejectSelect(error) {
 			selectDeferreds[0]?.reject(error);
@@ -455,7 +472,9 @@ describe("concurrent and nested waits aggregate to one Herdr interval", () => {
 		const answerB = waitForAnswer(bus, "agent-b");
 		sendAgentAsk(bus, ui.ctx, "agent-a");
 		sendAgentAsk(bus, ui.ctx, "agent-b");
-		await waitFor(() => ui.selectCalls.length === 2);
+		await ui.waitForSelect();
+		await waitFor(() => waitSnapshots(bus).at(-1)?.count === 2);
+		expect(ui.selectCalls).toHaveLength(1);
 
 		// Both waits are active but Herdr crossed zero only once.
 		expect(herdrStates(bus)).toEqual([{ active: true, label: AGENT_LABEL }]);
@@ -468,6 +487,7 @@ describe("concurrent and nested waits aggregate to one Herdr interval", () => {
 		expect(herdrStates(bus)).toEqual([{ active: true, label: AGENT_LABEL }]);
 		expect(waitSnapshots(bus).at(-1)).toMatchObject({ active: true, count: 1 });
 
+		await waitFor(() => ui.selectCalls.length === 2);
 		ui.resolveSelectAt(1, "[N]o");
 		const resultB = await answerB;
 		expect(resultB.results).toMatchObject([{ what: "perm:agent", action: "block" }]);
@@ -619,14 +639,14 @@ describe("approval investigation toggle", () => {
 		expect(ui.selectCalls[0]?.options.at(-1)).toBe("[I]nvestigate: off");
 
 		ui.sendTerminalInput("i");
-		await waitFor(() => ui.selectCalls.length === 2);
-		expect(ui.selectCalls[1]?.options.at(-1)).toBe("[I]nvestigate: on");
+		expect(ui.selectCalls).toHaveLength(1);
+		expect(ui.selectCalls[0]?.options.at(-1)).toBe("[I]nvestigate: on");
 
 		ui.sendTerminalInput("I");
-		await waitFor(() => ui.selectCalls.length === 3);
-		expect(ui.selectCalls[2]?.options.at(-1)).toBe("[I]nvestigate: off");
+		expect(ui.selectCalls).toHaveLength(1);
+		expect(ui.selectCalls[0]?.options.at(-1)).toBe("[I]nvestigate: off");
 
-		ui.resolveSelectAt(2, "[N]o");
+		ui.resolveSelectAt(0, "[N]o");
 		await resultPromise;
 		expect(herdrStates(bus)).toEqual([
 			{ active: true, label: "safe-mode approval: bash" },
