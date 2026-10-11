@@ -72,6 +72,20 @@ test("navigation, investigation, disabled project key, and Enter stay in the foc
 	} finally { h.tui.stop(); }
 });
 
+for (const [keys, expected] of [["j", "deny"], ["jk", "approve-once"], ["k", "steer"], ["kj", "approve-once"]]) {
+	test(`j/k navigation ${keys} selects ${expected} without touching the draft`, async () => {
+		const h = host();
+		try {
+			const result = confirmApproval(h.ctx, "Approve?", "request");
+			for (const key of keys!) h.send(key);
+			h.send("\r");
+			expect(await result).toBe(expected);
+			expect(h.notes.getValue()).toBe("unfinished notes");
+			expect(h.notes.focused).toBe(true);
+		} finally { h.tui.stop(); }
+	});
+}
+
 test("long request is scrollable without cropping the approval choices", async () => {
 	const h = host(24, 50);
 	try {

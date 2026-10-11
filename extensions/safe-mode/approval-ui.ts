@@ -121,7 +121,10 @@ export async function confirmApproval(
 				if (investigation && (matchesKey(data, "i") || data === "I")) return choose("toggle-investigation");
 				if (matchesKey(data, Key.pageUp)) scroll = Math.max(0, scroll - Math.min(5, viewportHeight));
 				else if (matchesKey(data, Key.pageDown)) scroll += Math.min(5, viewportHeight);
-				else list.handleInput(data);
+				else if (data === "j" || data === "k") {
+					const index = items().findIndex((item) => item.value === list.getSelectedItem()?.value);
+					list.setSelectedIndex((index + (data === "j" ? 1 : -1) + items().length) % items().length);
+				} else list.handleInput(data);
 				tui.requestRender();
 			},
 		};
