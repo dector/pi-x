@@ -78,6 +78,9 @@ test("long request is scrollable without cropping the approval choices", async (
 		const result = confirmApproval(h.ctx, "Approve?", Array.from({ length: 100 }, (_, i) => `command line ${i}`).join("\n"), { allowProjectApproval: true, investigation: { enabled: false } });
 		const first = h.components[0]!.render(45);
 		expect(first.length).toBeLessThanOrEqual(Math.floor(24 * .9));
+		expect(first[0]).toContain("╭━╾");
+		expect(first.at(-1)).toContain("╰");
+		expect(first[1]).toContain("┃");
 		expect(first.join("\n")).toContain("[I]nvestigate");
 		expect(first.join("\n")).toContain("[P]ermanently allow");
 		h.send("\u001b[6~");
@@ -100,7 +103,9 @@ for (const columns of [10, 20]) {
 			await approval;
 			const steering = promptSteering(h.ctx);
 			const lines = h.components[1]!.render(width);
-			expect(lines).toHaveLength(3);
+			expect(lines).toHaveLength(4);
+			expect(lines[0]).toContain("╭");
+			expect(lines.at(-1)).toContain("╰");
 			expect(lines.join("\n")).toContain(CURSOR_MARKER);
 			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 			h.send("\u001b");
@@ -118,7 +123,7 @@ for (const rows of [6, 12, 14]) {
 			for (let page = 0; page < 20; page++) {
 				const lines = h.components[0]!.render(45);
 				expect(lines.length).toBeLessThanOrEqual(Math.min(Math.floor(rows * .9), rows - 2));
-				const seen = lines.filter((line) => line.startsWith("request-")).map((line) => Number(line.slice(8)));
+				const seen = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").replace(/^┃|┃$/g, "").trim()).filter((line) => line.startsWith("request-")).map((line) => Number(line.slice(8)));
 				expect(seen.length).toBeGreaterThan(0);
 				expect(seen[0]!).toBeLessThanOrEqual(previousLast + 1);
 				previousLast = seen.at(-1)!;

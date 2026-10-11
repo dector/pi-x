@@ -228,7 +228,7 @@ function createFakeUi(options: { hasUI?: boolean } = {}): FakeUi {
 				if (!record || !active) return;
 				const lines = active.render(120);
 				record.title = lines.join("\n");
-				record.options = lines.map((line) => line.trim().replace(/^→\s*/, "")).filter((line) => line.startsWith("["));
+				record.options = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").replace(/^┃|┃$/g, "").trim().replace(/^→\s*/, "")).filter((line) => line.startsWith("["));
 			};
 			active = factory({ terminal: { rows: 40 }, requestRender: refresh }, theme, {}, (value: unknown) => {
 				active = undefined;
