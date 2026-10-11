@@ -111,11 +111,15 @@ export default function reviewLevelExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", (event) => {
+		// Older Pi runtimes may not expose structured prompt sections.
+		const sections = event.systemPromptOptions?.sections;
+		if (!sections) return;
+
 		const guidance = reviewGuidance(level);
 		if (guidance) {
-			event.systemPromptOptions.sections[PROMPT_SECTION] = guidance;
+			sections[PROMPT_SECTION] = guidance;
 		} else {
-			delete event.systemPromptOptions.sections[PROMPT_SECTION];
+			delete sections[PROMPT_SECTION];
 		}
 	});
 

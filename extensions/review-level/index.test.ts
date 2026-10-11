@@ -80,6 +80,17 @@ describe("review-level extension", () => {
 		expect(sections).toEqual({ existing: "keep" });
 	});
 
+	test("skips prompt changes when structured prompt sections are unavailable", async () => {
+		const state = setup();
+		for (const level of ["auto", "high"]) {
+			await state.commands.get("px:review")!.handler(level, state.ctx);
+			for (const event of [{}, { systemPromptOptions: {} }]) {
+				await fire(state.lifecycle, "before_agent_start", event, state.ctx);
+				expect(event).toEqual("systemPromptOptions" in event ? { systemPromptOptions: {} } : {});
+			}
+		}
+	});
+
 	test("applies a renew handoff and acknowledges it", async () => {
 		const state = setup();
 		await fire(state.lifecycle, "session_start", {}, state.ctx);
