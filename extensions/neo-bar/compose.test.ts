@@ -297,6 +297,13 @@ describe("composeBorderBottomLeft (editor border)", () => {
 		);
 	});
 
+	test("VM yolo has a green shield-only pill", () => {
+		const shield = "\x1b[48;2;33;93;57;38;2;188;228;197m󰕥\x1b[0m";
+		expect(composeBorderBottomLeft({ statusLabel: shield, borderColor: border })).toBe(
+			`«━╾ »${renderStatusPill("󰕥", "#215d39", "#bce4c5")}« »`,
+		);
+	});
+
 	test("unknown producer labels still render without a pill", () => {
 		const out = composeBorderBottomLeft({ statusLabel: "__proto__", borderColor: border });
 		expect(out).toBe("«━╾ »󰕥 __proto__« »");

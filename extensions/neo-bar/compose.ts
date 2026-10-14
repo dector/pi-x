@@ -372,7 +372,10 @@ export function composeBorderBottomLeft(args: BorderBottomLeftArgs): string {
 	const hasContext = hasVisibleText(args.contextLabel);
 	const mode = args.statusLabel ? stripAnsi(sanitizeStatusText(args.statusLabel)) : "";
 	const baseMode = mode.replace(/\+$/, "");
-	const pillColors = Object.hasOwn(SAFE_MODE_PILL_COLORS, baseMode) ? SAFE_MODE_PILL_COLORS[baseMode] : undefined;
+	// The VM shield uses the producer's green palette instead of the danger palette.
+	const pillColors = mode === "󰕥" && args.statusLabel?.includes("48;2;33;93;57")
+		? SAFE_MODE_PILL_COLORS.READER
+		: Object.hasOwn(SAFE_MODE_PILL_COLORS, baseMode) ? SAFE_MODE_PILL_COLORS[baseMode] : undefined;
 	const safeModeLabel = pillColors
 		? renderStatusPill(mode === "󰕥" ? mode : `${BORDER_SAFE_MODE_ICON}${mode}`, pillColors.bg, pillColors.fg)
 		: hasVisibleText(args.statusLabel)
