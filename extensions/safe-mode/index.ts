@@ -355,9 +355,13 @@ export function getDefaultSafeMode(savedMode?: SafeMode, env: NodeJS.ProcessEnv 
 	return env.PIX_VM !== undefined ? "yolo" : savedMode ?? DEFAULT_SAFE_MODE;
 }
 
+export function getDefaultOuterAccess(savedOuterAccess?: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.PIX_VM !== undefined ? true : savedOuterAccess ?? false;
+}
+
 export function styleMode(ctx: ExtensionContext, mode: SafeMode, outerAccess: boolean): string {
 	if (mode === "yolo" && process.env.PIX_VM !== undefined) {
-		return "\x1b[48;2;33;93;57;38;2;188;228;197m󰕥\x1b[0m";
+		return "\x1b[48;2;85;64;117;38;2;219;200;244m󰕥\x1b[0m";
 	}
 	// Show only a shield for yolo+ in the status bar; commands and state keep the yolo+ name.
 	if (mode === "yolo" && outerAccess) return "\x1b[48;5;88;38;2;211;143;143m󰕥\x1b[0m";
@@ -712,7 +716,7 @@ async function showSafeModeListManager(args: {
 export default function safeModeExtension(pi: ExtensionAPI): void {
 	const queueApproval = createApprovalQueue();
 	let mode: SafeMode = getDefaultSafeMode();
-	let outerAccess = false;
+	let outerAccess = getDefaultOuterAccess();
 	let activeProjectRoot = "";
 	let projectAllowlistFileExists = false;
 	let configuredDefaultMode: SafeMode | undefined;
@@ -1005,7 +1009,7 @@ export default function safeModeExtension(pi: ExtensionAPI): void {
 		}
 
 		mode = modeFlag ?? persisted.mode ?? getDefaultSafeMode(configuredDefaultMode);
-		outerAccess = outerFlag ?? persisted.outerAccess ?? configuredDefaultOuterAccess ?? false;
+		outerAccess = outerFlag ?? persisted.outerAccess ?? getDefaultOuterAccess(configuredDefaultOuterAccess);
 		updateStatus(ctx);
 		emitStateChanged("initialization");
 	}

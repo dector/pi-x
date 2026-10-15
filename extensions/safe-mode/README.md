@@ -269,7 +269,7 @@ never sets wait state; only an actual open dialog does.
   - `~/.pi/agent/extensions/safe-mode/investigations.jsonl`
   - Each entry includes timestamp, mode, outer access, tool, command, working directory, and final user choice. Commands are recorded only when `[I]nvestigate` is on; inspect entries before sharing because commands may contain sensitive arguments.
 - Resolution order on startup: CLI flags (`--safe-mode`, `--safe-mode-outer-access`) → session persisted state → saved defaults → built-in defaults.
-- When `PIX_VM` is present (even empty), the default mode is `yolo`, overriding the saved mode default. CLI flags and session state still take precedence. Outer access is unchanged. YOLO and YOLO+ display a green shield on a green background instead of the normal YOLO label/red shield.
+- When `PIX_VM` is present (even empty), the default is `yolo+` (outer access enabled), overriding saved defaults. CLI flags and session state still take precedence. YOLO and YOLO+ display a shield without text in SMART's purple palette instead of the normal YOLO label/red shield.
 - Smart-mode project allowlist is persisted per repository at:
   - `<repo>/.pi/memory/safe-mode/smart-allowlist.json`
   - format: `{ "allow": ["..."], "allowAny": ["flutter"], "deny": [] }` (`deny` currently ignored)
