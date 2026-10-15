@@ -162,6 +162,7 @@ import {
 } from "./rewire-presets.ts";
 import {
 	availableThinkingLevels,
+	isInheritedAgentModel,
 	isInheritedRewire,
 	isInheritAllRewire,
 	REWIRE_INHERIT_ALL_LABEL,
@@ -730,6 +731,19 @@ async function runSingleAgent(
 				thinkingLevel = isInheritedRewire(dispatch.rewire)
 					? clampInheritedThinkingLevel(runtime.parentContext, model, resolvedModel.thinkingLevel)
 					: resolvedModel.thinkingLevel;
+			} else if (isInheritedAgentModel(agent.model)) {
+				// `model: inherit` is the agent-level exception to the mapping: follow
+				// the parent's current model and effort, read at the true launch
+				// boundary just like an Inherit All rewire.
+				let currentDispatchDefaults = dispatchDefaults;
+				try {
+					currentDispatchDefaults = runtime.getCurrentDispatchDefaults?.() ?? dispatchDefaults;
+				} catch {
+					// A replaced/stale context is handled by the dispatch snapshot.
+				}
+				const resolvedModel = resolveSubagentModel(agent, dispatchDefaults, undefined, currentDispatchDefaults);
+				model = resolvedModel.model;
+				thinkingLevel = clampInheritedThinkingLevel(runtime.parentContext, model, resolvedModel.thinkingLevel);
 			} else {
 				// Function/level mapping is the default path. A resolution failure
 				// throws; the dispatch runner converts it into a failed result rather
@@ -768,7 +782,9 @@ async function runSingleAgent(
 			...(dispatch.herdrRetention ? { herdrRetention: dispatch.herdrRetention } : {}),
 			...(chainKey ? { chainKey } : {}),
 		};
-		const inheritedAtLaunch = dispatch.rewire?.enabled && isInheritedRewire(dispatch.rewire);
+		const inheritedAtLaunch = dispatch.rewire?.enabled
+			? isInheritedRewire(dispatch.rewire)
+			: isInheritedAgentModel(agent.model);
 		// Fixed rewires are dispatch snapshots. Resolve them before the backend
 		// call and retain the historical two-argument backend contract; only an
 		// inherited target needs a transport-aware launch hook.

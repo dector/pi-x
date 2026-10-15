@@ -5,10 +5,15 @@
  * resolution intentionally mirrors the dispatch path instead of re-deriving it:
  *
  *   - with session rewiring disabled, `resolveMappedModel` selects the same
- *     function/level cell and concrete alias target a dispatch would use;
+ *     function/level cell and concrete alias target a dispatch would use (an
+ *     agent that pins `model: inherit` instead follows the parent model/effort,
+ *     again at the launch-like clamp);
  *   - with rewiring enabled, `resolveSubagentModel` supplies the fixed or
  *     inherited target, and an inherited parent model/effort is clamped by the
  *     injected `clampInheritedThinking` exactly as the child launch does.
+ *
+ * Rewire state takes priority over an agent-level `model: inherit`, matching
+ * the dispatch path.
  *
  * The table is a snapshot of the *current* effective configuration (mapping,
  * rewire state, and parent model). It is not a record of what already-running
@@ -28,7 +33,7 @@ import {
 	type SubagentFunction,
 	type SubagentLevel,
 } from "./model-mapping.ts";
-import { isInheritAllRewire, isInheritedRewire, resolveSubagentModel } from "./rewire.ts";
+import { isInheritedAgentModel, isInheritAllRewire, isInheritedRewire, resolveSubagentModel } from "./rewire.ts";
 import type { DispatchDefaults, SubagentRewireConfig } from "./types.ts";
 
 export const MODELS_TABLE_TITLE = "Models table";
@@ -41,12 +46,18 @@ export interface AgentModelAgent {
 	name: string;
 	function?: SubagentFunction;
 	level?: SubagentLevel;
-	/** Legacy pin, ignored by the mapping resolver but passed through as-is. */
+	/** Legacy pin. `inherit` opts into the parent model/effort; other values are ignored by the mapping resolver. */
 	model?: string;
 	thinking?: ThinkingLevel;
 }
 
-export type AgentModelSource = "main" | "mapping" | "rewire" | "rewire-inherit-model" | "rewire-inherit-all";
+export type AgentModelSource =
+	| "main"
+	| "mapping"
+	| "inherit"
+	| "rewire"
+	| "rewire-inherit-model"
+	| "rewire-inherit-all";
 
 export interface AgentModelRow {
 	agent: string;
@@ -118,6 +129,25 @@ export function buildModelsTableRows(input: BuildModelsTableRowsInput): AgentMod
 			});
 			continue;
 		}
+		// `model: inherit` is the explicit agent-level exception to the mapping:
+		// follow the parent's current model and effort, clamped like a launch.
+		if (isInheritedAgentModel(agent.model)) {
+			const resolved = resolveSubagentModel(agent, input.parentDefaults, undefined, input.parentDefaults);
+			let thinkingLevel = resolved.thinkingLevel;
+			if (input.clampInheritedThinking) {
+				thinkingLevel = input.clampInheritedThinking(resolved.model, thinkingLevel);
+			}
+			rows.push({
+				agent: agent.name,
+				fn,
+				level,
+				source: "inherit",
+				...(resolved.model ? { model: resolved.model } : {}),
+				...(thinkingLevel ? { thinkingLevel } : {}),
+				warnings: [],
+			});
+			continue;
+		}
 		const resolution = resolveMappedModel(input.mapping, agent, undefined, input.resolveAlias);
 		if (!resolution.ok) {
 			rows.push({ agent: agent.name, fn, level, source: "mapping", error: resolution.error, warnings: resolution.warnings });
@@ -155,6 +185,8 @@ export function agentModelSourceLabel(source: AgentModelSource): string {
 			return "main";
 		case "mapping":
 			return "mapping";
+		case "inherit":
+			return "inherit";
 		case "rewire":
 			return "rewired";
 		case "rewire-inherit-model":

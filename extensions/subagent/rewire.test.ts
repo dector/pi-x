@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { availableThinkingLevels, isInheritedRewire, isInheritAllRewire, resolveSubagentModel } from "./rewire.ts";
+import { availableThinkingLevels, isInheritedAgentModel, isInheritedRewire, isInheritAllRewire, resolveSubagentModel } from "./rewire.ts";
 
 describe("subagent rewiring", () => {
 	test("preserves agent model and effort while rewiring is disabled", () => {
@@ -100,6 +100,31 @@ describe("subagent rewiring", () => {
 				{},
 			),
 		).toEqual({ model: undefined, thinkingLevel: "off" });
+	});
+
+	test("agent model: inherit follows the parent model and effort at launch", () => {
+		expect(isInheritedAgentModel(" inherit ")).toBe(true);
+		expect(isInheritedAgentModel("inherit-all")).toBe(false);
+		expect(isInheritedAgentModel("provider/model")).toBe(false);
+		expect(isInheritedAgentModel(undefined)).toBe(false);
+		expect(
+			resolveSubagentModel(
+				{ model: "inherit", thinking: "low" },
+				{ model: "parent/dispatch", thinkingLevel: "low" },
+				undefined,
+				{ model: "parent/current", thinkingLevel: "high" },
+			),
+		).toEqual({ model: "parent/current", thinkingLevel: "high" });
+	});
+
+	test("a fixed rewire still wins over an agent model: inherit", () => {
+		expect(
+			resolveSubagentModel(
+				{ model: "inherit" },
+				{ model: "parent/dispatch", thinkingLevel: "low" },
+				{ enabled: true, model: "override/model", thinkingLevel: "minimal" },
+			),
+		).toEqual({ model: "override/model", thinkingLevel: "minimal" });
 	});
 
 	test("lists only effort levels supported by the selected model", () => {

@@ -21,9 +21,10 @@ export interface AgentConfig {
 	/** Default level; a task-level override still wins. */
 	level?: SubagentLevel;
 	/**
-	 * Legacy explicit pins. Parsed for backward compatibility but not honored by
-	 * the mapping-based resolver; kept so a future opt-in can treat them as a
-	 * suggestion.
+	 * Explicit pin. `inherit` is honored as the one exception to the
+	 * mapping-based resolver: the agent follows the parent model and effort at
+	 * launch. Any other value is parsed for backward compatibility but ignored by
+	 * the mapping resolver; kept so a future opt-in can treat it as a suggestion.
 	 */
 	model?: string;
 	thinking?: ThinkingLevel;

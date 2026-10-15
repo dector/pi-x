@@ -34,6 +34,11 @@ describe("agent frontmatter parsing", () => {
 		expect(agent).toMatchObject({ function: undefined, model: "openai-codex/gpt-6-sol", thinking: "high" });
 	});
 
+	test("parses the model: inherit sentinel with a function", () => {
+		const agent = parseAgentFields({ name: "worker", description: "Worker", function: "work", model: "inherit" });
+		expect(agent).toMatchObject({ function: "work", model: "inherit" });
+	});
+
 	test("allows a missing function and a valid level", () => {
 		const agent = parseAgentFields({ name: "nofunc", description: "No function", level: "l" });
 		expect(agent?.function).toBeUndefined();

@@ -80,6 +80,7 @@ subagent/
 │   ├── reviewer-xultra-explicit.md # Deepest adversarial review (review, xxxl) — only on explicit request
 │   ├── researcher-fast.md # Web + local research with citations (research, m)
 │   ├── researcher-strong.md # Strong research with citations (research, xl)
+│   ├── worker.md        # Default general-purpose (work) — inherits parent model/effort
 │   ├── worker-fast.md   # General-purpose (work, m)
 │   ├── worker-xfast.md  # Fast general-purpose (work, xs)
 │   └── worker-strong-explicit.md # Strong general-purpose (work, xl) — only on explicit request
@@ -416,6 +417,7 @@ rows have a baseline. Each subagent row shows its `function`, default `level`,
 the concrete `provider/model`, effort, and where the assignment came from:
 
 - `mapping` — the function/level matrix (or user override) selected the cell;
+- `inherit` — the agent pinned `model: inherit`, so it follows the parent's current model and effort;
 - `rewired` — a fixed session rewire target;
 - `inherit model` — the parent's current model with the configured effort;
 - `inherit all` — the parent's current model and effort.
@@ -639,6 +641,12 @@ default level. A missing or unknown `function` degrades to `general` and records
 warning. The legacy `model`/`thinking` fields are still parsed but ignored by the
 mapping resolver (a warning is recorded); they are reserved for a future opt-in.
 
+The one exception is the explicit `model: inherit` sentinel (see
+[Agent-level inheritance](#agent-level-inheritance)): it opts that agent out of the
+mapping and follows the parent model and effort. A session rewire still takes
+priority while it is enabled. Any other `model` value keeps the legacy
+ignore-and-warn behavior.
+
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (loaded with the default `agentScope: "user"` and with `"both"`; skipped by `"project"`)
 - `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
@@ -714,6 +722,17 @@ silently substituting a different-priced model. A thinking level the chosen mode
 not support is clamped and warned. Session rewiring (below) overrides the mapping
 entirely while enabled.
 
+### Agent-level inheritance
+
+An agent file may set `model: inherit` to skip the mapping and follow the parent's
+current model and effort. This is the only honored `model` value; it resolves at the
+same true launch boundary as an inherited rewire, so a queued chain step or parallel
+task picks up a model change made after the dispatch was accepted. The inherited
+effort is clamped to the detected model exactly like `Inherit All`. An enabled session
+rewire still wins over an agent-level `model: inherit`. The default `worker` agent
+(`/work`, `/works`) uses this so ordinary work runs on whatever model the parent is
+using unless rewiring says otherwise.
+
 ## Sample Agents
 
 Each role ships as a family of stable `<role>-<tier>` profiles. The `-fast`
@@ -725,6 +744,7 @@ built-in mapping resolves to on this machine — it changes with the available m
 
 | New name | Function | Level | Default mapping |
 |----------|----------|-------|-----------------|
+| `worker` | work | `m` | parent model · parent effort (`model: inherit`) |
 | `scout-fast` | scout | `xs` | mimo-v2.6-flash · low |
 | `scout-xfast` | scout | `xxxs` | deepseek-v4.1-flash · low |
 | `planner-fast` | plan | `m` | deepseek-v4.1-flash · high |

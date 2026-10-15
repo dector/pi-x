@@ -169,6 +169,33 @@ describe("buildModelsTableRows", () => {
 		expect(row.model).toBeUndefined();
 		expect(row.error).toContain("no available model");
 	});
+
+	test("an agent model: inherit follows the parent model and effort", () => {
+		const rows = build({ agents: [{ name: "worker", function: "work", model: "inherit" }] });
+		expect(byAgent(rows, "worker")).toMatchObject({
+			source: "inherit",
+			model: "parent/current",
+			thinkingLevel: "max",
+		});
+	});
+
+	test("a fixed rewire still wins over an agent model: inherit", () => {
+		const rewire: SubagentRewireConfig = { enabled: true, model: "openai-codex/gpt-6-sol", thinkingLevel: "xhigh" };
+		const rows = build({ agents: [{ name: "worker", function: "work", model: "inherit" }], rewire });
+		expect(byAgent(rows, "worker")).toMatchObject({
+			source: "rewire",
+			model: "openai-codex/gpt-6-sol",
+			thinkingLevel: "xhigh",
+		});
+	});
+
+	test("clamps an agent-inherited effort through the injected hook", () => {
+		const rows = build({
+			agents: [{ name: "worker", function: "work", model: "inherit" }],
+			clampInheritedThinking: () => "medium",
+		});
+		expect(byAgent(rows, "worker").thinkingLevel).toBe("medium");
+	});
 });
 
 describe("modelsModeLabel", () => {
@@ -191,6 +218,7 @@ describe("modelsModeLabel", () => {
 	test("labels every source", () => {
 		expect(agentModelSourceLabel("main")).toBe("main");
 		expect(agentModelSourceLabel("mapping")).toBe("mapping");
+		expect(agentModelSourceLabel("inherit")).toBe("inherit");
 		expect(agentModelSourceLabel("rewire")).toBe("rewired");
 		expect(agentModelSourceLabel("rewire-inherit-model")).toBe("inherit model");
 		expect(agentModelSourceLabel("rewire-inherit-all")).toBe("inherit all");

@@ -20,6 +20,20 @@ export const REWIRE_INHERIT_ALL_LABEL = "Inherit All";
 export const REWIRE_INHERIT_MODEL = "inherit";
 export const REWIRE_INHERIT_ALL_MODEL = "inherit-all";
 
+/**
+ * Agent-frontmatter `model: inherit` sentinel.
+ *
+ * This is the one explicit exception to "the mapping ignores `model`": a plain
+ * worker can opt into the parent's model and effort instead of a mapped cell.
+ * Any other `model` value keeps the legacy ignore-and-warn behavior.
+ */
+export const AGENT_INHERIT_MODEL = REWIRE_INHERIT_MODEL;
+
+/** Whether an agent pinned `model: inherit` to follow the parent model/effort. */
+export function isInheritedAgentModel(model: string | undefined): boolean {
+	return typeof model === "string" && model.trim().toLowerCase() === AGENT_INHERIT_MODEL;
+}
+
 interface RewireModel {
 	reasoning: boolean;
 	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
@@ -104,6 +118,14 @@ export function resolveSubagentModel(
 		const fixedModel =
 			typeof rewire.model !== "string" || isInheritSentinel(rewire.model) ? undefined : rewire.model.trim();
 		return { model: fixedModel, thinkingLevel: rewire.thinkingLevel };
+	}
+	// `model: inherit` is the explicit agent-level exception: follow the parent's
+	// current model and effort like Inherit All, resolved at the launch boundary.
+	if (isInheritedAgentModel(agent.model)) {
+		return {
+			model: currentDefaults.model ?? defaults.model,
+			thinkingLevel: currentDefaults.thinkingLevel ?? defaults.thinkingLevel,
+		};
 	}
 	const inheritsDispatchConfig = !agent.model;
 	return {
