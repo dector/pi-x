@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { detectReloadState, gustClient, reloadClient } from "./gust.ts";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { detectReloadState, gustClient, invocationCandidates, reloadClient } from "./gust.ts";
 import gustExtension from "./index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -8,6 +8,52 @@ const submitted =
 	'{"id":"t1","path":"/p","text":"x","html":"","locator":"","state":"submitted","messages":[],"createdAt":"c","updatedAt":"u"}';
 const seen =
 	'{"id":"t1","path":"/p","text":"x","html":"","locator":"","state":"seen","messages":[],"createdAt":"c","updatedAt":"u"}';
+
+test("missing Gust never falls back to Go or a previously cached command", async () => {
+	const dir = mkdtempSync("/tmp/gust-discovery-");
+	const previousPath = process.env.PATH;
+	const previousCommand = process.env.GUST_CMD;
+	const log = `${dir}/calls`;
+	const binary = `${dir}/gust`;
+	const install = (path: string, body: string) => {
+		writeFileSync(path, `#!/bin/sh\n${body}\n`);
+		chmodSync(path, 0o755);
+	};
+	install(`${dir}/go`, `echo go >> '${log}'; echo 'auto_reload: active'`);
+	process.env.PATH = dir;
+	delete process.env.GUST_CMD;
+	try {
+		expect(invocationCandidates()).toEqual([{ command: "gust", args: [], label: "gust" }]);
+		const target = { cwd: dir };
+		for (let i = 0; i < 3; i++) {
+			expect(await detectReloadState(target)).toBeUndefined();
+		}
+		expect(await Bun.file(log).exists()).toBe(false);
+
+		install(binary, `echo gust >> '${log}'; echo 'auto_reload: active'`);
+		expect(await detectReloadState(target)).toBe("active");
+		expect(await Bun.file(log).text()).toBe("gust\n");
+
+		// An explicit missing binary must not reuse cached PATH discovery.
+		process.env.GUST_CMD = `${dir}/missing`;
+		expect(await detectReloadState(target)).toBeUndefined();
+		expect(await Bun.file(log).text()).toBe("gust\n");
+
+		// Nor may a cached override survive removing GUST_CMD.
+		process.env.GUST_CMD = binary;
+		expect(await detectReloadState(target)).toBe("active");
+		delete process.env.GUST_CMD;
+		rmSync(binary);
+		expect(await detectReloadState(target)).toBeUndefined();
+		expect(await Bun.file(log).text()).toBe("gust\ngust\n");
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+		if (previousCommand === undefined) delete process.env.GUST_CMD;
+		else process.env.GUST_CMD = previousCommand;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 test("watch and seen parse ctl output", async () => {
 	const script = `/tmp/gust-fake-${process.pid}.sh`;

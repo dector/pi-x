@@ -2,11 +2,11 @@
  * Thin client over `gust ctl comments`.
  *
  * Gust discovers its control socket from the current directory, so the client
- * runs the CLI in the project cwd. The invocation is auto-detected (`gust` on
- * PATH, else `go tool gust`) and cached after the first successful call.
+ * runs the CLI in the project cwd using GUST_CMD or a prebuilt `gust` on PATH.
+ * There is no automatic `go tool gust` fallback: status probes must not build tools.
  *
  * Environment overrides:
- *   GUST_CMD     full invocation, e.g. "go tool gust" or "/usr/bin/gust"
+ *   GUST_CMD     explicit invocation, e.g. "/usr/bin/gust" (no fallback)
  *   GUST_SOCKET  explicit socket path (adds `-S <socket>` after `ctl`)
  *   GUST_CWD     directory to run ctl from (defaults to the process cwd)
  */
@@ -74,15 +74,12 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 let cachedInvocation: GustInvocation | null = null;
 
 export function invocationCandidates(): GustInvocation[] {
-	const candidates: GustInvocation[] = [];
 	const fromEnv = process.env.GUST_CMD?.trim();
 	if (fromEnv) {
 		const parts = fromEnv.split(/\s+/);
-		candidates.push({ command: parts[0], args: parts.slice(1), label: fromEnv });
+		return [{ command: parts[0], args: parts.slice(1), label: fromEnv }];
 	}
-	candidates.push({ command: "gust", args: [], label: "gust" });
-	candidates.push({ command: "go", args: ["tool", "gust"], label: "go tool gust" });
-	return candidates;
+	return [{ command: "gust", args: [], label: "gust" }];
 }
 
 function socketArgs(): string[] {
@@ -148,8 +145,10 @@ function runOnce(invocation: GustInvocation, args: string[], options: CtlOptions
 async function ctl(args: string[], options: CtlOptions = {}): Promise<CtlResult> {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const candidates = invocationCandidates();
-	const ordered = cachedInvocation
-		? [cachedInvocation, ...candidates.filter((c) => c.label !== cachedInvocation?.label)]
+	// Never reuse an invocation from a previous override or detection policy.
+	const cached = candidates.find((c) => c.label === cachedInvocation?.label);
+	const ordered = cached
+		? [cached, ...candidates.filter((c) => c.label !== cached.label)]
 		: candidates;
 
 	for (const invocation of ordered) {
@@ -157,9 +156,7 @@ async function ctl(args: string[], options: CtlOptions = {}): Promise<CtlResult>
 		if (result.aborted) {
 			throw new GustError("aborted");
 		}
-		const missing =
-			result.spawnError?.code === "ENOENT" ||
-			(invocation.command === "go" && /no such tool/i.test(result.stderr));
+		const missing = result.spawnError?.code === "ENOENT";
 		if (missing) {
 			continue;
 		}

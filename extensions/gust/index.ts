@@ -16,7 +16,7 @@ import { GustPresentation } from "./presentation.ts";
  * `/px:gust process` starts a deterministic orchestrator that watches thread
  * changes and runs one `pi` worker per thread, with a persistent session per
  * thread (see ./orchestrator.ts and ./worker.ts). `/px:gust process stop`
- * stops it. The client auto-detects `gust` on PATH or `go tool gust`, and
+ * stops it. The client uses GUST_CMD or a prebuilt `gust` on PATH, and
  * finds the socket from the current directory (override with GUST_SOCKET).
  */
 

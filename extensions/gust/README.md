@@ -125,11 +125,23 @@ existing session model rather than having today's default forced onto them.
 
 ## Invocation discovery
 
-The client auto-detects how to call Gust and caches the first working one:
+The client uses `GUST_CMD` when set (without fallback), otherwise `gust` on
+`PATH`. There is no automatic `go tool gust` fallback: even status checks can
+cause Go to compile a tool, so background polling must use a prebuilt binary.
+If the binary is missing, the status indicator shows Gust as unavailable.
 
-1. `GUST_CMD` (if set), e.g. `go tool gust` or `/usr/bin/gust`
-2. `gust` on `PATH`
-3. `go tool gust`
+Build Gust explicitly from the module that declares the tool, using its package
+path from `go.mod`:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+go build -o "$HOME/.local/bin/gust" <gust-package-path>
+export GUST_CMD="$HOME/.local/bin/gust"
+```
+
+Rebuild explicitly when upgrading Gust. `GUST_CMD` still accepts command arguments,
+but an explicit build-capable command such as `go tool gust` can compile during
+polling and is not recommended.
 
 Overrides:
 
